@@ -1,0 +1,5 @@
+/casync
+*.o
+/test-caencoder
+/test-casync
+/test-chunker

@@ -1,0 +1,17 @@
+* verify
+* diff
+* mtree manifest
+* seeks
+* ssh/remoting protocol
+* directory seeds
+* blob seeds
+* fuse mount logic
+* nbd expose logic
+* deal with file properties of the "root" directory
+* dos flags
+* chattr
+* btrfs flags
+* xattrs
+* acls
+* check fs props
+* encryption
