@@ -3,6 +3,6 @@
 
 #define NODES_MAX 64
 
-#define BUFFER_SIZE (4*1024)
+#define BUFFER_SIZE 4096U
 
 #endif
