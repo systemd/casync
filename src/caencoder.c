@@ -312,7 +312,7 @@ static int ca_encoder_node_read_symlink(
                         free(buf);
                         return -errno;
                 }
-                if (z < k) {
+                if ((size_t) z < k) {
                         buf[z] = 0;
 
                         symlink->symlink_target = buf;
@@ -680,7 +680,7 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         CaEncoderNode *child;
         uint64_t mtime, mode, uid, gid;
         size_t size;
-        void *p;
+        char *p;
 
         assert(e);
         assert(n);

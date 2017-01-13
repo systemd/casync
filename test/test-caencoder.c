@@ -93,7 +93,7 @@ finish:
                         goto finish;
                 }
 
-                if (offset != foffset) {
+                if ((off_t) offset != foffset) {
                         r = -EIO;
                         goto finish;
                 }

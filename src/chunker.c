@@ -2,11 +2,11 @@
 #include "util.h"
 
 /* The modulo used by Adler32: the largest prime smaller than 2^16, see RFC1950 */
-#define MODULO 65521
+#define MODULO 65521U
 
 /* How many bytes we can push into the checksum before we have to calculate the modulo. This is merely an
  * optimization. See RFC1950 for details. */
-#define BYTES_PUSH_MAX 5552
+#define BYTES_PUSH_MAX 5552U
 
 uint32_t ca_chunker_start(CaChunker *c, const void *p, size_t n) {
         const uint8_t *q = p;

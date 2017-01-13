@@ -86,7 +86,7 @@ int skip_bytes(int fd, uint64_t bytes) {
                 if (l == 0)
                         return -EPIPE;
 
-                assert(l <= bytes);
+                assert((uint64_t) l <= bytes);
                 bytes -= l;
 
         } while (bytes > 0);
