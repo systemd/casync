@@ -46,7 +46,17 @@ Is this new? Conceptually, not too much. This uses well-known
 concepts, implemented in a variety of other projects, and puts them
 together in a moderately new, nice way. That's all. The primary
 influences are rsync and git, but there are other systems that use
-similar algorithms, in particular zsync, LBFS, ...
+similar algorithms, in particular:
+
+- CAFS (https://github.com/indyjo/cafs)
+- LBFS (https://pdos.csail.mit.edu/archive/lbfs/)
+- Tahoe-LAFS (https://tahoe-lafs.org/trac/tahoe-lafs)
+- Venti (https://en.wikipedia.org/wiki/Venti)
+- bup (https://bup.github.io/)
+- dedupfs (https://github.com/xolox/dedupfs)
+- zsync (http://zsync.moria.org.uk/)
+
+(ordered alphabetically, not in order of relevance)
 
 ## File Suffixes
 
