@@ -1087,7 +1087,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 z = readlinkat(n->fd, child->entry->name, buf, l+1);
                 if (z < 0)
                         return -errno;
-                if (z != l)
+                if ((size_t) z != l)
                         return -EEXIST;
 
                 if (memcmp(child->symlink_target, buf, l) != 0)
@@ -1423,7 +1423,7 @@ int ca_decoder_put_data_fd(CaDecoder *d, int fd, uint64_t offset, uint64_t size)
         if (l == 0)
                 d->eof = true;
 
-        assert(l <= size);
+        assert(l <= (ssize_t) size);
         realloc_buffer_shorten(&d->buffer, size - l);
 
         return 0;
