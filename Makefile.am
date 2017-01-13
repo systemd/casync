@@ -53,7 +53,7 @@ AM_CFLAGS = \
 
 AM_CPPFLAGS = \
 	-include $(top_builddir)/config.h \
-	-I $(top_srcdir)
+	-I $(top_srcdir)/src
 
 tests = \
 	test-caencoder \
@@ -66,20 +66,20 @@ noinst_PROGRAMS = $(tests)
 TESTS = $(tests)
 
 lib_SOURCES = \
-	cadecoder.c \
-	caencoder.c \
-	caindex.c \
-	caformat-util.c \
-	castore.c \
-	casync.c \
-	chunker.c \
-	objectid.c \
-	realloc-buffer.c \
-	util.c
+	src/cadecoder.c \
+	src/caencoder.c \
+	src/caindex.c \
+	src/caformat-util.c \
+	src/castore.c \
+	src/casync.c \
+	src/chunker.c \
+	src/objectid.c \
+	src/realloc-buffer.c \
+	src/util.c
 
 ## casync
 
-casync_SOURCES = casync-tool.c $(lib_SOURCES)
+casync_SOURCES = src/casync-tool.c $(lib_SOURCES)
 
 casync_CFLAGS = \
 	$(AM_CFLAGS) \
@@ -93,7 +93,7 @@ casync_LDADD = \
 
 ## test-caencoder
 
-test_caencoder_SOURCES = test-caencoder.c $(lib_SOURCES)
+test_caencoder_SOURCES = test/test-caencoder.c $(lib_SOURCES)
 
 test_caencoder_CFLAGS = \
 	$(AM_CFLAGS) \
@@ -107,7 +107,7 @@ test_caencoder_LDADD = \
 
 ## test-chunker
 
-test_chunker_SOURCES = test-chunker.c $(lib_SOURCES)
+test_chunker_SOURCES = test/test-chunker.c $(lib_SOURCES)
 
 test_chunker_CFLAGS = \
 	$(AM_CFLAGS) \
@@ -120,7 +120,7 @@ test_chunker_LDADD = \
 
 ## test-casync
 
-test_casync_SOURCES = test-casync.c $(lib_SOURCES)
+test_casync_SOURCES = test/test-casync.c $(lib_SOURCES)
 
 test_casync_CFLAGS = \
 	$(AM_CFLAGS) \
