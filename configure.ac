@@ -27,16 +27,9 @@ AC_CHECK_DECLS([
 #include <linux/random.h>
 ]])
 
-m4_define([AM_PATH_LIBGCRYPT_FAIL],
-        [{ test "x$have_gcrypt" != xyes || AC_MSG_ERROR([*** GCRYPT headers not found.]); }]
-)
-m4_ifdef([AM_PATH_LIBGCRYPT], [AM_PATH_LIBGCRYPT(
-                [1.4.5],
-                [have_gcrypt=yes],
-                [AM_PATH_LIBGCRYPT_FAIL]
-        )],
-        [AM_PATH_LIBGCRYPT_FAIL]
-)
+AM_PATH_LIBGCRYPT([1.4.5],, AC_MSG_ERROR([*** libgcrypt was not found.]))
+AC_SUBST([LIBGCRYPT_CFLAGS])
+AC_SUBST([LIBGCRYPT_LIBS])
 
 PKG_CHECK_MODULES(LIBLZMA, [liblzma >= 5.2.2],
                   [], [AC_MSG_ERROR([*** lzma library not found])])
