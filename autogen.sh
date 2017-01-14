@@ -1,6 +1,6 @@
 #!/bin/sh
 
-#  This file is part of systemd-journal-remote.
+#  This file is part of casync
 #
 #  systemd is free software; you can redistribute it and/or modify it
 #  under the terms of the GNU Lesser General Public License as published by
