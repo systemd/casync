@@ -4,7 +4,6 @@
 #include "objectid.h"
 
 typedef struct CaStore CaStore;
-typedef struct CaStream CaStream;
 
 typedef enum CaStoreType {
         CA_STORE_LOCAL,
