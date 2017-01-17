@@ -312,7 +312,7 @@ int ca_sync_set_archive_path(CaSync *s, const char *path) {
         return 0;
 }
 
-int ca_sync_set_store_local(CaSync *s, const char *path) {
+int ca_sync_set_store(CaSync *s, const char *path) {
         int r;
 
         if (!s)
@@ -336,7 +336,7 @@ int ca_sync_set_store_local(CaSync *s, const char *path) {
         return 0;
 }
 
-int ca_sync_add_seed_store_local(CaSync *s, const char *path) {
+int ca_sync_add_store(CaSync *s, const char *path) {
         CaStore **array, *store;
         int r;
 
@@ -380,7 +380,7 @@ static int ca_sync_extend_seeds_array(CaSync *s) {
         return 0;
 }
 
-int ca_sync_add_seed_base_fd(CaSync *s, int fd) {
+int ca_sync_add_seed_fd(CaSync *s, int fd) {
         CaSeed *seed;
         int r;
 
@@ -407,7 +407,7 @@ int ca_sync_add_seed_base_fd(CaSync *s, int fd) {
         return 0;
 }
 
-int ca_sync_add_seed_base_path(CaSync *s, const char *path) {
+int ca_sync_add_seed_path(CaSync *s, const char *path) {
         CaSeed *seed;
         int r;
 

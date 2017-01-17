@@ -32,13 +32,15 @@ int ca_sync_set_base_mode(CaSync *sync, mode_t mode);
 int ca_sync_set_archive_fd(CaSync *sync, int fd);
 int ca_sync_set_archive_path(CaSync *sync, const char *path);
 
-/* The store to place data in */
-int ca_sync_set_store_local(CaSync *sync, const char *path);
+/* The store to place data in (i.e. the "primary" store) */
+int ca_sync_set_store(CaSync *sync, const char *path);
 
 /* Additional seeds to use */
-int ca_sync_add_seed_base_fd(CaSync *sync, int fd);
-int ca_sync_add_seed_base_path(CaSync *sync, const char *path);
-int ca_sync_add_seed_store_local(CaSync *sync, const char *path);
+int ca_sync_add_seed_fd(CaSync *sync, int fd);
+int ca_sync_add_seed_path(CaSync *sync, const char *path);
+
+/* Additional stores to use */
+int ca_sync_add_store(CaSync *sync, const char *path);
 
 int ca_sync_step(CaSync *sync);
 

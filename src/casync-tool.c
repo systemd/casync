@@ -137,13 +137,13 @@ static int load_seeds_and_extra_stores(CaSync *s) {
         assert(s);
 
         STRV_FOREACH(i, arg_extra_stores) {
-                r = ca_sync_add_seed_store_local(s, *i);
+                r = ca_sync_add_store(s, *i);
                 if (r < 0)
                         fprintf(stderr, "Failed to add extra store %s, ignoring: %s\n", *i, strerror(-r));
         }
 
         STRV_FOREACH(i, arg_seeds) {
-                r = ca_sync_add_seed_base_path(s, *i);
+                r = ca_sync_add_seed_path(s, *i);
                 if (r < 0)
                         fprintf(stderr, "Failed to add seed %s, ignoring: %s\n", *i, strerror(-r));
         }
@@ -303,7 +303,7 @@ static int make(int argc, char *argv[]) {
         }
 
         if (arg_store) {
-                r = ca_sync_set_store_local(s, arg_store);
+                r = ca_sync_set_store(s, arg_store);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
                         goto finish;
@@ -508,7 +508,7 @@ static int extract(int argc, char *argv[]) {
         input_fd = -1;
 
         if (arg_store) {
-                r = ca_sync_set_store_local(s, arg_store);
+                r = ca_sync_set_store(s, arg_store);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
                         goto finish;
@@ -681,7 +681,7 @@ static int list(int argc, char *argv[]) {
         }
 
         if (arg_store) {
-                r = ca_sync_set_store_local(s, arg_store);
+                r = ca_sync_set_store(s, arg_store);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
                         goto finish;
@@ -864,7 +864,7 @@ static int digest(int argc, char *argv[]) {
         }
 
         if (arg_store) {
-                r = ca_sync_set_store_local(s, arg_store);
+                r = ca_sync_set_store(s, arg_store);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
                         goto finish;
