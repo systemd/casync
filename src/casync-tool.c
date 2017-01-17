@@ -11,7 +11,8 @@
 
 static bool arg_verbose = false;
 static char *arg_store = NULL;
-/* static char **arg_seed_store = NULL; */
+static char **arg_extra_stores = NULL;
+static char **arg_seeds = NULL;
 
 static void help(void) {
         printf("%1$s [OPTIONS...] make ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX PATH\n"
@@ -21,7 +22,9 @@ static void help(void) {
                "Content-Addressable Data Synchronization Tool\n\n"
                "  -h --help                Show this help\n"
                "  -v --verbose             Show terse status information during runtime\n"
-               "     --store=PATH          The primary object store to use\n",
+               "     --store=PATH          The primary object store to use\n"
+               "     --extra-store=PATH    Additional object store to look for objects in\n"
+               "     --seed=PATH           Additional file or directory to use as seed\n",
                program_invocation_short_name);
 }
 
@@ -29,16 +32,20 @@ static int parse_argv(int argc, char *argv[]) {
 
         enum {
                 ARG_STORE = 0x100,
+                ARG_EXTRA_STORE,
+                ARG_SEED,
         };
 
         static const struct option options[] = {
-                { "help",      no_argument,       NULL, 'h'           },
-                { "verbose",   no_argument,       NULL, 'v'           },
-                { "store",     required_argument, NULL, ARG_STORE     },
+                { "help",        no_argument,       NULL, 'h'             },
+                { "verbose",     no_argument,       NULL, 'v'             },
+                { "store",       required_argument, NULL, ARG_STORE       },
+                { "extra-store", required_argument, NULL, ARG_EXTRA_STORE },
+                { "seed",        required_argument, NULL, ARG_SEED        },
                 {}
         };
 
-        int c;
+        int c, r;
 
         assert(argc >= 0);
         assert(argv);
@@ -66,6 +73,21 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_store = p;
                         break;
                 }
+
+                case ARG_EXTRA_STORE:
+
+                        r = strv_extend(&arg_extra_stores, optarg);
+                        if (r < 0)
+                                return log_oom();
+
+                        break;
+
+                case ARG_SEED:
+                        r = strv_extend(&arg_seeds, optarg);
+                        if (r < 0)
+                                return log_oom();
+
+                        break;
 
                 case '?':
                         return -EINVAL;
@@ -108,7 +130,28 @@ static int set_default_store(const char *index_path) {
         return 1;
 }
 
-static int verbose_print_path(CaSync *s) {
+static int load_seeds_and_extra_stores(CaSync *s) {
+        char **i;
+        int r;
+
+        assert(s);
+
+        STRV_FOREACH(i, arg_extra_stores) {
+                r = ca_sync_add_seed_store_local(s, *i);
+                if (r < 0)
+                        fprintf(stderr, "Failed to add extra store %s, ignoring: %s\n", *i, strerror(-r));
+        }
+
+        STRV_FOREACH(i, arg_seeds) {
+                r = ca_sync_add_seed_base_path(s, *i);
+                if (r < 0)
+                        fprintf(stderr, "Failed to add seed %s, ignoring: %s\n", *i, strerror(-r));
+        }
+
+        return 0;
+}
+
+static int verbose_print_path(CaSync *s, const char *verb) {
         char *path;
         int r;
 
@@ -116,9 +159,17 @@ static int verbose_print_path(CaSync *s) {
                 return 0;
 
         r = ca_sync_current_path(s, &path);
+        if (r == -ENOTDIR) /* Root isn't a directory */
+                return 0;
+
         if (r < 0) {
                 fprintf(stderr, "Failed to query current path: %s\n", strerror(-r));
                 return r;
+        }
+
+        if (verb) {
+                fputs(verb, stderr);
+                fputc(' ', stderr);
         }
 
         fprintf(stderr, "%s\n", path);
@@ -280,7 +331,7 @@ static int make(int argc, char *argv[]) {
                 }
 
                 case CA_SYNC_NEXT_FILE:
-                        r = verbose_print_path(s);
+                        r = verbose_print_path(s, "Packing");
                         if (r < 0)
                                 goto finish;
                         break;
@@ -464,6 +515,10 @@ static int extract(int argc, char *argv[]) {
                 }
         }
 
+        r = load_seeds_and_extra_stores(s);
+        if (r < 0)
+                goto finish;
+
         for (;;) {
                 r = ca_sync_step(s);
                 if (r < 0) {
@@ -481,7 +536,18 @@ static int extract(int argc, char *argv[]) {
                         break;
 
                 case CA_SYNC_NEXT_FILE: {
-                        r = verbose_print_path(s);
+                        r = verbose_print_path(s, "Extracting");
+                        if (r < 0)
+                                goto finish;
+
+                        break;
+                }
+
+                case CA_SYNC_SEED_STEP:
+                        break;
+
+                case CA_SYNC_SEED_NEXT_FILE: {
+                        r = verbose_print_path(s, "Seeding");
                         if (r < 0)
                                 goto finish;
 
@@ -622,6 +688,10 @@ static int list(int argc, char *argv[]) {
                 }
         }
 
+        r = load_seeds_and_extra_stores(s);
+        if (r < 0)
+                goto finish;
+
         for (;;) {
                 r = ca_sync_step(s);
                 if (r < 0) {
@@ -656,6 +726,17 @@ static int list(int argc, char *argv[]) {
 
                         printf("%s %s\n", ls_format_mode(mode, ls_mode), path);
                         free(path);
+                        break;
+                }
+
+                case CA_SYNC_SEED_STEP:
+                        break;
+
+                case CA_SYNC_SEED_NEXT_FILE: {
+                        r = verbose_print_path(s, "Seeding");
+                        if (r < 0)
+                                goto finish;
+
                         break;
                 }}
         }
@@ -790,6 +871,10 @@ static int digest(int argc, char *argv[]) {
                 }
         }
 
+        r = load_seeds_and_extra_stores(s);
+        if (r < 0)
+                goto finish;
+
         for (;;) {
                 r = ca_sync_step(s);
                 if (r < 0) {
@@ -813,11 +898,21 @@ static int digest(int argc, char *argv[]) {
                         break;
 
                 case CA_SYNC_NEXT_FILE:
-                        r = verbose_print_path(s);
+                        r = verbose_print_path(s, "Processing");
                         if (r < 0)
                                 goto finish;
                         break;
-                }
+
+                case CA_SYNC_SEED_STEP:
+                        break;
+
+                case CA_SYNC_SEED_NEXT_FILE: {
+                        r = verbose_print_path(s, "Seeding");
+                        if (r < 0)
+                                goto finish;
+
+                        break;
+                }}
         }
 
 finish:
@@ -867,6 +962,8 @@ int main(int argc, char *argv[]) {
 
 finish:
         free(arg_store);
+        strv_free(arg_extra_stores);
+        strv_free(arg_seeds);
 
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

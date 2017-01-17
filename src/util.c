@@ -461,3 +461,190 @@ char* ls_format_mode(mode_t m, char ret[LS_FORMAT_MODE_MAX]) {
 
         return ret;
 }
+
+int safe_atou(const char *s, unsigned *ret_u) {
+        char *x = NULL;
+        unsigned long l;
+
+        assert(s);
+        assert(ret_u);
+
+        /* strtoul() is happy to parse negative values, and silently
+         * converts them to unsigned values without generating an
+         * error. We want a clean error, hence let's look for the "-"
+         * prefix on our own, and generate an error. But let's do so
+         * only after strtoul() validated that the string is clean
+         * otherwise, so that we return EINVAL preferably over
+         * ERANGE. */
+
+        s += strspn(s, WHITESPACE);
+
+        errno = 0;
+        l = strtoul(s, &x, 0);
+        if (errno > 0)
+                return -errno;
+        if (!x || x == s || *x)
+                return -EINVAL;
+        if (s[0] == '-')
+                return -ERANGE;
+        if ((unsigned long) (unsigned) l != l)
+                return -ERANGE;
+
+        *ret_u = (unsigned) l;
+        return 0;
+}
+
+int safe_atollu(const char *s, long long unsigned *ret_llu) {
+        char *x = NULL;
+        unsigned long long l;
+
+        assert(s);
+        assert(ret_llu);
+
+        s += strspn(s, WHITESPACE);
+
+        errno = 0;
+        l = strtoull(s, &x, 0);
+        if (errno > 0)
+                return -errno;
+        if (!x || x == s || *x)
+                return -EINVAL;
+        if (*s == '-')
+                return -ERANGE;
+
+        *ret_llu = l;
+        return 0;
+}
+
+int readlinkat_malloc(int fd, const char *p, char **ret) {
+        size_t l = 100;
+        int r;
+
+        assert(p);
+        assert(ret);
+
+        for (;;) {
+                char *c;
+                ssize_t n;
+
+                c = new(char, l);
+                if (!c)
+                        return -ENOMEM;
+
+                n = readlinkat(fd, p, c, l-1);
+                if (n < 0) {
+                        r = -errno;
+                        free(c);
+                        return r;
+                }
+
+                if ((size_t) n < l-1) {
+                        c[n] = 0;
+                        *ret = c;
+                        return 0;
+                }
+
+                free(c);
+                l *= 2;
+        }
+}
+
+int readlink_malloc(const char *p, char **ret) {
+        return readlinkat_malloc(AT_FDCWD, p, ret);
+}
+
+char **strv_free(char **l) {
+        char **k;
+
+        if (!l)
+                return NULL;
+
+        for (k = l; *k; k++)
+                free(*k);
+
+        return mfree(l);
+}
+
+size_t strv_length(char **l) {
+        size_t n = 0;
+
+        if (!l)
+                return 0;
+
+        for (; *l; l++)
+                n++;
+
+        return n;
+}
+
+int strv_push(char ***l, char *value) {
+        char **c;
+        unsigned n, m;
+
+        assert(l);
+
+        if (!value)
+                return 0;
+
+        n = strv_length(*l);
+
+        /* Increase and check for overflow */
+        m = n + 2;
+        if (m < n)
+                return -ENOMEM;
+
+        c = realloc_multiply(*l, sizeof(char*), m);
+        if (!c)
+                return -ENOMEM;
+
+        c[n] = value;
+        c[n+1] = NULL;
+
+        *l = c;
+        return 0;
+}
+
+int strv_consume(char ***l, char *value) {
+        int r;
+
+        assert(l);
+
+        r = strv_push(l, value);
+        if (r < 0)
+                free(value);
+
+        return r;
+}
+
+int strv_extend(char ***l, const char *value) {
+        char *v;
+
+        assert(l);
+
+        if (!value)
+                return 0;
+
+        v = strdup(value);
+        if (!v)
+                return -ENOMEM;
+
+        return strv_consume(l, v);
+}
+
+int xopendirat(int fd, const char *name, int flags, DIR **ret) {
+        int nfd;
+        DIR *d;
+
+        nfd = openat(fd, name, O_RDONLY|O_NONBLOCK|O_DIRECTORY|O_CLOEXEC|flags, 0);
+        if (nfd < 0)
+                return -errno;
+
+        d = fdopendir(nfd);
+        if (!d) {
+                safe_close(nfd);
+                return -errno;
+        }
+
+        *ret = d;
+        return 0;
+}

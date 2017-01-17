@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <sys/types.h>
 
+#include "calocation.h"
+
 typedef struct CaEncoder CaEncoder;
 
 enum {
@@ -31,5 +33,9 @@ int ca_encoder_current_path(CaEncoder *e, char **ret);
 int ca_encoder_current_mode(CaEncoder *d, mode_t *ret);
 int ca_encoder_current_payload_offset(CaEncoder *e, uint64_t *ret);
 int ca_encoder_current_archive_offset(CaEncoder *e, uint64_t *ret);
+
+int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret);
+
+int ca_encoder_seek(CaEncoder *e, CaLocation *location);
 
 #endif

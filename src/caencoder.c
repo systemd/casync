@@ -327,7 +327,7 @@ static int ca_encoder_node_read_symlink(
 static void ca_encoder_forget_children(CaEncoder *e) {
         assert(e);
 
-        while (e->n_nodes-1 > e->node_idx)
+        while (e->n_nodes > e->node_idx+1)
                 ca_encoder_node_free(e->nodes + --e->n_nodes);
 }
 
@@ -572,7 +572,8 @@ int ca_encoder_step(CaEncoder *e) {
                 return CA_ENCODER_FINISHED;
 
         e->payload_offset += e->step_size;
-        e->archive_offset += e->step_size;
+        if (e->archive_offset != UINT64_MAX)
+                e->archive_offset += e->step_size;
         e->step_size = 0;
 
         for (;;) {
@@ -872,6 +873,12 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
                 default:
                         return -ENOTTY;
                 }
+
+                /* When we got here due to a seek, there might be an additional offset set, simply drop it form our generated buffer. */
+                r = realloc_buffer_advance(&e->buffer, e->payload_offset);
+                if (r < 0)
+                        return r;
+
         } else
                 return -ENOTTY;
         if (r < 0)
@@ -891,27 +898,32 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
         return 1;
 }
 
-int ca_encoder_current_path(CaEncoder *e, char **ret) {
+static int ca_encoder_node_path(CaEncoder *e, CaEncoderNode *node, char **ret) {
         char *p = NULL;
         size_t n = 0, i;
+        bool found = false;
 
         if (!e)
+                return -EINVAL;
+        if (!node)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
 
-        if (e->n_nodes <= 0)
-                return -EUNATCH;
-
-        for (i = 0; i < e->n_nodes; i++) {
-                CaEncoderNode *node;
+        for (i = 0; i <= e->n_nodes; i++) {
+                CaEncoderNode *in;
                 const struct dirent *de;
                 char *np, *q;
                 size_t k, nn;
 
-                node = e->nodes + i;
+                in = e->nodes + i;
 
-                de = ca_encoder_node_current_dirent(node);
+                if (in == node) {
+                        found = true;
+                        break;
+                }
+
+                de = ca_encoder_node_current_dirent(in);
                 if (!de)
                         break;
 
@@ -934,11 +946,34 @@ int ca_encoder_current_path(CaEncoder *e, char **ret) {
                 n = nn;
         }
 
+        if (!found) {
+                free(p);
+                return -EINVAL;
+        }
+
         if (!p)
                 return -ENOTDIR;
 
         *ret = p;
         return 0;
+}
+
+int ca_encoder_current_path(CaEncoder *e, char **ret) {
+        CaEncoderNode *node;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        node = ca_encoder_current_child_node(e);
+        if (!node) {
+                node = ca_encoder_current_node(e);
+                if (!node)
+                        return -EUNATCH;
+        }
+
+        return ca_encoder_node_path(e, node, ret);
 }
 
 int ca_encoder_current_mode(CaEncoder *e, mode_t *ret) {
@@ -984,7 +1019,291 @@ int ca_encoder_current_archive_offset(CaEncoder *e, uint64_t *ret) {
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
+        if (e->archive_offset == UINT64_MAX)
+                return -ENODATA;
 
         *ret = e->archive_offset;
+        return 0;
+}
+
+int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret) {
+        CaLocationDesignator designator;
+        CaEncoderNode *node;
+        char *path = NULL;
+        CaLocation *l;
+        int r;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        node = ca_encoder_current_node(e);
+        if (!node)
+                return -EUNATCH;
+
+        if (S_ISREG(node->stat.st_mode) || S_ISBLK(node->stat.st_mode)) {
+
+                if (e->state != CA_ENCODER_INIT)
+                        return -ENOTTY;
+
+                designator = CA_LOCATION_PAYLOAD;
+
+        } else if (S_ISDIR(node->stat.st_mode)) {
+
+                switch (e->state) {
+
+                case CA_ENCODER_HELLO:
+                        designator = CA_LOCATION_HELLO;
+                        break;
+
+                case CA_ENCODER_ENTRY:
+                        node = ca_encoder_current_child_node(e);
+                        if (!node)
+                                return -EUNATCH;
+
+                        designator = CA_LOCATION_ENTRY;
+                        break;
+
+                case CA_ENCODER_GOODBYE:
+                        designator = CA_LOCATION_GOODBYE;
+                        break;
+
+                default:
+                        return -ENOTTY;
+                }
+        } else
+                return -ENOTTY;
+
+        r = ca_encoder_node_path(e, node, &path);
+        if (r < 0 && r != -ENOTDIR)
+                return r;
+
+        r = ca_location_new(path, designator, e->payload_offset + add, UINT64_MAX, &l);
+        free(path);
+        if (r < 0)
+                return r;
+
+        *ret = l;
+        return 0;
+}
+
+static int dirent_bsearch_func(const void *key, const void *member) {
+        const char *k = key;
+        const struct dirent ** const m = (const struct dirent ** const) member;
+
+        return strcmp(k, (*m)->d_name);
+}
+
+static int ca_encoder_node_seek_child(CaEncoder *e, CaEncoderNode *n, const char *name) {
+        struct dirent **found;
+        int r;
+
+        assert(n);
+
+        if (!S_ISDIR(n->stat.st_mode))
+                return -ENOTDIR;
+
+        r = ca_encoder_node_read_dirents(n);
+        if (r < 0)
+                return r;
+
+        found = bsearch(name, n->dirents, n->n_dirents, sizeof(struct dirent*), dirent_bsearch_func);
+        if (!found)
+                return -ENOENT;
+
+        assert(found >= n->dirents);
+        assert((size_t) (found - n->dirents) < n->n_dirents);
+        n->dirent_idx = found - n->dirents;
+
+        return ca_encoder_open_child(e, *found);
+}
+
+static int ca_encoder_seek_path(CaEncoder *e, const char *path) {
+        CaEncoderNode *node;
+        int r;
+
+        assert(e);
+        assert(path);
+
+        /* fprintf(stderr, "seeking to: %s\n", path); */
+
+        node = ca_encoder_current_node(e);
+        if (!node)
+                return -EUNATCH;
+
+        for (;;) {
+                size_t l = strcspn(path, "/");
+                char name[l + 1];
+
+                if (l <= 0)
+                        return -EINVAL;
+
+                if (!S_ISDIR(node->stat.st_mode))
+                        return -ENOTDIR;
+
+                memcpy(name, path, l);
+                name[l] = 0;
+
+                r = ca_encoder_node_seek_child(e, node, name);
+                if (r < 0)
+                        return r;
+
+                path += l;
+                if (*path == 0)
+                        break;
+                path++;
+
+                r = ca_encoder_enter_child(e);
+                if (r < 0)
+                        return r;
+
+                node = ca_encoder_current_node(e);
+                assert(node);
+        }
+
+        return 0;
+}
+
+static int ca_encoder_seek_path_and_enter(CaEncoder *e, const char *path) {
+        int r;
+
+        assert(e);
+
+        if (isempty(path))
+                return 0;
+
+        r = ca_encoder_seek_path(e, path);
+        if (r < 0)
+                return r;
+
+        return ca_encoder_enter_child(e);
+}
+
+int ca_encoder_seek(CaEncoder *e, CaLocation *location) {
+        CaEncoderNode *node;
+        int r;
+
+        if (!e)
+                return -EINVAL;
+        if (!location)
+                return -EINVAL;
+        if (location->size == 0)
+                return -EINVAL;
+        if (!CA_LOCATION_DESIGNATOR_VALID(location->designator))
+                return -EINVAL;
+
+        if (e->n_nodes == 0)
+                return -EUNATCH;
+
+        e->node_idx = 0;
+        ca_encoder_forget_children(e);
+
+        switch (location->designator) {
+
+        case CA_LOCATION_PAYLOAD: {
+                uint64_t size;
+
+                r = ca_encoder_seek_path_and_enter(e, location->path);
+                if (r < 0)
+                        return r;
+
+                node = ca_encoder_current_node(e);
+                assert(node);
+
+                if (!S_ISREG(node->stat.st_mode) && !S_ISBLK(node->stat.st_mode))
+                        return -EISDIR;
+
+                r = ca_encoder_node_get_payload_size(node, &size);
+                if (r < 0)
+                        return r;
+
+                if (location->offset >= size)
+                        return -ENXIO;
+
+                if (lseek(node->fd, location->offset, SEEK_SET) == (off_t) -1)
+                        return -errno;
+
+                ca_encoder_enter_state(e, CA_ENCODER_INIT);
+                e->payload_offset = location->offset;
+
+                if (e->node_idx == 0)
+                        e->archive_offset = location->offset;
+                else
+                        e->archive_offset = UINT64_MAX;
+
+                return CA_ENCODER_DATA;
+        }
+
+        case CA_LOCATION_HELLO:
+
+                r = ca_encoder_seek_path_and_enter(e, location->path);
+                if (r < 0)
+                        return r;
+
+                node = ca_encoder_current_node(e);
+                assert(node);
+
+                if (!S_ISDIR(node->stat.st_mode))
+                        return -ENOTDIR;
+
+                node->dirent_idx = 0;
+                ca_encoder_enter_state(e, CA_ENCODER_HELLO);
+
+                e->payload_offset = location->offset;
+                e->archive_offset = UINT64_MAX;
+
+                return CA_ENCODER_DATA;
+
+        case CA_LOCATION_ENTRY:
+
+                if (isempty(location->path))
+                        return -ENOTDIR;
+
+                r = ca_encoder_seek_path(e, location->path);
+                if (r < 0)
+                        return r;
+
+                node = ca_encoder_current_node(e);
+                assert(node);
+
+                if (!S_ISDIR(node->stat.st_mode))
+                        return -ENOTDIR;
+
+                ca_encoder_enter_state(e, CA_ENCODER_ENTRY);
+
+                e->payload_offset = location->offset;
+                e->archive_offset = UINT64_MAX;
+
+                return CA_ENCODER_DATA;
+
+        case CA_LOCATION_GOODBYE:
+
+                r = ca_encoder_seek_path_and_enter(e, location->path);
+                if (r < 0)
+                        return r;
+
+                node = ca_encoder_current_node(e);
+                assert(node);
+
+                if (!S_ISDIR(node->stat.st_mode))
+                        return -ENOTDIR;
+
+                r = ca_encoder_node_read_dirents(node);
+                if (r < 0)
+                        return r;
+
+                node->dirent_idx = node->n_dirents;
+                ca_encoder_enter_state(e, CA_ENCODER_GOODBYE);
+
+                e->payload_offset = location->offset;
+                e->archive_offset = UINT64_MAX;
+
+                return CA_ENCODER_DATA;
+
+        default:
+                return -EINVAL;
+        }
+
         return 0;
 }

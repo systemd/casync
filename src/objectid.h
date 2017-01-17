@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <sys/types.h>
+#include <gcrypt.h>
 
 #define OBJECT_ID_SIZE 32
 #define OBJECT_ID_FORMAT_MAX (OBJECT_ID_SIZE*2+1)
@@ -35,5 +36,7 @@ static inline bool object_id_is_null(const ObjectID *a) {
 
         return true;
 }
+
+int object_id_make(gcry_md_hd_t *digest, const void *p, size_t l, ObjectID *ret);
 
 #endif

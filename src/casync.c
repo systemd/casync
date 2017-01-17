@@ -5,11 +5,16 @@
 #include "cadecoder.h"
 #include "caencoder.h"
 #include "caindex.h"
+#include "caseed.h"
 #include "castore.h"
 #include "casync.h"
 #include "chunker.h"
+#include "gcrypt-util.h"
 #include "realloc-buffer.h"
 #include "util.h"
+
+/* #undef EBADMSG */
+/* #define EBADMSG __LINE__ */
 
 typedef enum CaDirection {
         CA_SYNC_ENCODE,
@@ -25,6 +30,10 @@ typedef struct CaSync {
         CaStore *wstore;
         CaStore **rstores;
         size_t n_rstores;
+
+        CaSeed **seeds;
+        size_t n_seeds;
+        size_t current_seed;
 
         CaChunker chunker;
 
@@ -97,6 +106,10 @@ CaSync *ca_sync_unref(CaSync *s) {
         for (i = 0; i < s->n_rstores; i++)
                 ca_store_unref(s->rstores[i]);
         free(s->rstores);
+
+        for (i = 0; i < s->n_seeds; i++)
+                ca_seed_unref(s->seeds[i]);
+        free(s->seeds);
 
         safe_close(s->base_fd);
         safe_close(s->archive_fd);
@@ -342,7 +355,7 @@ int ca_sync_add_seed_store_local(CaSync *s, const char *path) {
                 return r;
         }
 
-        array = realloc(s->rstores, sizeof(CaStore*) * (s->n_rstores+1));
+        array = realloc_multiply(s->rstores, sizeof(CaStore*), s->n_rstores+1);
         if (!array) {
                 ca_store_unref(store);
                 return -ENOMEM;
@@ -351,6 +364,73 @@ int ca_sync_add_seed_store_local(CaSync *s, const char *path) {
         s->rstores = array;
         s->rstores[s->n_rstores++] = store;
 
+        return 0;
+}
+
+static int ca_sync_extend_seeds_array(CaSync *s) {
+        CaSeed **new_seeds;
+
+        assert(s);
+
+        new_seeds = realloc_multiply(s->seeds, sizeof(CaSeed*), s->n_seeds+1);
+        if (!new_seeds)
+                return -ENOMEM;
+
+        s->seeds = new_seeds;
+        return 0;
+}
+
+int ca_sync_add_seed_base_fd(CaSync *s, int fd) {
+        CaSeed *seed;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (fd < 0)
+                return -EINVAL;
+
+        r = ca_sync_extend_seeds_array(s);
+        if (r < 0)
+                return r;
+
+        seed = ca_seed_new();
+        if (!seed)
+                return -ENOMEM;
+
+        r = ca_seed_set_base_fd(seed, fd);
+        if (r < 0) {
+                ca_seed_unref(seed);
+                return r;
+        }
+
+        s->seeds[s->n_seeds++] = seed;
+        return 0;
+}
+
+int ca_sync_add_seed_base_path(CaSync *s, const char *path) {
+        CaSeed *seed;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!path)
+                return -EINVAL;
+
+        r = ca_sync_extend_seeds_array(s);
+        if (r < 0)
+                return r;
+
+        seed = ca_seed_new();
+        if (!seed)
+                return -ENOMEM;
+
+        r = ca_seed_set_base_path(seed, path);
+        if (r < 0) {
+                ca_seed_unref(seed);
+                return r;
+        }
+
+        s->seeds[s->n_seeds++] = seed;
         return 0;
 }
 
@@ -470,19 +550,6 @@ static int ca_sync_write_archive(CaSync *s, const void *p, size_t l) {
                 return 0;
 
         return loop_write(s->archive_fd, p, l);
-}
-
-static void initialize_libgcrypt(void) {
-        const char *p;
-
-        if (gcry_control(GCRYCTL_INITIALIZATION_FINISHED_P))
-                return;
-
-        p = gcry_check_version("1.4.5");
-        assert(p);
-
-        gcry_control(GCRYCTL_DISABLE_SECMEM);
-        gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
 }
 
 static int ca_sync_allocate_archive_digest(CaSync *s) {
@@ -721,7 +788,6 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                 }
 
                 r = ca_decoder_put_data(s->decoder, p, index_size);
-                free(p);
                 if (r < 0)
                         return r;
 
@@ -793,6 +859,28 @@ static int ca_sync_step_decode(CaSync *s) {
         return -ENOTTY;
 }
 
+static int ca_sync_seed_step(CaSync *s) {
+        int r;
+
+        assert(s);
+
+        for (;;) {
+                CaSeed *seed;
+
+                if (s->current_seed >= s->n_seeds)
+                        return CA_SEED_READY;
+
+                seed = s->seeds[s->current_seed];
+                assert(seed);
+
+                r = ca_seed_step(seed);
+                if (r != CA_SEED_READY)
+                        return r;
+
+                s->current_seed++;
+        }
+}
+
 int ca_sync_step(CaSync *s) {
         int r;
 
@@ -802,6 +890,24 @@ int ca_sync_step(CaSync *s) {
         r = ca_sync_start(s);
         if (r < 0)
                 return r;
+
+        r = ca_sync_seed_step(s);
+        if (r < 0)
+                return r;
+        switch (r) {
+
+        case CA_SEED_READY:
+                break;
+
+        case CA_SEED_STEP:
+                return CA_SYNC_SEED_STEP;
+
+        case CA_SEED_NEXT_FILE:
+                return CA_SYNC_SEED_NEXT_FILE;
+
+        default:
+                assert(false);
+        }
 
         if (s->direction == CA_SYNC_ENCODE)
                 return ca_sync_step_encode(s);
@@ -823,6 +929,17 @@ int ca_sync_get(CaSync *s, const ObjectID *object_id, void **ret, size_t *ret_si
                 return -EINVAL;
         if (!ret_size)
                 return -EINVAL;
+
+        for (i = 0; i < s->n_seeds; i++) {
+                r = ca_seed_get(s->seeds[i], object_id, ret, ret_size);
+                if (r == -ESTALE) {
+                        fprintf(stderr, "Object cache is not up-to-date, ignoring.\n");
+                        continue;
+                }
+
+                if (r != -ENOENT)
+                        return r;
+        }
 
         r = ca_store_get(s->wstore, object_id, ret, ret_size);
         if (r != -ENOENT)
@@ -852,8 +969,6 @@ int ca_sync_put(CaSync *s, const ObjectID *object_id, const void *data, size_t s
 }
 
 int ca_sync_make_object_id(CaSync *s, const void *p, size_t l, ObjectID *ret) {
-        unsigned char *q;
-
         if (!s)
                 return -EINVAL;
         if (!p && l > 0)
@@ -861,24 +976,7 @@ int ca_sync_make_object_id(CaSync *s, const void *p, size_t l, ObjectID *ret) {
         if (!ret)
                 return -EINVAL;
 
-        if (!s->object_digest) {
-                initialize_libgcrypt();
-
-                assert(gcry_md_get_algo_dlen(GCRY_MD_SHA256) == sizeof(ObjectID));
-
-                if (gcry_md_open(&s->object_digest, GCRY_MD_SHA256, 0) != 0)
-                        return -EIO;
-        } else
-                gcry_md_reset(s->object_digest);
-
-        gcry_md_write(s->object_digest, p, l);
-
-        q = gcry_md_read(s->object_digest, GCRY_MD_SHA256);
-        if (!q)
-                return -EIO;
-
-        memcpy(ret, q, sizeof(ObjectID));
-        return 0;
+        return object_id_make(&s->object_digest, p, l, ret);
 }
 
 int ca_sync_get_digest(CaSync *s, ObjectID *ret) {
@@ -907,11 +1005,26 @@ int ca_sync_get_digest(CaSync *s, ObjectID *ret) {
 
 }
 
+static CaSeed *ca_sync_current_seed(CaSync *s) {
+        assert(s);
+
+        if (s->current_seed >= s->n_seeds)
+                return NULL;
+
+        return s->seeds[s->current_seed];
+}
+
 int ca_sync_current_path(CaSync *s, char **ret) {
+        CaSeed *seed;
+
         if (!s)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return ca_seed_current_path(seed, ret);
 
         if (s->direction == CA_SYNC_ENCODE && s->encoder)
                 return ca_encoder_current_path(s->encoder, ret);
@@ -922,10 +1035,16 @@ int ca_sync_current_path(CaSync *s, char **ret) {
 }
 
 int ca_sync_current_mode(CaSync *s, mode_t *ret) {
+        CaSeed *seed;
+
         if (!s)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return ca_seed_current_mode(seed, ret);
 
         if (s->direction == CA_SYNC_ENCODE && s->encoder)
                 return ca_encoder_current_mode(s->encoder, ret);

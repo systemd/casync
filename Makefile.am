@@ -67,15 +67,33 @@ TESTS = $(tests)
 
 lib_SOURCES = \
 	src/cadecoder.c \
+	src/cadecoder.h \
 	src/caencoder.c \
-	src/caindex.c \
+	src/caencoder.h \
 	src/caformat-util.c \
+	src/caformat-util.h \
+	src/caformat.h \
+	src/caindex.c \
+	src/caindex.h \
+	src/calocation.c \
+	src/calocation.h \
 	src/castore.c \
+	src/castore.h \
+	src/caseed.c \
+	src/caseed.h \
 	src/casync.c \
+	src/casync.h \
 	src/chunker.c \
+	src/chunker.h \
+	src/def.h \
+	src/gcrypt-util.c \
+	src/gcrypt-util.h \
 	src/objectid.c \
+	src/objectid.h \
 	src/realloc-buffer.c \
-	src/util.c
+	src/realloc-buffer.h \
+	src/util.c \
+	src/util.h
 
 ## casync
 

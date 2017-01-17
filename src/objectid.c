@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <errno.h>
 
+#include "gcrypt-util.h"
 #include "objectid.h"
 
 static char encode_char(uint8_t x) {
@@ -57,4 +58,31 @@ char* object_id_format(const ObjectID *id, char v[OBJECT_ID_FORMAT_MAX]) {
 
         v[sizeof(ObjectID) * 2] = 0;
         return v;
+}
+
+int object_id_make(gcry_md_hd_t *digest, const void *p, size_t l, ObjectID *ret) {
+        const void *q;
+
+        assert(p || l == 0);
+        assert(ret);
+
+        if (*digest)
+                gcry_md_reset(*digest);
+        else {
+                initialize_libgcrypt();
+
+                assert(gcry_md_get_algo_dlen(GCRY_MD_SHA256) == sizeof(ObjectID));
+
+                if (gcry_md_open(digest, GCRY_MD_SHA256, 0) != 0)
+                        return -EIO;
+        }
+
+        gcry_md_write(*digest, p, l);
+
+        q = gcry_md_read(*digest, GCRY_MD_SHA256);
+        if (!q)
+                return -EIO;
+
+        memcpy(ret, q, sizeof(ObjectID));
+        return 0;
 }

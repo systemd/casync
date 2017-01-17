@@ -12,6 +12,7 @@ struct CaStore {
         CaStoreType type;
         char *root;
         bool compress;
+        ReallocBuffer buffer;
 };
 
 CaStore* ca_store_new(void) {
@@ -31,6 +32,7 @@ CaStore* ca_store_unref(CaStore *store) {
                 return NULL;
 
         free(store->root);
+        realloc_buffer_free(&store->buffer);
 
         return mfree(store);
 }
@@ -61,55 +63,49 @@ int ca_store_set_compress(CaStore *store, bool b) {
         return 0;
 }
 
-static int load_uncompressed(int fd, void **ret, size_t *ret_size) {
-        ReallocBuffer buffer = {};
-        int r;
-
+static int load_uncompressed(CaStore *store, int fd, void **ret, size_t *ret_size) {
+        assert(store);
         assert(fd >= 0);
         assert(ret);
         assert(ret_size);
+
+        realloc_buffer_empty(&store->buffer);
 
         for (;;) {
                 ssize_t l;
                 void *p;
 
-                p = realloc_buffer_extend(&buffer, BUFFER_SIZE);
-                if (!p) {
-                        r = -ENOMEM;
-                        goto fail;
-                }
+                p = realloc_buffer_extend(&store->buffer, BUFFER_SIZE);
+                if (!p)
+                        return -ENOMEM;
 
                 l = read(fd, p, BUFFER_SIZE);
-                if (l < 0) {
-                        r = -errno;
-                        goto fail;
-                }
+                if (l < 0)
+                        return -errno;
 
-                realloc_buffer_shorten(&buffer, BUFFER_SIZE - l);
+                realloc_buffer_shorten(&store->buffer, BUFFER_SIZE - l);
                 if (l == 0)
                         break;
         }
 
-        *ret = buffer.data;
-        *ret_size = buffer.size;
+        *ret = store->buffer.data;
+        *ret_size = store->buffer.size;
 
         return 0;
-
-fail:
-        realloc_buffer_free(&buffer);
-        return r;
 }
 
-static int load_compressed(int fd, void **ret, size_t *ret_size) {
-        ReallocBuffer buffer = {};
+static int load_compressed(CaStore *store, int fd, void **ret, size_t *ret_size) {
         lzma_stream xz = {};
         lzma_ret xzr;
         bool got_xz_eof = false;
         int r;
 
+        assert(store);
         assert(fd >= 0);
         assert(ret);
         assert(ret_size);
+
+        realloc_buffer_empty(&store->buffer);
 
         xzr = lzma_stream_decoder(&xz, UINT64_MAX, LZMA_TELL_UNSUPPORTED_CHECK);
         if (xzr != LZMA_OK)
@@ -139,7 +135,7 @@ static int load_compressed(int fd, void **ret, size_t *ret_size) {
                 while (xz.avail_in > 0) {
                         void *p;
 
-                        p = realloc_buffer_extend(&buffer, BUFFER_SIZE);
+                        p = realloc_buffer_extend(&store->buffer, BUFFER_SIZE);
                         if (!p) {
                                 r = -ENOMEM;
                                 goto fail;
@@ -154,7 +150,7 @@ static int load_compressed(int fd, void **ret, size_t *ret_size) {
                                 goto fail;
                         }
 
-                        realloc_buffer_shorten(&buffer, xz.avail_out);
+                        realloc_buffer_shorten(&store->buffer, xz.avail_out);
 
                         if (xzr == LZMA_STREAM_END) {
 
@@ -170,13 +166,12 @@ static int load_compressed(int fd, void **ret, size_t *ret_size) {
 
         lzma_end(&xz);
 
-        *ret = buffer.data;
-        *ret_size = buffer.size;
+        *ret = store->buffer.data;
+        *ret_size = store->buffer.size;
 
         return 0;
 
 fail:
-        realloc_buffer_free(&buffer);
         lzma_end(&xz);
 
         return r;
@@ -216,9 +211,14 @@ int ca_store_get(CaStore *store, const ObjectID *object_id, void **ret, size_t *
                 if (fd < 0)
                         return -errno;
 
-                r = load_compressed(fd, ret, ret_size);
+                r = load_compressed(store, fd, ret, ret_size);
         } else
-                r = load_uncompressed(fd, ret, ret_size);
+                r = load_uncompressed(store, fd, ret, ret_size);
+
+        /* if (r >= 0) { */
+        /*         fprintf(stderr, "FROM STORE (%" PRIu64 ":\n", *ret_size); */
+        /*         hexdump(stderr, *ret, MIN(1024, *ret_size)); */
+        /* } */
 
         /* fprintf(stderr, "Retrieved object %s.\n", sid); */
 

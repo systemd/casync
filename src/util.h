@@ -2,6 +2,7 @@
 #define fooutilhfoo
 
 #include <assert.h>
+#include <dirent.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
@@ -77,8 +78,12 @@ static inline void* mfree(void* p) {
         } while(false)
 
 static inline int safe_close(int fd) {
-        if (fd >= 0)
+        if (fd >= 0) {
+                int saved_errno = errno;
                 assert_se(close(fd) >= 0 || errno != EBADF);
+                errno = saved_errno;
+        }
+
         return -1;
 }
 
@@ -146,6 +151,14 @@ static inline uint64_t random_u64(void) {
 
 #define _sentinel_ __attribute__ ((sentinel))
 #define _unused_ __attribute__ ((unused))
+#define _likely_(x) (__builtin_expect(!!(x),1))
+#define _unlikely_(x) (__builtin_expect(!!(x),0))
+#define _malloc_ __attribute__ ((malloc))
+#ifdef __clang__
+#  define _alloc_(...)
+#else
+#  define _alloc_(...) __attribute__ ((alloc_size(__VA_ARGS__)))
+#endif
 
 #define CASE_F(X) case X:
 #define CASE_F_1(CASE, X) CASE_F(X)
@@ -200,6 +213,10 @@ static inline bool isempty(const char *p) {
         return !p || !p[0];
 }
 
+static inline const char *strempty(const char *p) {
+        return p ?: "";
+}
+
 #define streq(a,b) (strcmp((a),(b)) == 0)
 
 static inline bool streq_ptr(const char *a, const char *b) {
@@ -223,5 +240,83 @@ char *strjoin_real(const char *x, ...) _sentinel_;
 
 #define LS_FORMAT_MODE_MAX (1+3+3+3+1)
 char* ls_format_mode(mode_t m, char ret[LS_FORMAT_MODE_MAX]);
+
+int safe_atou(const char *s, unsigned *ret_u);
+int safe_atollu(const char *s, unsigned long long *ret_u);
+
+static inline int safe_atou64(const char *s, uint64_t *ret_u) {
+        return safe_atollu(s, (unsigned long long*) ret_u);
+}
+
+int readlinkat_malloc(int fd, const char *p, char **ret);
+int readlink_malloc(const char *p, char **ret);
+
+#define strjoina(a, ...)                                                \
+        ({                                                              \
+                const char *_appendees_[] = { a, __VA_ARGS__ };         \
+                char *_d_, *_p_;                                        \
+                int _len_ = 0;                                          \
+                unsigned _i_;                                           \
+                for (_i_ = 0; _i_ < ELEMENTSOF(_appendees_) && _appendees_[_i_]; _i_++) \
+                        _len_ += strlen(_appendees_[_i_]);              \
+                _p_ = _d_ = alloca(_len_ + 1);                          \
+                for (_i_ = 0; _i_ < ELEMENTSOF(_appendees_) && _appendees_[_i_]; _i_++) \
+                        _p_ = stpcpy(_p_, _appendees_[_i_]);            \
+                *_p_ = 0;                                               \
+                _d_;                                                    \
+        })
+
+#define WHITESPACE " \t"
+
+#define ELEMENTSOF(x)                                                    \
+        __extension__ (__builtin_choose_expr(                            \
+                !__builtin_types_compatible_p(typeof(x), typeof(&*(x))), \
+                sizeof(x)/sizeof((x)[0]),                                \
+                (void)0))
+
+char **strv_free(char **l);
+size_t strv_length(char **l);
+int strv_push(char ***l, char *value);
+int strv_consume(char ***l, char *value);
+int strv_extend(char ***l, const char *value);
+
+static inline bool size_multiply_overflow(size_t size, size_t need) {
+        return need != 0 && size > (SIZE_MAX / need);
+}
+
+_malloc_  _alloc_(1, 2) static inline void *malloc_multiply(size_t size, size_t need) {
+        if (_unlikely_(size_multiply_overflow(size, need)))
+                return NULL;
+
+        return malloc(size * need);
+}
+
+_alloc_(2, 3) static inline void *realloc_multiply(void *p, size_t size, size_t need) {
+        if (_unlikely_(size_multiply_overflow(size, need)))
+                return NULL;
+
+        return realloc(p, size * need);
+}
+
+#define STRV_FOREACH(s, l)                      \
+        for ((s) = (l); (s) && *(s); (s)++)
+
+int xopendirat(int fd, const char *name, int flags, DIR **ret);
+
+static inline bool dot_or_dot_dot(const char *p) {
+        if (!p)
+                return false;
+
+        if (p[0] != '.')
+                return false;
+
+        if (p[1] == 0)
+                return true;
+
+        if (p[1] != '.')
+                return false;
+
+        return p[2] == 0;
+}
 
 #endif

@@ -8,9 +8,11 @@
 typedef struct CaSync CaSync;
 
 enum {
-        CA_SYNC_FINISHED  = 0,
-        CA_SYNC_STEP      = 1,
-        CA_SYNC_NEXT_FILE = 2,
+        CA_SYNC_FINISHED,
+        CA_SYNC_STEP,
+        CA_SYNC_NEXT_FILE,
+        CA_SYNC_SEED_STEP,
+        CA_SYNC_SEED_NEXT_FILE,
 };
 
 CaSync *ca_sync_new_encode(void);
@@ -34,8 +36,8 @@ int ca_sync_set_archive_path(CaSync *sync, const char *path);
 int ca_sync_set_store_local(CaSync *sync, const char *path);
 
 /* Additional seeds to use */
-/* int ca_sync_add_seed_base(CaSync *sync, int fd); */
-/* int ca_sync_add_seed_archive(CaSync *sync, int fd); */
+int ca_sync_add_seed_base_fd(CaSync *sync, int fd);
+int ca_sync_add_seed_base_path(CaSync *sync, const char *path);
 int ca_sync_add_seed_store_local(CaSync *sync, const char *path);
 
 int ca_sync_step(CaSync *sync);
