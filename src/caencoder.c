@@ -9,6 +9,7 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <linux/fs.h>
 
 #include "caencoder.h"
 #include "caformat-util.h"
@@ -31,6 +32,9 @@ typedef struct CaEncoderNode {
 
         /* For S_ISBLK */
         uint64_t device_size;
+
+        /* chattr(1) flags */
+        unsigned chattr_flags;
 } CaEncoderNode;
 
 typedef enum CaEncoderState {
@@ -295,7 +299,7 @@ static int ca_encoder_node_read_symlink(
                 return -EBADFD;
 
         if (!S_ISLNK(symlink->stat.st_mode))
-                return -ENOTTY;
+                return 0;
         if (symlink->symlink_target)
                 return 0;
 
@@ -322,6 +326,49 @@ static int ca_encoder_node_read_symlink(
                 free(buf);
                 k *= 2;
         }
+}
+
+static int ca_encoder_node_read_chattr(
+                CaEncoder *e,
+                CaEncoderNode *n,
+                const struct dirent *de,
+                CaEncoderNode *child) {
+
+        int fd, r;
+
+        assert(e);
+        assert(n);
+        assert(de);
+        assert(child);
+
+        if (!S_ISDIR(n->stat.st_mode))
+                return -ENOTDIR;
+        if (n->fd < 0)
+                return -EBADFD;
+
+        if ((e->feature_flags & CA_FORMAT_WITH_CHATTR) == 0)
+                return 0;
+
+        if (child->fd < 0) {
+                fd = openat(n->fd, de->d_name, O_PATH|O_CLOEXEC|O_NOFOLLOW);
+                if (fd < 0)
+                        return -errno;
+        } else
+                fd = child->fd;
+
+        r = ioctl(fd, FS_IOC_GETFLAGS, &n->chattr_flags);
+        if (fd != child->fd)
+                safe_close(fd);
+
+        if (r < 0) {
+                /* If a file system or node type doesn't support chattr flags, then initialize things to zero */
+                if (!IN_SET(errno, ENOTTY, EBADF, EOPNOTSUPP))
+                        return -errno;
+
+                n->chattr_flags = 0;
+        }
+
+        return 0;
 }
 
 static void ca_encoder_forget_children(CaEncoder *e) {
@@ -400,11 +447,13 @@ static int ca_encoder_open_child(CaEncoder *e, const struct dirent *de) {
                 }
         }
 
-        if (S_ISLNK(child->stat.st_mode)) {
-                r = ca_encoder_node_read_symlink(n, de, child);
-                if (r < 0)
-                        return r;
-        }
+        r = ca_encoder_node_read_symlink(n, de, child);
+        if (r < 0)
+                return r;
+
+        r = ca_encoder_node_read_chattr(e, n, de, child);
+        if (r < 0)
+                return r;
 
         return 0;
 }
@@ -679,7 +728,7 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         const struct dirent *de;
         CaFormatEntry *entry;
         CaEncoderNode *child;
-        uint64_t mtime, mode, uid, gid;
+        uint64_t mtime, mode, uid, gid, flags;
         size_t size;
         char *p;
 
@@ -749,6 +798,11 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         else
                 mode &= S_IFMT;
 
+        if ((e->feature_flags & CA_FORMAT_WITH_CHATTR) != 0)
+                flags = ca_feature_flags_from_chattr(n->chattr_flags) & e->feature_flags;
+        else
+                flags = 0;
+
         size = offsetof(CaFormatEntry, name) + strlen(de->d_name) + 1;
 
         if (S_ISREG(child->stat.st_mode))
@@ -767,6 +821,7 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 .type = htole64(CA_FORMAT_ENTRY),
                 .size = htole64(offsetof(CaFormatEntry, name) + strlen(de->d_name) + 1),
         };
+        entry->flags = htole64(flags);
         entry->mode = htole64(mode);
         entry->uid = htole64(uid);
         entry->gid = htole64(gid);

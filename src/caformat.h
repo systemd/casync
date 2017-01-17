@@ -44,16 +44,16 @@ enum {
         /* CA_FORMAT_WITH_FLAG_ARCHIVE      = 0x8000, */
 
         /* chattr() flags */
-        /* CA_FORMAT_WITH_FLAG_APPEND       = 0x10000, */
-        /* CA_FORMAT_WITH_FLAG_NOATIME      = 0x20000, */
-        /* CA_FORMAT_WITH_FLAG_COMPR        = 0x40000, */
-        /* CA_FORMAT_WITH_FLAG_NOCOW        = 0x80000, */
-        /* CA_FORMAT_WITH_FLAG_NODUMP       = 0x100000, */
-        /* CA_FORMAT_WITH_FLAG_DIRSYNC      = 0x200000, */
-        /* CA_FORMAT_WITH_FLAG_IMMUTABLE    = 0x400000, */
-        /* CA_FORMAT_WITH_FLAG_SYNC         = 0x800000, */
-        /* CA_FORMAT_WITH_FLAG_NOCOMP       = 0x1000000, */
-        /* CA_FORMAT_WITH_FLAG_PROJINHERIT  = 0x2000000, */
+        CA_FORMAT_WITH_FLAG_APPEND       = 0x10000,
+        CA_FORMAT_WITH_FLAG_NOATIME      = 0x20000,
+        CA_FORMAT_WITH_FLAG_COMPR        = 0x40000,
+        CA_FORMAT_WITH_FLAG_NOCOW        = 0x80000,
+        CA_FORMAT_WITH_FLAG_NODUMP       = 0x100000,
+        CA_FORMAT_WITH_FLAG_DIRSYNC      = 0x200000,
+        CA_FORMAT_WITH_FLAG_IMMUTABLE    = 0x400000,
+        CA_FORMAT_WITH_FLAG_SYNC         = 0x800000,
+        CA_FORMAT_WITH_FLAG_NOCOMP       = 0x1000000,
+        CA_FORMAT_WITH_FLAG_PROJINHERIT  = 0x2000000,
 
         /* btrfs magic */
         /* CA_FORMAT_WITH_FLAG_SUBVOLUME    = 0x4000000, */
@@ -73,20 +73,20 @@ enum {
                 CA_FORMAT_WITH_SYMLINKS|
                 CA_FORMAT_WITH_DEVICE_NODES|
                 CA_FORMAT_WITH_FIFOS|
-                CA_FORMAT_WITH_SOCKETS,
+                CA_FORMAT_WITH_SOCKETS|
                 /* CA_FORMAT_WITH_FLAG_HIDDEN| */
                 /* CA_FORMAT_WITH_FLAG_SYSTEM| */
                 /* CA_FORMAT_WITH_FLAG_ARCHIVE| */
-                /* CA_FORMAT_WITH_FLAG_APPEND| */
-                /* CA_FORMAT_WITH_FLAG_NOATIME| */
-                /* CA_FORMAT_WITH_FLAG_COMPR| */
-                /* CA_FORMAT_WITH_FLAG_NOCOW| */
-                /* CA_FORMAT_WITH_FLAG_NODUMP| */
-                /* CA_FORMAT_WITH_FLAG_DIRSYNC| */
-                /* CA_FORMAT_WITH_FLAG_IMMUTABLE| */
-                /* CA_FORMAT_WITH_FLAG_SYNC| */
-                /* CA_FORMAT_WITH_FLAG_NOCOMP| */
-                /* CA_FORMAT_WITH_FLAG_PROJINHERIT| */
+                CA_FORMAT_WITH_FLAG_APPEND|
+                CA_FORMAT_WITH_FLAG_NOATIME|
+                CA_FORMAT_WITH_FLAG_COMPR|
+                CA_FORMAT_WITH_FLAG_NOCOW|
+                CA_FORMAT_WITH_FLAG_NODUMP|
+                CA_FORMAT_WITH_FLAG_DIRSYNC|
+                CA_FORMAT_WITH_FLAG_IMMUTABLE|
+                CA_FORMAT_WITH_FLAG_SYNC|
+                CA_FORMAT_WITH_FLAG_NOCOMP|
+                CA_FORMAT_WITH_FLAG_PROJINHERIT,
                 /* CA_FORMAT_WITH_FLAG_SUBVOLUME| */
                 /* CA_FORMAT_WITH_FLAG_SUBVOLUME_RO| */
                 /* CA_FORMAT_WITH_XATTR| */
@@ -108,6 +108,18 @@ enum {
                 /* CA_FORMAT_WITH_FLAG_HIDDEN| */
                 /* CA_FORMAT_WITH_FLAG_SYSTEM| */
                 /* CA_FORMAT_WITH_FLAG_ARCHIVE, */
+
+        CA_FORMAT_WITH_CHATTR = /* All chattr file attributes */
+                CA_FORMAT_WITH_FLAG_APPEND|
+                CA_FORMAT_WITH_FLAG_NOATIME|
+                CA_FORMAT_WITH_FLAG_COMPR|
+                CA_FORMAT_WITH_FLAG_NOCOW|
+                CA_FORMAT_WITH_FLAG_NODUMP|
+                CA_FORMAT_WITH_FLAG_DIRSYNC|
+                CA_FORMAT_WITH_FLAG_IMMUTABLE|
+                CA_FORMAT_WITH_FLAG_SYNC|
+                CA_FORMAT_WITH_FLAG_NOCOMP|
+                CA_FORMAT_WITH_FLAG_PROJINHERIT,
 
         CA_FORMAT_FEATURE_FLAGS_MAX        = 0xFFFFFFFF,
 };

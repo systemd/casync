@@ -1,3 +1,5 @@
+#include <linux/fs.h>
+
 #include "caformat.h"
 #include "caformat-util.h"
 
@@ -56,9 +58,20 @@ static const struct {
         { "device-nodes",     CA_FORMAT_WITH_DEVICE_NODES     },
         { "fifos",            CA_FORMAT_WITH_FIFOS            },
         { "sockets",          CA_FORMAT_WITH_SOCKETS          },
+        { "flag-append",      CA_FORMAT_WITH_FLAG_APPEND      },
+        { "flag-noatime",     CA_FORMAT_WITH_FLAG_NOATIME     },
+        { "flag-compr",       CA_FORMAT_WITH_FLAG_COMPR       },
+        { "flag-nocow",       CA_FORMAT_WITH_FLAG_NOCOW       },
+        { "flag-nodump",      CA_FORMAT_WITH_FLAG_NODUMP      },
+        { "flag-dirsync",     CA_FORMAT_WITH_FLAG_DIRSYNC     },
+        { "flag-immutable",   CA_FORMAT_WITH_FLAG_IMMUTABLE   },
+        { "flag-sync",        CA_FORMAT_WITH_FLAG_SYNC        },
+        { "flag-nocomp",      CA_FORMAT_WITH_FLAG_NOCOMP      },
+        { "flag-projinherit", CA_FORMAT_WITH_FLAG_PROJINHERIT },
         { "best",             CA_FORMAT_WITH_BEST             },
         { "unix",             CA_FORMAT_WITH_UNIX             },
         { "fat",              CA_FORMAT_WITH_FAT              },
+        { "chattr",           CA_FORMAT_WITH_CHATTR           },
 };
 
 int ca_feature_flags_parse_one(const char *name, uint64_t *ret) {
@@ -150,4 +163,43 @@ int ca_feature_flags_time_granularity_nsec(uint64_t flags, uint64_t *ret) {
 
         *ret = granularity;
         return 0;
+}
+
+static const struct {
+        uint64_t feature_flag;
+        unsigned chattr_flag;
+} chattr_map[] = {
+        { CA_FORMAT_WITH_FLAG_APPEND,      FS_APPEND_FL      },
+        { CA_FORMAT_WITH_FLAG_NOATIME,     FS_NOATIME_FL     },
+        { CA_FORMAT_WITH_FLAG_COMPR,       FS_COMPR_FL       },
+        { CA_FORMAT_WITH_FLAG_NOCOW,       FS_NOCOW_FL       },
+        { CA_FORMAT_WITH_FLAG_NODUMP,      FS_NODUMP_FL      },
+        { CA_FORMAT_WITH_FLAG_DIRSYNC,     FS_DIRSYNC_FL     },
+        { CA_FORMAT_WITH_FLAG_IMMUTABLE,   FS_IMMUTABLE_FL   },
+        { CA_FORMAT_WITH_FLAG_SYNC,        FS_SYNC_FL        },
+        { CA_FORMAT_WITH_FLAG_NOCOMP,      FS_NOCOMP_FL      },
+        { CA_FORMAT_WITH_FLAG_PROJINHERIT, FS_PROJINHERIT_FL },
+};
+
+uint64_t ca_feature_flags_from_chattr(unsigned flags) {
+        uint64_t f = 0;
+        size_t i;
+
+        for (i = 0; i < ELEMENTSOF(chattr_map); i++)
+                if (flags & chattr_map[i].chattr_flag)
+                        f |= chattr_map[i].feature_flag;
+
+        return f;
+}
+
+unsigned ca_feature_flags_to_chattr(uint64_t flags) {
+        unsigned f = 0;
+        size_t i;
+
+        for (i = 0; i < ELEMENTSOF(chattr_map); i++) {
+                if (flags & chattr_map[i].feature_flag)
+                        f |= chattr_map[i].chattr_flag;
+        }
+
+        return f;
 }

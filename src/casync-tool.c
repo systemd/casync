@@ -32,7 +32,8 @@ static void help(void) {
                "Archive feature sets:\n"
                "     --with=best             Store most accurate information\n"
                "     --with=unix             Store UNIX baseline information\n"
-               "     --with=fat              Store FAT information\n\n"
+               "     --with=fat              Store FAT information\n"
+               "     --with=chattr           Store chattr(1) file attributes\n\n"
                "Individual archive features:\n"
                "     --with=16bit-uids       Store reduced 16bit UID/GID information\n"
                "     --with=32bit-uids       Store full 32bit UID/GID information\n"
@@ -47,6 +48,16 @@ static void help(void) {
                "     --with=device-nodes     Store block and character device nodes\n"
                "     --with=fifos            Store named pipe nodes\n"
                "     --with=sockets          Store AF_UNIX file system socket nodes\n"
+               "     --with=flag-append      Store append-only file flag\n"
+               "     --with=flag-noatime     Store disable access time file flag\n"
+               "     --with=flag-compr       Store enable compression file flag\n"
+               "     --with=flag-nocow       Store disable copy-on-write file flag\n"
+               "     --with=flag-nodump      Store disable dumping file flag\n"
+               "     --with=flag-dirsync     Store synchronous directory flag\n"
+               "     --with=flag-immutable   Store immutable file flag\n"
+               "     --with=flag-sync        Store synchronous file flag\n"
+               "     --with=flag-nocomp      Store disable compression file flag\n"
+               "     --with=flag-projinherit Store project quota inheritance flag\n"
                "     (and similar: --without=16bit-uids, --without=32bit-uids, ...)\n",
                program_invocation_short_name);
 }
