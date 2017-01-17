@@ -1006,7 +1006,7 @@ static int ca_decoder_make_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *
         case S_IFLNK:
 
                 if (symlinkat(child->symlink_target, n->fd, child->entry->name) < 0) {
-                        if (errno != -EEXIST)
+                        if (errno != EEXIST)
                                 return -errno;
                 }
                 break;

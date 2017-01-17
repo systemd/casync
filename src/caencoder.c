@@ -853,6 +853,8 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
                         return -ENOTTY;
 
                 r = ca_encoder_get_payload_data(e, n);
+                if (r < 0)
+                        return r;
 
         } else if (S_ISDIR(n->stat.st_mode)) {
 
@@ -873,17 +875,22 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
                 default:
                         return -ENOTTY;
                 }
-
-                /* When we got here due to a seek, there might be an additional offset set, simply drop it form our generated buffer. */
-                r = realloc_buffer_advance(&e->buffer, e->payload_offset);
                 if (r < 0)
                         return r;
 
+                if (r > 0) {
+                        /* When we got here due to a seek, there might be an additional offset set, simply drop it form our generated buffer. */
+                        r = realloc_buffer_advance(&e->buffer, e->payload_offset);
+                        if (r < 0)
+                                return r;
+
+                        r = 1;
+                }
+
         } else
                 return -ENOTTY;
-        if (r < 0)
-                return r;
         if (r == 0) {
+                /* EOF */
                 *ret = NULL;
                 *ret_size = 0;
 
