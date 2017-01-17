@@ -342,6 +342,9 @@ static int make(int argc, char *argv[]) {
                 default:
                         assert(false);
                 }
+
+                if (arg_verbose)
+                        progress();
         }
 
 finish:
@@ -552,7 +555,14 @@ static int extract(int argc, char *argv[]) {
                                 goto finish;
 
                         break;
-                }}
+                }
+
+                default:
+                        assert(false);
+                }
+
+                if (arg_verbose)
+                        progress();
         }
 
 finish:
@@ -738,7 +748,13 @@ static int list(int argc, char *argv[]) {
                                 goto finish;
 
                         break;
-                }}
+                }
+                default:
+                        assert(false);
+                }
+
+                if (arg_verbose)
+                        progress();
         }
 
 finish:
@@ -912,7 +928,13 @@ static int digest(int argc, char *argv[]) {
                                 goto finish;
 
                         break;
-                }}
+                }
+                default:
+                        assert(false);
+                }
+
+                if (arg_verbose)
+                        progress();
         }
 
 finish:

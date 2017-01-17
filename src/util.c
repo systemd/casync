@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <sys/stat.h>
+#include <time.h>
 
 /* When we include libgen.h because we need dirname() we immediately
  * undefine basename() since libgen.h defines it as a macro to the
@@ -647,4 +648,32 @@ int xopendirat(int fd, const char *name, int flags, DIR **ret) {
 
         *ret = d;
         return 0;
+}
+
+void progress(void) {
+        static const char slashes[] = {
+                '-',
+                '\\',
+                '|',
+                '/',
+        };
+        static unsigned i = 0;
+        static uint64_t last_nsec = 0;
+
+        struct timespec now;
+        static uint64_t now_nsec;
+
+        assert(clock_gettime(CLOCK_MONOTONIC, &now) >= 0);
+        now_nsec = timespec_to_nsec(now);
+
+        if (last_nsec + 250000000 > now_nsec)
+                return;
+
+        last_nsec = now_nsec;
+
+        fputc(slashes[i % ELEMENTSOF(slashes)], stderr);
+        fputc('\b', stderr);
+        fflush(stderr);
+
+        i++;
 }

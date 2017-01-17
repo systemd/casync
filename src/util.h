@@ -319,4 +319,6 @@ static inline bool dot_or_dot_dot(const char *p) {
         return p[2] == 0;
 }
 
+void progress(void);
+
 #endif
