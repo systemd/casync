@@ -3,7 +3,7 @@
 
 #include <inttypes.h>
 
-#include "objectid.h"
+#include "caobjectid.h"
 
 typedef struct CaSync CaSync;
 
@@ -47,11 +47,11 @@ int ca_sync_step(CaSync *sync);
 int ca_sync_current_path(CaSync *sync, char **ret);
 int ca_sync_current_mode(CaSync *sync, mode_t *ret);
 
-int ca_sync_get(CaSync *s, const ObjectID *object_id, void **ret, size_t *ret_size);
-int ca_sync_put(CaSync *s, const ObjectID *object_id, const void *data, size_t size);
+int ca_sync_get(CaSync *s, const CaObjectID *object_id, void **ret, size_t *ret_size);
+int ca_sync_put(CaSync *s, const CaObjectID *object_id, const void *data, size_t size);
 
-int ca_sync_make_object_id(CaSync *s, const void *p, size_t l, ObjectID *ret);
+int ca_sync_make_object_id(CaSync *s, const void *p, size_t l, CaObjectID *ret);
 
-int ca_sync_get_digest(CaSync *s, ObjectID *ret);
+int ca_sync_get_digest(CaSync *s, CaObjectID *ret);
 
 #endif

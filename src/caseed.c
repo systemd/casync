@@ -220,8 +220,8 @@ static int ca_seed_open(CaSeed *s) {
 
 static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void *data, size_t l) {
         const char *t, *four, *combined;
-        char ids[OBJECT_ID_FORMAT_MAX];
-        ObjectID id;
+        char ids[CA_OBJECT_ID_FORMAT_MAX];
+        CaObjectID id;
         int r;
 
         assert(s);
@@ -237,11 +237,11 @@ static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void
         if (!t)
                 return -ENOMEM;
 
-        r = object_id_make(&s->object_digest, data, l, &id);
+        r = ca_object_id_make(&s->object_digest, data, l, &id);
         if (r < 0)
                 return r;
 
-        if (!object_id_format(&id, ids))
+        if (!ca_object_id_format(&id, ids))
                 return -EINVAL;
 
         four = strndupa(ids, 4);
@@ -381,8 +381,8 @@ int ca_seed_step(CaSeed *s) {
         }
 }
 
-int ca_seed_get(CaSeed *s, const ObjectID *object_id, void **ret, size_t *ret_size) {
-        char id[OBJECT_ID_FORMAT_MAX], *target = NULL;
+int ca_seed_get(CaSeed *s, const CaObjectID *object_id, void **ret, size_t *ret_size) {
+        char id[CA_OBJECT_ID_FORMAT_MAX], *target = NULL;
         const char *four, *combined;
         CaLocation *l = NULL;
         uint64_t size, n = 0;
@@ -398,7 +398,7 @@ int ca_seed_get(CaSeed *s, const ObjectID *object_id, void **ret, size_t *ret_si
         if (!ret_size)
                 return -EINVAL;
 
-        if (!object_id_format(object_id, id))
+        if (!ca_object_id_format(object_id, id))
                 return -EINVAL;
 
         four = strndupa(id, 4);
@@ -452,13 +452,13 @@ int ca_seed_get(CaSeed *s, const ObjectID *object_id, void **ret, size_t *ret_si
                         n += m;
 
                         if (n >= size) {
-                                ObjectID test_id;
+                                CaObjectID test_id;
 
-                                r = object_id_make(&s->object_digest, p, size, &test_id);
+                                r = ca_object_id_make(&s->object_digest, p, size, &test_id);
                                 if (r < 0)
                                         return r;
 
-                                if (!object_id_equal(object_id, &test_id)) {
+                                if (!ca_object_id_equal(object_id, &test_id)) {
 
                                         /* fprintf(stderr, "FROM SEED (%" PRIu64 ":\n", size); */
                                         /* hexdump(stderr, p, MIN(1024U, size)); */

@@ -77,10 +77,12 @@ lib_SOURCES = \
 	src/caindex.h \
 	src/calocation.c \
 	src/calocation.h \
-	src/castore.c \
-	src/castore.h \
+	src/caobjectid.c \
+	src/caobjectid.h \
 	src/caseed.c \
 	src/caseed.h \
+	src/castore.c \
+	src/castore.h \
 	src/casync.c \
 	src/casync.h \
 	src/chunker.c \
@@ -88,8 +90,6 @@ lib_SOURCES = \
 	src/def.h \
 	src/gcrypt-util.c \
 	src/gcrypt-util.h \
-	src/objectid.c \
-	src/objectid.h \
 	src/realloc-buffer.c \
 	src/realloc-buffer.h \
 	src/util.c \

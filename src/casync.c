@@ -560,7 +560,7 @@ static int ca_sync_allocate_archive_digest(CaSync *s) {
 
         initialize_libgcrypt();
 
-        assert(gcry_md_get_algo_dlen(GCRY_MD_SHA256) == sizeof(ObjectID));
+        assert(gcry_md_get_algo_dlen(GCRY_MD_SHA256) == sizeof(CaObjectID));
 
         if (gcry_md_open(&s->archive_digest, GCRY_MD_SHA256, 0) != 0)
                 return -EIO;
@@ -583,7 +583,7 @@ static int ca_sync_write_archive_digest(CaSync *s, const void *p, size_t l) {
 }
 
 static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l) {
-        ObjectID id;
+        CaObjectID id;
         int r;
 
         assert(s);
@@ -673,7 +673,7 @@ static int ca_sync_write_final_chunk(CaSync *s) {
                 if (!q)
                         return -EIO;
 
-                r = ca_index_set_digest(s->index, (ObjectID*) q);
+                r = ca_index_set_digest(s->index, (CaObjectID*) q);
                 if (r < 0)
                         return r;
 
@@ -763,7 +763,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
 
         if (s->index)  {
                 uint64_t index_size, object_size;
-                ObjectID id;
+                CaObjectID id;
                 void *p;
 
                 r = ca_index_read_object(s->index, &id, &index_size);
@@ -917,7 +917,7 @@ int ca_sync_step(CaSync *s) {
         assert(false);
 }
 
-int ca_sync_get(CaSync *s, const ObjectID *object_id, void **ret, size_t *ret_size) {
+int ca_sync_get(CaSync *s, const CaObjectID *object_id, void **ret, size_t *ret_size) {
         size_t i;
         int r;
 
@@ -954,7 +954,7 @@ int ca_sync_get(CaSync *s, const ObjectID *object_id, void **ret, size_t *ret_si
         return -ENOENT;
 }
 
-int ca_sync_put(CaSync *s, const ObjectID *object_id, const void *data, size_t size) {
+int ca_sync_put(CaSync *s, const CaObjectID *object_id, const void *data, size_t size) {
         if (!s)
                 return -EINVAL;
         if (!object_id)
@@ -968,7 +968,7 @@ int ca_sync_put(CaSync *s, const ObjectID *object_id, const void *data, size_t s
         return ca_store_put(s->wstore, object_id, data, size);
 }
 
-int ca_sync_make_object_id(CaSync *s, const void *p, size_t l, ObjectID *ret) {
+int ca_sync_make_object_id(CaSync *s, const void *p, size_t l, CaObjectID *ret) {
         if (!s)
                 return -EINVAL;
         if (!p && l > 0)
@@ -976,10 +976,10 @@ int ca_sync_make_object_id(CaSync *s, const void *p, size_t l, ObjectID *ret) {
         if (!ret)
                 return -EINVAL;
 
-        return object_id_make(&s->object_digest, p, l, ret);
+        return ca_object_id_make(&s->object_digest, p, l, ret);
 }
 
-int ca_sync_get_digest(CaSync *s, ObjectID *ret) {
+int ca_sync_get_digest(CaSync *s, CaObjectID *ret) {
         unsigned char *q;
         int r;
 
@@ -999,7 +999,7 @@ int ca_sync_get_digest(CaSync *s, ObjectID *ret) {
         if (!q)
                 return -EIO;
 
-        memcpy(ret, q, sizeof(ObjectID));
+        memcpy(ret, q, sizeof(CaObjectID));
 
         return 0;
 

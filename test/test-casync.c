@@ -7,8 +7,8 @@
 int main(int argc, char *argv[]) {
         CaSync *s;
         int r, base_fd;
-        ObjectID digest;
-        char t[OBJECT_ID_FORMAT_MAX];
+        CaObjectID digest;
+        char t[CA_OBJECT_ID_FORMAT_MAX];
 
         assert_se(s = ca_sync_new_encode());
 
@@ -27,7 +27,7 @@ int main(int argc, char *argv[]) {
 
                 case CA_SYNC_FINISHED: {
                         assert_se(ca_sync_get_digest(s, &digest) >= 0);
-                        printf("%s\n", object_id_format(&digest, t));
+                        printf("%s\n", ca_object_id_format(&digest, t));
                         goto step2;
                 }
 
@@ -57,7 +57,7 @@ step2:
                 switch (r) {
                 case CA_SYNC_FINISHED: {
                         assert_se(ca_sync_get_digest(s, &digest) >= 0);
-                        printf("%s\n", object_id_format(&digest, t));
+                        printf("%s\n", ca_object_id_format(&digest, t));
                         goto finish;
                 }
 

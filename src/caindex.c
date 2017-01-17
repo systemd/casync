@@ -22,7 +22,7 @@ struct CaIndex {
         uint64_t n_items;
         uint64_t previous_object;
 
-        ObjectID digest;
+        CaObjectID digest;
         bool digest_valid;
 };
 
@@ -257,7 +257,7 @@ int ca_index_close(CaIndex *i) {
         return ca_index_install(i);
 }
 
-int ca_index_write_object(CaIndex *i, const ObjectID *id, uint64_t size) {
+int ca_index_write_object(CaIndex *i, const CaObjectID *id, uint64_t size) {
         CaFormatTableItem item = {};
         uint64_t end;
         int r;
@@ -278,7 +278,7 @@ int ca_index_write_object(CaIndex *i, const ObjectID *id, uint64_t size) {
                 return -E2BIG;
 
         item.offset = htole64(end);
-        memcpy(&item.object, id, sizeof(ObjectID));
+        memcpy(&item.object, id, sizeof(CaObjectID));
 
         r = loop_write(i->fd, &item, sizeof(item));
         if (r < 0)
@@ -308,7 +308,7 @@ int ca_index_write_eof(CaIndex *i) {
                 return -EBUSY;
 
         write_le64(&tail.marker_item.offset, UINT64_MAX);
-        memcpy(&tail.marker_item.object, &i->digest, OBJECT_ID_SIZE);
+        memcpy(&tail.marker_item.object, &i->digest, CA_OBJECT_ID_SIZE);
         write_le64(&tail.size,
                    offsetof(CaFormatTable, items) +
                    (i->n_items * sizeof(CaFormatTableItem)) +
@@ -323,7 +323,7 @@ int ca_index_write_eof(CaIndex *i) {
         return 0;
 }
 
-int ca_index_read_object(CaIndex *i, ObjectID *ret_id, uint64_t *ret_size) {
+int ca_index_read_object(CaIndex *i, CaObjectID *ret_id, uint64_t *ret_size) {
         CaFormatTableItem item;
         ssize_t n;
 
@@ -361,10 +361,10 @@ int ca_index_read_object(CaIndex *i, ObjectID *ret_id, uint64_t *ret_size) {
                 if (le64toh(tail.final_size) != (i->offset - i->start_offset + offsetof(CaFormatTable, items)))
                         return -EBADMSG;
 
-                memcpy(&i->digest, item.object, sizeof(ObjectID));
+                memcpy(&i->digest, item.object, sizeof(CaObjectID));
                 i->digest_valid = true;
 
-                memset(&ret_id, 0, sizeof(ObjectID));
+                memset(&ret_id, 0, sizeof(CaObjectID));
                 *ret_size = 0;
 
                 return 0; /* EOF */
@@ -373,7 +373,7 @@ int ca_index_read_object(CaIndex *i, ObjectID *ret_id, uint64_t *ret_size) {
         if (i->previous_object >= le64toh(item.offset))
                 return -EBADMSG;
 
-        memcpy(ret_id, item.object, sizeof(ObjectID));
+        memcpy(ret_id, item.object, sizeof(CaObjectID));
         *ret_size = le64toh(item.offset) - i->previous_object;
 
         i->previous_object = le64toh(item.offset);
@@ -387,7 +387,7 @@ int ca_index_seek(CaIndex *i, uint64_t offset) {
         return -EOPNOTSUPP;
 }
 
-int ca_index_get_digest(CaIndex *i, ObjectID *ret) {
+int ca_index_get_digest(CaIndex *i, CaObjectID *ret) {
         if (!i)
                 return -EINVAL;
         if (!ret)
@@ -400,7 +400,7 @@ int ca_index_get_digest(CaIndex *i, ObjectID *ret) {
         return 0;
 }
 
-int ca_index_set_digest(CaIndex *i, const ObjectID *id) {
+int ca_index_set_digest(CaIndex *i, const CaObjectID *id) {
         if (!i)
                 return -EINVAL;
         if (!id)

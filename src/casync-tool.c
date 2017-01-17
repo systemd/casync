@@ -320,11 +320,11 @@ static int make(int argc, char *argv[]) {
                 switch (r) {
 
                 case CA_SYNC_FINISHED: {
-                        ObjectID digest;
-                        char t[OBJECT_ID_FORMAT_MAX];
+                        CaObjectID digest;
+                        char t[CA_OBJECT_ID_FORMAT_MAX];
 
                         assert_se(ca_sync_get_digest(s, &digest) >= 0);
-                        printf("%s\n", object_id_format(&digest, t));
+                        printf("%s\n", ca_object_id_format(&digest, t));
 
                         r = 0;
                         goto finish;
@@ -885,11 +885,11 @@ static int digest(int argc, char *argv[]) {
                 switch (r) {
 
                 case CA_SYNC_FINISHED: {
-                        ObjectID digest;
-                        char t[OBJECT_ID_FORMAT_MAX];
+                        CaObjectID digest;
+                        char t[CA_OBJECT_ID_FORMAT_MAX];
 
                         assert_se(ca_sync_get_digest(s, &digest) >= 0);
-                        printf("%s\n", object_id_format(&digest, t));
+                        printf("%s\n", ca_object_id_format(&digest, t));
                         r = 0;
                         goto finish;
                 }
