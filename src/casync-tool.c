@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
+#include "caformat-util.h"
+#include "caformat.h"
 #include "casync.h"
 #include "util.h"
 
@@ -13,6 +15,8 @@ static bool arg_verbose = false;
 static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
+static uint64_t arg_with = 0;
+static uint64_t arg_without = 0;
 
 static void help(void) {
         printf("%1$s [OPTIONS...] make ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX PATH\n"
@@ -20,11 +24,30 @@ static void help(void) {
                "%1$s [OPTIONS...] list ARCHIVE|ARCHIVE_INDEX|DIRECTORY\n"
                "%1$s [OPTIONS...] digest ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY\n\n"
                "Content-Addressable Data Synchronization Tool\n\n"
-               "  -h --help                Show this help\n"
-               "  -v --verbose             Show terse status information during runtime\n"
-               "     --store=PATH          The primary object store to use\n"
-               "     --extra-store=PATH    Additional object store to look for objects in\n"
-               "     --seed=PATH           Additional file or directory to use as seed\n",
+               "  -h --help                  Show this help\n"
+               "  -v --verbose               Show terse status information during runtime\n"
+               "     --store=PATH            The primary object store to use\n"
+               "     --extra-store=PATH      Additional object store to look for objects in\n"
+               "     --seed=PATH             Additional file or directory to use as seed\n\n"
+               "Archive feature sets:\n"
+               "     --with=best             Store most accurate information\n"
+               "     --with=unix             Store UNIX baseline information\n"
+               "     --with=fat              Store FAT information\n\n"
+               "Individual archive features:\n"
+               "     --with=16bit-uids       Store reduced 16bit UID/GID information\n"
+               "     --with=32bit-uids       Store full 32bit UID/GID information\n"
+               "     --with=user-names       Store user/group names\n"
+               "     --with=sec-time         Store timestamps in 1s granularity\n"
+               "     --with=usec-time        Store timestamps in 1µs granularity\n"
+               "     --with=nsec-time        Store timestamps in 1ns granularity\n"
+               "     --with=2sec-time        Store timestamps in 2s granularity\n"
+               "     --with=read-only        Store per-file read only flags\n"
+               "     --with=permissions      Store full per-file UNIX permissions\n"
+               "     --with=symlinks         Store symbolic links\n"
+               "     --with=device-nodes     Store block and character device nodes\n"
+               "     --with=fifos            Store named pipe nodes\n"
+               "     --with=sockets          Store AF_UNIX file system socket nodes\n"
+               "     (and similar: --without=16bit-uids, --without=32bit-uids, ...)\n",
                program_invocation_short_name);
 }
 
@@ -34,14 +57,18 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_STORE = 0x100,
                 ARG_EXTRA_STORE,
                 ARG_SEED,
+                ARG_WITH,
+                ARG_WITHOUT,
         };
 
         static const struct option options[] = {
-                { "help",        no_argument,       NULL, 'h'             },
-                { "verbose",     no_argument,       NULL, 'v'             },
-                { "store",       required_argument, NULL, ARG_STORE       },
-                { "extra-store", required_argument, NULL, ARG_EXTRA_STORE },
-                { "seed",        required_argument, NULL, ARG_SEED        },
+                { "help",         no_argument,       NULL, 'h'             },
+                { "verbose",      no_argument,       NULL, 'v'             },
+                { "store",        required_argument, NULL, ARG_STORE       },
+                { "extra-store",  required_argument, NULL, ARG_EXTRA_STORE },
+                { "seed",         required_argument, NULL, ARG_SEED        },
+                { "with",         required_argument, NULL, ARG_WITH        },
+                { "without",      required_argument, NULL, ARG_WITHOUT     },
                 {}
         };
 
@@ -88,6 +115,32 @@ static int parse_argv(int argc, char *argv[]) {
                                 return log_oom();
 
                         break;
+
+                case ARG_WITH: {
+                        uint64_t u;
+
+                        r = ca_feature_flags_parse_one(optarg, &u);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --with= feature flag: %s\n", optarg);
+                                return -EINVAL;
+                        }
+
+                        arg_with |= u;
+                        break;
+                }
+
+                case ARG_WITHOUT: {
+                        uint64_t u;
+
+                        r = ca_feature_flags_parse_one(optarg, &u);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --without= feature flag: %s\n", optarg);
+                                return -EINVAL;
+                        }
+
+                        arg_without |= u;
+                        break;
+                }
 
                 case '?':
                         return -EINVAL;
@@ -147,6 +200,61 @@ static int load_seeds_and_extra_stores(CaSync *s) {
                 if (r < 0)
                         fprintf(stderr, "Failed to add seed %s, ignoring: %s\n", *i, strerror(-r));
         }
+
+        return 0;
+}
+
+static int load_feature_flags(CaSync *s) {
+        uint64_t flags;
+        int r;
+
+        assert(s);
+
+        flags = (arg_with == 0 ? CA_FORMAT_WITH_BEST : arg_with) & ~arg_without;
+
+        r = ca_sync_set_feature_flags(s, flags);
+        if (r == -ENOTTY) /* sync object does not have an encoder */
+                return 0;
+
+        if (r < 0) {
+                fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
+                return r;
+        }
+
+        return 0;
+}
+
+static int verbose_print_feature_flags(CaSync *s) {
+        static bool printed = false;
+        uint64_t flags;
+        char *t;
+        int r;
+
+        assert(s);
+
+        if (!arg_verbose)
+                return 0;
+        if (printed)
+                return 0;
+
+        r = ca_sync_get_feature_flags(s, &flags);
+        if (r == -ENODATA) /* we don't know them yet? */
+                return 0;
+        if (r < 0) {
+                fprintf(stderr, "Failed to query feature flags: %s\n", strerror(-r));
+                return r;
+        }
+
+        r = ca_feature_flags_format(flags, &t);
+        if (r < 0) {
+                fprintf(stderr, "Failed to format feature flags: %s\n", strerror(-r));
+                return r;
+        }
+
+        fprintf(stderr, "Using feature flags: %s\n", t);
+        free(t);
+
+        printed = true;
 
         return 0;
 }
@@ -310,6 +418,10 @@ static int make(int argc, char *argv[]) {
                 }
         }
 
+        r = load_feature_flags(s);
+        if (r < 0)
+                goto finish;
+
         for (;;) {
                 r = ca_sync_step(s);
                 if (r < 0) {
@@ -342,6 +454,8 @@ static int make(int argc, char *argv[]) {
                 default:
                         assert(false);
                 }
+
+                verbose_print_feature_flags(s);
 
                 if (arg_verbose)
                         progress();
@@ -522,6 +636,10 @@ static int extract(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
+        r = load_feature_flags(s);
+        if (r < 0)
+                goto finish;
+
         for (;;) {
                 r = ca_sync_step(s);
                 if (r < 0) {
@@ -560,6 +678,8 @@ static int extract(int argc, char *argv[]) {
                 default:
                         assert(false);
                 }
+
+                verbose_print_feature_flags(s);
 
                 if (arg_verbose)
                         progress();
@@ -702,6 +822,10 @@ static int list(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
+        r = load_feature_flags(s);
+        if (r < 0)
+                goto finish;
+
         for (;;) {
                 r = ca_sync_step(s);
                 if (r < 0) {
@@ -752,6 +876,8 @@ static int list(int argc, char *argv[]) {
                 default:
                         assert(false);
                 }
+
+                verbose_print_feature_flags(s);
 
                 if (arg_verbose)
                         progress();
@@ -891,6 +1017,10 @@ static int digest(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
+        r = load_feature_flags(s);
+        if (r < 0)
+                goto finish;
+
         for (;;) {
                 r = ca_sync_step(s);
                 if (r < 0) {
@@ -932,6 +1062,8 @@ static int digest(int argc, char *argv[]) {
                 default:
                         assert(false);
                 }
+
+                verbose_print_feature_flags(s);
 
                 if (arg_verbose)
                         progress();

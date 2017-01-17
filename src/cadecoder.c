@@ -353,7 +353,7 @@ static bool validate_mode(CaDecoder *d, uint64_t m) {
         if ((m & 07777) == (S_ISDIR(m) ? 0777 : 0666))
                 return true;
 
-        if (d->feature_flags & CA_FORMAT_WITH_READONLY) {
+        if (d->feature_flags & CA_FORMAT_WITH_READ_ONLY) {
                 if ((m & 07777) == (S_ISDIR(m) ? 0555 : 0444))
                         return true;
         }
@@ -366,10 +366,10 @@ static bool validate_uid_gid(CaDecoder *d, uint64_t u) {
 
         assert(d);
 
-        if (d->feature_flags & CA_FORMAT_WITH_UID_GID_16BIT)
+        if (d->feature_flags & CA_FORMAT_WITH_16BIT_UIDS)
                 return u < UINT16_MAX;
 
-        if (d->feature_flags & CA_FORMAT_WITH_UID_GID_32BIT)
+        if (d->feature_flags & CA_FORMAT_WITH_32BIT_UIDS)
                 return u < UINT32_MAX && u != UINT16_MAX;
 
         return u == 0;
@@ -392,16 +392,16 @@ static bool validate_nsec(CaDecoder *d, uint64_t t) {
         if (t == UINT64_MAX)
                 return false;
 
-        if (d->feature_flags & CA_FORMAT_WITH_TIMES_NSEC)
+        if (d->feature_flags & CA_FORMAT_WITH_NSEC_TIME)
                 return true;
 
-        if (d->feature_flags & CA_FORMAT_WITH_TIMES_USEC)
+        if (d->feature_flags & CA_FORMAT_WITH_USEC_TIME)
                 return (t % UINT64_C(1000000)) == 0;
 
-        if (d->feature_flags & CA_FORMAT_WITH_TIMES_SEC)
+        if (d->feature_flags & CA_FORMAT_WITH_SEC_TIME)
                 return (t % UINT64_C(1000000000)) == 0;
 
-        if (d->feature_flags & CA_FORMAT_WITH_TIMES_2SEC)
+        if (d->feature_flags & CA_FORMAT_WITH_2SEC_TIME)
                 return (t % UINT64_C(2000000000)) == 0;
 
         return t == 0;
@@ -495,7 +495,7 @@ static const CaFormatUser* validate_format_user(CaDecoder *d, const void *p) {
         if (read_le64(&u->header.type) != CA_FORMAT_USER)
                 return NULL;
 
-        if (!(d->feature_flags & CA_FORMAT_WITH_USER_GROUP_NAMES))
+        if (!(d->feature_flags & CA_FORMAT_WITH_USER_NAMES))
                 return NULL;
 
         if (!validate_user_group_name(u->name, read_le64(&u->header.size) - offsetof(CaFormatUser, name)))
@@ -515,7 +515,7 @@ static const CaFormatGroup* validate_format_group(CaDecoder *d, const void *p) {
         if (read_le64(&g->header.type) != CA_FORMAT_GROUP)
                 return NULL;
 
-        if (!(d->feature_flags & CA_FORMAT_WITH_USER_GROUP_NAMES))
+        if (!(d->feature_flags & CA_FORMAT_WITH_USER_NAMES))
                 return NULL;
 
         if (!validate_user_group_name(g->name, read_le64(&g->header.size) - offsetof(CaFormatGroup, name)))
@@ -592,22 +592,22 @@ static const CaFormatHello *validate_format_hello(CaDecoder *d, const void *p) {
         if (flags == UINT64_MAX)
                 return NULL;
 
-        if ((flags & CA_FORMAT_WITH_TIMES_NSEC) &&
-            (flags & (CA_FORMAT_WITH_TIMES_USEC|CA_FORMAT_WITH_TIMES_SEC|CA_FORMAT_WITH_TIMES_2SEC)))
+        if ((flags & CA_FORMAT_WITH_NSEC_TIME) &&
+            (flags & (CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_2SEC_TIME)))
                 return NULL;
 
-        if ((flags & CA_FORMAT_WITH_TIMES_USEC) &&
-            (flags & (CA_FORMAT_WITH_TIMES_SEC|CA_FORMAT_WITH_TIMES_2SEC)))
+        if ((flags & CA_FORMAT_WITH_USEC_TIME) &&
+            (flags & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_2SEC_TIME)))
                 return NULL;
 
-        if ((flags & CA_FORMAT_WITH_TIMES_SEC) &&
-            (flags & CA_FORMAT_WITH_TIMES_2SEC))
+        if ((flags & CA_FORMAT_WITH_SEC_TIME) &&
+            (flags & CA_FORMAT_WITH_2SEC_TIME))
                 return NULL;
 
-        if ((flags & (CA_FORMAT_WITH_UID_GID_16BIT|CA_FORMAT_WITH_UID_GID_32BIT)) == (CA_FORMAT_WITH_UID_GID_16BIT|CA_FORMAT_WITH_UID_GID_32BIT))
+        if ((flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) == (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS))
                 return NULL;
 
-        if ((flags & CA_FORMAT_WITH_READONLY) &&
+        if ((flags & CA_FORMAT_WITH_READ_ONLY) &&
             (flags & CA_FORMAT_WITH_PERMISSIONS))
                 return NULL;
 
@@ -877,9 +877,9 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                 return -EBADMSG;
         }
 
-        if (!(d->feature_flags & CA_FORMAT_WITH_USER_GROUP_NAMES) != !user)
+        if (!(d->feature_flags & CA_FORMAT_WITH_USER_NAMES) != !user)
                 return -EBADMSG;
-        if (!(d->feature_flags & CA_FORMAT_WITH_USER_GROUP_NAMES) != !group)
+        if (!(d->feature_flags & CA_FORMAT_WITH_USER_NAMES) != !group)
                 return -EBADMSG;
 
         mode = (mode_t) read_le64(&entry->mode);
@@ -1094,7 +1094,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         return -EEXIST;
         }
 
-        if (d->feature_flags & (CA_FORMAT_WITH_UID_GID_32BIT|CA_FORMAT_WITH_UID_GID_16BIT)) {
+        if (d->feature_flags & (CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_16BIT_UIDS)) {
 
                 if (st.st_uid != le64toh(child->entry->uid) ||
                     st.st_gid != le64toh(child->entry->gid)) {
@@ -1108,7 +1108,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 }
         }
 
-        if (d->feature_flags & CA_FORMAT_WITH_READONLY) {
+        if (d->feature_flags & CA_FORMAT_WITH_READ_ONLY) {
 
                 if ((st.st_mode & 0400) == 0 || /* not readable? */
                     (S_ISDIR(st.st_mode) && (st.st_mode & 0100) == 0) || /* a dir, but not executable? */
@@ -1149,7 +1149,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 }
         }
 
-        if (d->feature_flags & (CA_FORMAT_WITH_TIMES_SEC|CA_FORMAT_WITH_TIMES_USEC|CA_FORMAT_WITH_TIMES_NSEC|CA_FORMAT_WITH_TIMES_2SEC)) {
+        if (d->feature_flags & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_NSEC_TIME|CA_FORMAT_WITH_2SEC_TIME)) {
 
                 struct timespec ts[2] = {
                         { .tv_nsec = UTIME_OMIT },

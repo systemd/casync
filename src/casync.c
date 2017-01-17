@@ -4,6 +4,7 @@
 
 #include "cadecoder.h"
 #include "caencoder.h"
+#include "caformat-util.h"
 #include "caindex.h"
 #include "caseed.h"
 #include "castore.h"
@@ -56,6 +57,8 @@ typedef struct CaSync {
         CaIndex *index;
 
         bool eof;
+
+        uint64_t feature_flags;
 } CaSync;
 
 static CaSync *ca_sync_new(void) {
@@ -135,6 +138,32 @@ CaSync *ca_sync_unref(CaSync *s) {
         free(s);
 
         return NULL;
+}
+
+int ca_sync_set_feature_flags(CaSync *s, uint64_t flags) {
+        if (!s)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_ENCODE)
+                return -ENOTTY;
+
+        return ca_feature_flags_normalize(flags, &s->feature_flags);
+}
+
+int ca_sync_get_feature_flags(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+
+        if (s->direction == CA_SYNC_ENCODE)
+                *ret = s->feature_flags;
+        else {
+                if (!s->decoder)
+                        return -ENODATA;
+
+                return ca_decoder_get_feature_flags(s->decoder, ret);
+        }
+
+        return 0;
 }
 
 static int ca_sync_allocate_index(CaSync *s) {
@@ -462,6 +491,12 @@ static int ca_sync_start(CaSync *s) {
                 s->encoder = ca_encoder_new();
                 if (!s->encoder)
                         return -ENOMEM;
+
+                r = ca_encoder_set_feature_flags(s->encoder, s->feature_flags);
+                if (r < 0) {
+                        s->encoder = ca_encoder_unref(s->encoder);
+                        return r;
+                }
 
                 r = ca_encoder_set_base_fd(s->encoder, s->base_fd);
                 if (r < 0) {

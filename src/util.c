@@ -677,3 +677,55 @@ void progress(void) {
 
         i++;
 }
+
+char *strextend(char **x, ...) {
+        va_list ap;
+        size_t f, l;
+        char *r, *p;
+
+        assert(x);
+
+        l = f = *x ? strlen(*x) : 0;
+
+        va_start(ap, x);
+        for (;;) {
+                const char *t;
+                size_t n;
+
+                t = va_arg(ap, const char *);
+                if (!t)
+                        break;
+
+                n = strlen(t);
+                if (n > ((size_t) -1) - l) {
+                        va_end(ap);
+                        return NULL;
+                }
+
+                l += n;
+        }
+        va_end(ap);
+
+        r = realloc(*x, l+1);
+        if (!r)
+                return NULL;
+
+        p = r + f;
+
+        va_start(ap, x);
+        for (;;) {
+                const char *t;
+
+                t = va_arg(ap, const char *);
+                if (!t)
+                        break;
+
+                p = stpcpy(p, t);
+        }
+        va_end(ap);
+
+        *p = 0;
+        *x = r;
+
+        return r + l;
+}

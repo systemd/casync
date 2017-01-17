@@ -321,4 +321,6 @@ static inline bool dot_or_dot_dot(const char *p) {
 
 void progress(void);
 
+char *strextend(char **x, ...) _sentinel_;
+
 #endif

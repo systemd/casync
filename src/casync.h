@@ -19,6 +19,9 @@ CaSync *ca_sync_new_encode(void);
 CaSync *ca_sync_new_decode(void);
 CaSync *ca_sync_unref(CaSync *sync);
 
+int ca_sync_set_feature_flags(CaSync *s, uint64_t flags);
+int ca_sync_get_feature_flags(CaSync *s, uint64_t *ret);
+
 /* The index file, that contains the hashes + offsets */
 int ca_sync_set_index_fd(CaSync *sync, int fd);
 int ca_sync_set_index_path(CaSync *sync, const char *path);

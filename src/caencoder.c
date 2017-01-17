@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "caencoder.h"
+#include "caformat-util.h"
 #include "caformat.h"
 #include "def.h"
 #include "realloc-buffer.h"
@@ -110,39 +111,22 @@ CaEncoder *ca_encoder_unref(CaEncoder *e) {
 }
 
 int ca_encoder_set_feature_flags(CaEncoder *e, uint64_t flags) {
-        uint64_t granularity = 0;
+        int r;
 
         if (!e)
                 return -EINVAL;
 
-        if (flags & ~CA_FORMAT_FEATURE_FLAGS_MAX)
-                return -EOPNOTSUPP;
+        r = ca_feature_flags_normalize(flags, &flags);
+        if (r < 0)
+                return r;
 
-        /* Normalize a number of flags */
-
-        if (flags & CA_FORMAT_WITH_UID_GID_32BIT)
-                flags &= ~CA_FORMAT_WITH_UID_GID_16BIT;
-
-        if (flags & CA_FORMAT_WITH_TIMES_NSEC) {
-                flags &= ~(CA_FORMAT_WITH_TIMES_USEC|CA_FORMAT_WITH_TIMES_SEC|CA_FORMAT_WITH_TIMES_2SEC);
-                granularity = 1;
-        }
-        if (flags & CA_FORMAT_WITH_TIMES_USEC) {
-                flags &= ~(CA_FORMAT_WITH_TIMES_SEC|CA_FORMAT_WITH_TIMES_2SEC);
-                granularity = 1000;
-        }
-        if (flags & CA_FORMAT_WITH_TIMES_SEC) {
-                granularity = 1000000000;
-                flags &= ~CA_FORMAT_WITH_TIMES_2SEC;
-        }
-        if (flags & CA_FORMAT_WITH_TIMES_2SEC)
-                granularity = 2000000000;
-
-        if (flags & CA_FORMAT_WITH_PERMISSIONS)
-                flags &= ~CA_FORMAT_WITH_READONLY;
+        r = ca_feature_flags_time_granularity_nsec(flags, &e->time_granularity);
+        if (r == -ENODATA)
+                e->time_granularity = UINT64_MAX;
+        else if (r < 0)
+                return r;
 
         e->feature_flags = flags;
-        e->time_granularity = granularity;
 
         return 0;
 }
@@ -721,12 +705,12 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
             child->stat.st_gid == UINT32_MAX)
                 return -EINVAL;
 
-        if ((e->feature_flags & CA_FORMAT_WITH_UID_GID_16BIT) &&
+        if ((e->feature_flags & CA_FORMAT_WITH_16BIT_UIDS) &&
             (child->stat.st_uid > UINT16_MAX ||
              child->stat.st_gid > UINT16_MAX))
                 return -EPROTONOSUPPORT;
 
-        if (e->feature_flags & (CA_FORMAT_WITH_UID_GID_16BIT|CA_FORMAT_WITH_UID_GID_32BIT)) {
+        if (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) {
                 uid = child->stat.st_uid;
                 gid = child->stat.st_gid;
         } else
@@ -748,15 +732,19 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
             S_ISSOCK(child->stat.st_mode))
                 return -EPROTONOSUPPORT;
 
-        mtime = timespec_to_nsec(child->stat.st_mtim);
-        mtime = (mtime / e->time_granularity) * e->time_granularity;
+        if (e->time_granularity == UINT64_MAX)
+                mtime = 0;
+        else {
+                mtime = timespec_to_nsec(child->stat.st_mtim);
+                mtime = (mtime / e->time_granularity) * e->time_granularity;
+        }
 
         mode = child->stat.st_mode;
         if (S_ISLNK(mode))
                 mode = S_IFLNK | 0777;
         if (e->feature_flags & CA_FORMAT_WITH_PERMISSIONS)
                 mode = mode & (S_IFMT|07777);
-        else if (e->feature_flags & CA_FORMAT_WITH_READONLY)
+        else if (e->feature_flags & CA_FORMAT_WITH_READ_ONLY)
                 mode = (mode & S_IFMT) | ((mode & 0222) ? (S_ISDIR(mode) ? 0777 : 0666) : (S_ISDIR(mode) ? 0555 : 0444));
         else
                 mode &= S_IFMT;

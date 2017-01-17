@@ -24,14 +24,14 @@ enum {
 
 /* Feature flags */
 enum {
-        CA_FORMAT_WITH_UID_GID_16BIT     = 0x1,
-        CA_FORMAT_WITH_UID_GID_32BIT     = 0x2,
-        CA_FORMAT_WITH_USER_GROUP_NAMES  = 0x4,
-        CA_FORMAT_WITH_TIMES_SEC         = 0x8,
-        CA_FORMAT_WITH_TIMES_USEC        = 0x10,
-        CA_FORMAT_WITH_TIMES_NSEC        = 0x20,
-        CA_FORMAT_WITH_TIMES_2SEC        = 0x40, /* FAT-style 2s time granularity */
-        CA_FORMAT_WITH_READONLY          = 0x80,
+        CA_FORMAT_WITH_16BIT_UIDS        = 0x1,
+        CA_FORMAT_WITH_32BIT_UIDS        = 0x2,
+        CA_FORMAT_WITH_USER_NAMES        = 0x4,
+        CA_FORMAT_WITH_SEC_TIME          = 0x8,
+        CA_FORMAT_WITH_USEC_TIME         = 0x10,
+        CA_FORMAT_WITH_NSEC_TIME         = 0x20,
+        CA_FORMAT_WITH_2SEC_TIME         = 0x40, /* FAT-style 2s time granularity */
+        CA_FORMAT_WITH_READ_ONLY         = 0x80,
         CA_FORMAT_WITH_PERMISSIONS       = 0x100,
         CA_FORMAT_WITH_SYMLINKS          = 0x200,
         CA_FORMAT_WITH_DEVICE_NODES      = 0x400,
@@ -39,41 +39,41 @@ enum {
         CA_FORMAT_WITH_SOCKETS           = 0x1000,
 
         /* DOS file flags */
-        CA_FORMAT_WITH_FLAG_HIDDEN       = 0x2000,
-        CA_FORMAT_WITH_FLAG_SYSTEM       = 0x4000,
-        CA_FORMAT_WITH_FLAG_ARCHIVE      = 0x8000,
+        /* CA_FORMAT_WITH_FLAG_HIDDEN       = 0x2000, */
+        /* CA_FORMAT_WITH_FLAG_SYSTEM       = 0x4000, */
+        /* CA_FORMAT_WITH_FLAG_ARCHIVE      = 0x8000, */
 
         /* chattr() flags */
-        CA_FORMAT_WITH_FLAG_APPEND       = 0x10000,
-        CA_FORMAT_WITH_FLAG_NOATIME      = 0x20000,
-        CA_FORMAT_WITH_FLAG_COMPR        = 0x40000,
-        CA_FORMAT_WITH_FLAG_NOCOW        = 0x80000,
-        CA_FORMAT_WITH_FLAG_NODUMP       = 0x100000,
-        CA_FORMAT_WITH_FLAG_DIRSYNC      = 0x200000,
-        CA_FORMAT_WITH_FLAG_IMMUTABLE    = 0x400000,
-        CA_FORMAT_WITH_FLAG_SYNC         = 0x800000,
-        CA_FORMAT_WITH_FLAG_NOCOMP       = 0x1000000,
-        CA_FORMAT_WITH_FLAG_PROJINHERIT  = 0x2000000,
+        /* CA_FORMAT_WITH_FLAG_APPEND       = 0x10000, */
+        /* CA_FORMAT_WITH_FLAG_NOATIME      = 0x20000, */
+        /* CA_FORMAT_WITH_FLAG_COMPR        = 0x40000, */
+        /* CA_FORMAT_WITH_FLAG_NOCOW        = 0x80000, */
+        /* CA_FORMAT_WITH_FLAG_NODUMP       = 0x100000, */
+        /* CA_FORMAT_WITH_FLAG_DIRSYNC      = 0x200000, */
+        /* CA_FORMAT_WITH_FLAG_IMMUTABLE    = 0x400000, */
+        /* CA_FORMAT_WITH_FLAG_SYNC         = 0x800000, */
+        /* CA_FORMAT_WITH_FLAG_NOCOMP       = 0x1000000, */
+        /* CA_FORMAT_WITH_FLAG_PROJINHERIT  = 0x2000000, */
 
         /* btrfs magic */
-        CA_FORMAT_WITH_FLAG_SUBVOLUME    = 0x4000000,
-        CA_FORMAT_WITH_FLAG_SUBVOLUME_RO = 0x8000000,
+        /* CA_FORMAT_WITH_FLAG_SUBVOLUME    = 0x4000000, */
+        /* CA_FORMAT_WITH_FLAG_SUBVOLUME_RO = 0x8000000, */
 
         /* Extended Attribute metadata */
-        CA_FORMAT_WITH_XATTR             = 0x10000000,
-        CA_FORMAT_WITH_ACL               = 0x20000000,
-        CA_FORMAT_WITH_SELINUX           = 0x40000000,
-        CA_FORMAT_WITH_FCAPS             = 0x80000000,
+        /* CA_FORMAT_WITH_XATTR             = 0x10000000, */
+        /* CA_FORMAT_WITH_ACL               = 0x20000000, */
+        /* CA_FORMAT_WITH_SELINUX           = 0x40000000, */
+        /* CA_FORMAT_WITH_FCAPS             = 0x80000000, */
 
         CA_FORMAT_WITH_BEST =
-                CA_FORMAT_WITH_UID_GID_32BIT|
-                /* CA_FORMAT_WITH_USER_GROUP_NAMES| */
-                CA_FORMAT_WITH_TIMES_NSEC|
+                CA_FORMAT_WITH_32BIT_UIDS|
+                /* CA_FORMAT_WITH_USER_NAMES| */
+                CA_FORMAT_WITH_NSEC_TIME|
                 CA_FORMAT_WITH_PERMISSIONS|
                 CA_FORMAT_WITH_SYMLINKS|
                 CA_FORMAT_WITH_DEVICE_NODES|
                 CA_FORMAT_WITH_FIFOS|
-                CA_FORMAT_WITH_SOCKETS
+                CA_FORMAT_WITH_SOCKETS,
                 /* CA_FORMAT_WITH_FLAG_HIDDEN| */
                 /* CA_FORMAT_WITH_FLAG_SYSTEM| */
                 /* CA_FORMAT_WITH_FLAG_ARCHIVE| */
@@ -93,22 +93,21 @@ enum {
                 /* CA_FORMAT_WITH_ACL| */
                 /* CA_FORMAT_WITH_SELINUX| */
                 /* CA_FORMAT_WITH_FCAPS */
-        ,
 
         CA_FORMAT_WITH_UNIX = /* Conservative UNIX file properties */
-                CA_FORMAT_WITH_UID_GID_16BIT|
-                CA_FORMAT_WITH_TIMES_SEC|
+                CA_FORMAT_WITH_16BIT_UIDS|
+                CA_FORMAT_WITH_SEC_TIME|
                 CA_FORMAT_WITH_SYMLINKS|
                 CA_FORMAT_WITH_DEVICE_NODES|
                 CA_FORMAT_WITH_FIFOS|
                 CA_FORMAT_WITH_SOCKETS,
 
         CA_FORMAT_WITH_FAT = /* FAT file properties */
-                CA_FORMAT_WITH_TIMES_2SEC|
-                CA_FORMAT_WITH_READONLY|
-                CA_FORMAT_WITH_FLAG_HIDDEN|
-                CA_FORMAT_WITH_FLAG_SYSTEM|
-                CA_FORMAT_WITH_FLAG_ARCHIVE,
+                CA_FORMAT_WITH_2SEC_TIME|
+                CA_FORMAT_WITH_READ_ONLY,
+                /* CA_FORMAT_WITH_FLAG_HIDDEN| */
+                /* CA_FORMAT_WITH_FLAG_SYSTEM| */
+                /* CA_FORMAT_WITH_FLAG_ARCHIVE, */
 
         CA_FORMAT_FEATURE_FLAGS_MAX        = 0xFFFFFFFF,
 };
