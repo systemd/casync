@@ -3,8 +3,6 @@
 * mtree manifest
 * seeks
 * ssh/remoting protocol
-* directory seeds
-* blob seeds
 * fuse mount logic
 * nbd expose logic
 * deal with file properties of the "root" directory
@@ -15,3 +13,6 @@
 * acls
 * check fs props
 * encryption
+* hard link mode
+* per-file seed cache
+* exceptions
