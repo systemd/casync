@@ -85,11 +85,13 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
         for (i = 0; i < n->n_dirents; i++)
                 free(n->dirents[i]);
         n->dirents = mfree(n->dirents);
-        n->n_dirents = n->dirent_idx = 0;
+        n->n_dirents = 0;
 
         n->symlink_target = mfree(n->symlink_target);
 
         n->device_size = UINT64_MAX;
+
+        n->stat.st_mode = 0;
 }
 
 CaEncoder *ca_encoder_unref(CaEncoder *e) {
@@ -198,6 +200,20 @@ static CaEncoderNode* ca_encoder_current_child_node(CaEncoder *e) {
                 return NULL;
 
         return e->nodes + e->node_idx + 1;
+}
+
+static CaEncoderNode *ca_encoder_node_child_of(CaEncoder *e, CaEncoderNode *n) {
+
+        size_t idx;
+
+        assert(n >= e->nodes);
+        idx = n - e->nodes;
+        assert(idx < e->n_nodes);
+
+        if (idx+1 >= e->n_nodes)
+                return NULL;
+
+        return e->nodes + idx + 1;
 }
 
 static const struct dirent *ca_encoder_node_current_dirent(CaEncoderNode *n) {
@@ -372,7 +388,7 @@ static int ca_encoder_open_child(CaEncoder *e, const struct dirent *de) {
         if (!child)
                 return -E2BIG;
 
-        if (de->d_type == DT_DIR || de->d_type == DT_REG) {
+        if (IN_SET(de->d_type, DT_DIR, DT_REG)) {
                 shall_open = true;
                 have_stat = false;
 
@@ -1103,7 +1119,7 @@ static int dirent_bsearch_func(const void *key, const void *member) {
 }
 
 static int ca_encoder_node_seek_child(CaEncoder *e, CaEncoderNode *n, const char *name) {
-        struct dirent **found;
+        const struct dirent *de;
         int r;
 
         assert(n);
@@ -1115,15 +1131,29 @@ static int ca_encoder_node_seek_child(CaEncoder *e, CaEncoderNode *n, const char
         if (r < 0)
                 return r;
 
-        found = bsearch(name, n->dirents, n->n_dirents, sizeof(struct dirent*), dirent_bsearch_func);
-        if (!found)
-                return -ENOENT;
+        de = ca_encoder_node_current_dirent(n);
+        if (de && streq(name, de->d_name)) {
+                CaEncoderNode *child;
 
-        assert(found >= n->dirents);
-        assert((size_t) (found - n->dirents) < n->n_dirents);
-        n->dirent_idx = found - n->dirents;
+                child = ca_encoder_node_child_of(e, n);
+                if (child && child->stat.st_mode != 0)
+                        return 0;
 
-        return ca_encoder_open_child(e, *found);
+        } else {
+                struct dirent **found;
+
+                found = bsearch(name, n->dirents, n->n_dirents, sizeof(struct dirent*), dirent_bsearch_func);
+                if (!found)
+                        return -ENOENT;
+
+                assert(found >= n->dirents);
+                assert((size_t) (found - n->dirents) < n->n_dirents);
+                n->dirent_idx = found - n->dirents;
+
+                de = *found;
+        }
+
+        return ca_encoder_open_child(e, de);
 }
 
 static int ca_encoder_seek_path(CaEncoder *e, const char *path) {
@@ -1204,7 +1234,6 @@ int ca_encoder_seek(CaEncoder *e, CaLocation *location) {
                 return -EUNATCH;
 
         e->node_idx = 0;
-        ca_encoder_forget_children(e);
 
         switch (location->designator) {
 
