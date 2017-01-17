@@ -11,8 +11,11 @@
 * btrfs flags
 * xattrs
 * acls
-* check fs props
+* check fs features
 * encryption
 * hard link mode
 * per-file seed cache
-* exceptions
+* exclude patterns
+* permit shifting UID/GIDs
+* properly implement user/group names
+* restore chattr(1)
