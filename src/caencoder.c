@@ -220,16 +220,7 @@ static int scandir_filter(const struct dirent *de) {
 
         /* Filter out "." and ".." */
 
-        if (de->d_name[0] != '.')
-                return true;
-
-        if (de->d_name[1] == 0)
-                return false;
-
-        if (de->d_name[1] != '.')
-                return true;
-
-        return de->d_name[2] != 0;
+        return !dot_or_dot_dot(de->d_name);
 }
 
 static int scandir_compare(const struct dirent **a, const struct dirent **b) {
