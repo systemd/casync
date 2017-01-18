@@ -153,5 +153,7 @@ test-files:
 	test -e test-files/thisisafifo || mkfifo test-files/thisisafifo
 	test -e test-files/ablockdevice || mknod test-files/ablockdevice b 0 0
 	test -e test-files/achardevice || mknod test-files/achardevice c 0 0
+	test -e test-files/immutable || touch test-files/immutable && chattr +i test-files/immutable
+	test -e test-files/nocow || touch test-files/nocow && chattr +C test-files/nocow
 
 .PHONY: test-files

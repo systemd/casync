@@ -2,8 +2,11 @@
 #include <grp.h>
 #include <pwd.h>
 #include <stddef.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include <linux/fs.h>
 
 #include "cadecoder.h"
 #include "caformat-util.h"
@@ -20,6 +23,13 @@
 
 /* #undef EUNATCH */
 /* #define EUNATCH __LINE__ */
+
+#define APPLY_EARLY_FS_FL                       \
+        (FS_NOATIME_FL|                         \
+         FS_COMPR_FL|                           \
+         FS_NOCOW_FL|                           \
+         FS_NOCOMP_FL|                          \
+         FS_PROJINHERIT_FL)
 
 typedef struct CaDecoderNode {
         int fd;
@@ -1064,6 +1074,20 @@ static int ca_decoder_make_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *
                 assert(false);
         }
 
+        if (child->fd >= 0 && (le64toh(child->entry->flags) & d->feature_flags & CA_FORMAT_WITH_CHATTR) != 0) {
+                unsigned new_attr;
+
+                /* A select few chattr() attributes need to be applied (or are better applied) on empty
+                 * files/directories instead of the final result, do so here. */
+
+                new_attr = ca_feature_flags_to_chattr(le64toh(child->entry->flags) & d->feature_flags) & APPLY_EARLY_FS_FL;
+
+                if (new_attr != 0) {
+                        if (ioctl(child->fd, FS_IOC_SETFLAGS, &new_attr) < 0)
+                                return -errno;
+                }
+        }
+
         return 0;
 }
 
@@ -1295,6 +1319,45 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         r = utimensat(n->fd, child->entry->name, ts, AT_SYMLINK_NOFOLLOW);
                 if (r < 0)
                         return -errno;
+        }
+
+        if ((d->feature_flags & CA_FORMAT_WITH_CHATTR) != 0) {
+                unsigned new_attr, old_attr;
+                int cfd;
+
+                new_attr = ca_feature_flags_to_chattr(le64toh(child->entry->flags) & d->feature_flags);
+
+                if (child->fd >= 0)
+                        cfd = child->fd;
+                else {
+                        cfd = openat(n->fd, child->entry->name, O_CLOEXEC|O_NOFOLLOW|O_PATH);
+                        if (cfd < 0)
+                                return -errno;
+                }
+
+                if (ioctl(cfd, FS_IOC_GETFLAGS, &old_attr) < 0) {
+
+                        if (new_attr != 0 || !IN_SET(errno, ENOTTY, EBADF, EOPNOTSUPP)) {
+
+                                if (cfd != child->fd)
+                                        safe_close(cfd);
+
+                                return -errno;
+                        }
+
+                } else if (old_attr != new_attr) {
+
+                        if (ioctl(cfd, FS_IOC_SETFLAGS, &new_attr) < 0) {
+
+                                if (cfd != child->fd)
+                                        safe_close(cfd);
+
+                                return -errno;
+                        }
+                }
+
+                if (cfd != child->fd)
+                        safe_close(cfd);
         }
 
         return 0;
