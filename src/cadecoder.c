@@ -1,4 +1,6 @@
 #include <fcntl.h>
+#include <grp.h>
+#include <pwd.h>
 #include <stddef.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -64,6 +66,13 @@ struct CaDecoder {
 
         /* How far cadecoder_step() will jump ahead */
         uint64_t step_size;
+
+        /* Cached name → UID/GID translation */
+        uid_t cached_uid;
+        gid_t cached_gid;
+
+        char *cached_user_name;
+        char *cached_group_name;
 };
 
 static mode_t ca_decoder_node_mode(CaDecoderNode *n) {
@@ -114,6 +123,10 @@ CaDecoder *ca_decoder_unref(CaDecoder *d) {
                 ca_decoder_node_free(d->nodes + i);
 
         realloc_buffer_free(&d->buffer);
+
+        free(d->cached_user_name);
+        free(d->cached_group_name);
+
         free(d);
 
         return NULL;
@@ -432,6 +445,12 @@ static bool validate_user_group_name(const char *name, size_t n) {
                         return false;
 
         if (n > 256) /* sysconf(_SC_LOGIN_NAME_MAX) on Linux is 256 */
+                return false;
+
+        /* If the user/group name is root, then it should be suppressed. Don't accept otherwise */
+        if (n == 5 && memcmp(name, "root", 5) == 0)
+                return false;
+        if (n == 2 && memcmp(name, "0", 2) == 0)
                 return false;
 
         return true;
@@ -877,9 +896,14 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                 return -EBADMSG;
         }
 
-        if (!(d->feature_flags & CA_FORMAT_WITH_USER_NAMES) != !user)
+        if (user && !(d->feature_flags & CA_FORMAT_WITH_USER_NAMES))
                 return -EBADMSG;
-        if (!(d->feature_flags & CA_FORMAT_WITH_USER_NAMES) != !group)
+        if (group && !(d->feature_flags & CA_FORMAT_WITH_USER_NAMES))
+                return -EBADMSG;
+
+        if ((d->feature_flags & CA_FORMAT_WITH_USER_NAMES) &&
+            !(d->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) &&
+            (!user || !group))
                 return -EBADMSG;
 
         mode = (mode_t) read_le64(&entry->mode);
@@ -1043,6 +1067,100 @@ static int ca_decoder_make_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *
         return 0;
 }
 
+static int name_to_uid(CaDecoder *d, const char *name, uid_t *ret) {
+        long bufsize;
+        int r;
+
+        assert(d);
+        assert(name);
+        assert(ret);
+
+        if (streq_ptr(name, d->cached_user_name)) {
+                *ret = d->cached_uid;
+                return 1;
+        }
+
+        if (parse_uid(name, ret) >= 0)
+                return 1;
+
+        bufsize = sysconf(_SC_GETPW_R_SIZE_MAX);
+        if (bufsize <= 0)
+                bufsize = 4096;
+
+        for (;;) {
+                struct passwd pwbuf, *pw = NULL;
+                char *buf;
+
+                buf = malloc(bufsize);
+                if (!buf)
+                        return -ENOMEM;
+
+                r = getpwnam_r(name, &pwbuf, buf, (size_t) bufsize, &pw);
+                if (r == 0 && pw) {
+
+                        free(d->cached_user_name);
+                        d->cached_user_name = strdup(pw->pw_name);
+                        d->cached_uid = pw->pw_uid;
+
+                        *ret = pw->pw_uid;
+                        free(buf);
+                        return 1;
+                }
+                free(buf);
+                if (r != ERANGE)
+                        return r > 0 ? -r : -ESRCH;
+
+                bufsize *= 2;
+        }
+}
+
+static int name_to_gid(CaDecoder *d, const char *name, gid_t *ret) {
+        long bufsize;
+        int r;
+
+        assert(d);
+        assert(name);
+        assert(ret);
+
+        if (streq_ptr(name, d->cached_group_name)) {
+                *ret = d->cached_gid;
+                return 1;
+        }
+
+        if (parse_gid(name, ret) >= 0)
+                return 1;
+
+        bufsize = sysconf(_SC_GETGR_R_SIZE_MAX);
+        if (bufsize <= 0)
+                bufsize = 4096;
+
+        for (;;) {
+                struct group grbuf, *gr = NULL;
+                char *buf;
+
+                buf = malloc(bufsize);
+                if (!buf)
+                        return -ENOMEM;
+
+                r = getgrnam_r(name, &grbuf, buf, (size_t) bufsize, &gr);
+                if (r == 0 && gr) {
+
+                        free(d->cached_group_name);
+                        d->cached_group_name = strdup(gr->gr_name);
+                        d->cached_gid = gr->gr_gid;
+
+                        *ret = gr->gr_gid;
+                        free(buf);
+                        return 1;
+                }
+                free(buf);
+                if (r != ERANGE)
+                        return r > 0 ? -r : -ESRCH;
+
+                bufsize *= 2;
+        }
+}
+
 static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *child) {
         struct stat st;
         int r;
@@ -1094,15 +1212,30 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         return -EEXIST;
         }
 
-        if (d->feature_flags & (CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_16BIT_UIDS)) {
+        if (d->feature_flags & (CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_USER_NAMES)) {
+                uid_t uid;
+                gid_t gid;
 
-                if (st.st_uid != le64toh(child->entry->uid) ||
-                    st.st_gid != le64toh(child->entry->gid)) {
+                if (child->user_name) {
+                        r = name_to_uid(d, child->user_name, &uid);
+                        if (r < 0)
+                                return r;
+                } else
+                        uid = le64toh(child->entry->uid);
+
+                if (child->group_name) {
+                        r = name_to_gid(d, child->group_name, &gid);
+                        if (r < 0)
+                                return r;
+                } else
+                        gid = le64toh(child->entry->gid);
+
+                if (st.st_uid != uid || st.st_gid != gid) {
 
                         if (child->fd >= 0)
-                                r = fchown(child->fd, le64toh(child->entry->uid), le64toh(child->entry->gid));
+                                r = fchown(child->fd, uid, gid);
                         else
-                                r = fchownat(n->fd, child->entry->name, le64toh(child->entry->uid), le64toh(child->entry->gid), AT_SYMLINK_NOFOLLOW);
+                                r = fchownat(n->fd, child->entry->name, uid, gid, AT_SYMLINK_NOFOLLOW);
                         if (r < 0)
                                 return -errno;
                 }

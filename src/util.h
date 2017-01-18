@@ -248,6 +248,10 @@ static inline int safe_atou64(const char *s, uint64_t *ret_u) {
         return safe_atollu(s, (unsigned long long*) ret_u);
 }
 
+static inline int safe_atou32(const char *s, uint32_t *ret_u) {
+        return safe_atou(s, (unsigned*) ret_u);
+}
+
 int readlinkat_malloc(int fd, const char *p, char **ret);
 int readlink_malloc(const char *p, char **ret);
 
@@ -322,5 +326,33 @@ static inline bool dot_or_dot_dot(const char *p) {
 void progress(void);
 
 char *strextend(char **x, ...) _sentinel_;
+
+#if SIZEOF_UID_T == 4
+#  define UID_FMT "%" PRIu32
+#elif SIZEOF_UID_T == 2
+#  define UID_FMT "%" PRIu16
+#else
+#  error Unknown uid_t size
+#endif
+
+#if SIZEOF_GID_T == 4
+#  define GID_FMT "%" PRIu32
+#elif SIZEOF_GID_T == 2
+#  define GID_FMT "%" PRIu16
+#else
+#  error Unknown gid_t size
+#endif
+
+bool uid_is_valid(uid_t uid);
+
+static inline bool gid_is_valid(gid_t gid) {
+        return uid_is_valid((uid_t) gid);
+}
+
+int parse_uid(const char *s, uid_t* ret_uid);
+
+static inline int parse_gid(const char *s, gid_t *ret_gid) {
+        return parse_uid(s, (uid_t*) ret_gid);
+}
 
 #endif

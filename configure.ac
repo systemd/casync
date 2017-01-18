@@ -27,6 +27,9 @@ AC_CHECK_DECLS([
 #include <linux/random.h>
 ]])
 
+AC_CHECK_SIZEOF(uid_t)
+AC_CHECK_SIZEOF(gid_t)
+
 AM_PATH_LIBGCRYPT([1.4.5],, AC_MSG_ERROR([*** libgcrypt was not found.]))
 AC_SUBST([LIBGCRYPT_CFLAGS])
 AC_SUBST([LIBGCRYPT_LIBS])

@@ -729,3 +729,39 @@ char *strextend(char **x, ...) {
 
         return r + l;
 }
+
+bool uid_is_valid(uid_t uid) {
+
+        /* Some libc APIs use UID_INVALID as special placeholder */
+        if (uid == (uid_t) UINT32_C(0xFFFFFFFF))
+                return false;
+
+        /* A long time ago UIDs where 16bit, hence explicitly avoid the 16bit -1 too */
+        if (uid == (uid_t) UINT32_C(0xFFFF))
+                return false;
+
+        return true;
+}
+
+int parse_uid(const char *s, uid_t *ret) {
+        uint32_t uid = 0;
+        int r;
+
+        assert(s);
+
+        assert(sizeof(uid_t) == sizeof(uint32_t));
+        r = safe_atou32(s, &uid);
+        if (r < 0)
+                return r;
+
+        if (!uid_is_valid(uid))
+                return -ENXIO; /* we return ENXIO instead of EINVAL
+                                * here, to make it easy to distuingish
+                                * invalid numeric uids from invalid
+                                * strings. */
+
+        if (ret)
+                *ret = uid;
+
+        return 0;
+}

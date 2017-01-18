@@ -2,6 +2,8 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
+#include <pwd.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,6 +11,7 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
 #include <linux/fs.h>
 
 #include "caencoder.h"
@@ -62,6 +65,12 @@ struct CaEncoder {
         uint64_t archive_offset;
         uint64_t payload_offset;
         uint64_t step_size;
+
+        uid_t cached_uid;
+        gid_t cached_gid;
+
+        char *cached_user_name;
+        char *cached_group_name;
 };
 
 CaEncoder *ca_encoder_new(void) {
@@ -107,6 +116,9 @@ CaEncoder *ca_encoder_unref(CaEncoder *e) {
 
         for (i = 0; i < e->n_nodes; i++)
                 ca_encoder_node_free(e->nodes + i);
+
+        free(e->cached_user_name);
+        free(e->cached_group_name);
 
         realloc_buffer_free(&e->buffer);
         free(e);
@@ -344,6 +356,156 @@ static int ca_encoder_node_read_chattr(
         return 0;
 }
 
+static int uid_to_name(CaEncoder *e, uid_t uid, char **ret) {
+        long bufsize;
+        int r;
+
+        assert(e);
+        assert(ret);
+
+        if (uid == 0) {
+                /* Don't store name for root, it's clear anyway */
+                *ret = NULL;
+                return 0;
+        }
+
+        bufsize = sysconf(_SC_GETPW_R_SIZE_MAX);
+        if (bufsize <= 0)
+                bufsize = 4096;
+
+        for (;;) {
+                struct passwd pwbuf, *pw = NULL;
+                char *buf;
+
+                buf = malloc(bufsize);
+                if (!buf)
+                        return -ENOMEM;
+
+                r = getpwuid_r(uid, &pwbuf, buf, (size_t) bufsize, &pw);
+                if (r == 0 && pw) {
+                        char *n;
+
+                        n = strdup(pw->pw_name);
+                        free(buf);
+
+                        *ret = n;
+                        return 1;
+                }
+                free(buf);
+                if (r != ERANGE) {
+                        /* User name cannot be retrieved */
+
+                        if (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) {
+                                *ret = NULL;
+                                return 0;
+                        }
+
+                        if (asprintf(ret, UID_FMT, uid) < 0)
+                                return -ENOMEM;
+
+                        return 1;
+                }
+
+                bufsize *= 2;
+        }
+}
+
+static int gid_to_name(CaEncoder *e, gid_t gid, char **ret) {
+        long bufsize;
+        int r;
+
+        assert(e);
+        assert(ret);
+
+        if (gid == 0) {
+                *ret = NULL;
+                return 0;
+        }
+
+        bufsize = sysconf(_SC_GETGR_R_SIZE_MAX);
+        if (bufsize <= 0)
+                bufsize = 4096;
+
+        for (;;) {
+                struct group grbuf, *gr = NULL;
+                char *buf;
+
+                buf = malloc(bufsize);
+                if (!buf)
+                        return -ENOMEM;
+
+                r = getgrgid_r(gid, &grbuf, buf, (size_t) bufsize, &gr);
+                if (r == 0 && gr) {
+                        char *n;
+
+                        n = strdup(gr->gr_name);
+                        free(buf);
+
+                        *ret = n;
+                        return 1;
+                }
+
+                free(buf);
+                if (r != ERANGE) {
+
+                        if (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) {
+                                *ret = NULL;
+                                return 0;
+                        }
+
+                        if (asprintf(ret, GID_FMT, gid) < 0)
+                                return -ENOMEM;
+
+                        return 1;
+                }
+
+                bufsize *= 2;
+        }
+}
+
+static int ca_encoder_node_read_user_group_names(
+                CaEncoder *e,
+                CaEncoderNode *n) {
+
+        int r;
+
+        assert(e);
+        assert(n);
+
+        if (!(e->feature_flags & CA_FORMAT_WITH_USER_NAMES))
+                return 0;
+
+        if (n->stat.st_mode == 0)
+                return -EINVAL;
+
+        /* We store the user/group name in a per-encoder variable instead of per-node, under the assumption that
+         * there's a good chance we can reuse the once retrieved data between subsequent files. */
+
+        if (!e->cached_user_name || e->cached_uid != n->stat.st_uid) {
+
+                e->cached_user_name = mfree(e->cached_user_name);
+
+                r = uid_to_name(e, n->stat.st_uid, &e->cached_user_name);
+                if (r < 0)
+                        return r;
+
+                e->cached_uid = n->stat.st_uid;
+        }
+
+        if (!e->cached_group_name || e->cached_gid != n->stat.st_gid) {
+
+                e->cached_group_name = mfree(e->cached_group_name);
+
+                r = gid_to_name(e, n->stat.st_gid, &e->cached_group_name);
+                if (r < 0)
+                        return r;
+
+                e->cached_gid = n->stat.st_gid;
+        }
+
+        return 0;
+}
+
 static void ca_encoder_forget_children(CaEncoder *e) {
         assert(e);
 
@@ -425,6 +587,10 @@ static int ca_encoder_open_child(CaEncoder *e, const struct dirent *de) {
                 return r;
 
         r = ca_encoder_node_read_chattr(e, n, de, child);
+        if (r < 0)
+                return r;
+
+        r = ca_encoder_node_read_user_group_names(e, child);
         if (r < 0)
                 return r;
 
@@ -721,10 +887,8 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         if (!child)
                 return -EILSEQ;
 
-        if (child->stat.st_uid == UINT16_MAX ||
-            child->stat.st_uid == UINT32_MAX ||
-            child->stat.st_gid == UINT16_MAX ||
-            child->stat.st_gid == UINT32_MAX)
+        if (!uid_is_valid(child->stat.st_uid) ||
+            !gid_is_valid(child->stat.st_gid))
                 return -EINVAL;
 
         if ((e->feature_flags & CA_FORMAT_WITH_16BIT_UIDS) &&
@@ -778,6 +942,13 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
 
         size = offsetof(CaFormatEntry, name) + strlen(de->d_name) + 1;
 
+        if (child->stat.st_uid == e->cached_uid && e->cached_user_name)
+                size += offsetof(CaFormatUser, name) +
+                        strlen(e->cached_user_name) + 1;
+        if (child->stat.st_gid == e->cached_gid && e->cached_group_name)
+                size += offsetof(CaFormatGroup, name) +
+                        strlen(e->cached_group_name) + 1;
+
         if (S_ISREG(child->stat.st_mode))
                 size += offsetof(CaFormatPayload, data);
         else if (S_ISLNK(child->stat.st_mode))
@@ -804,6 +975,27 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
 
         /* Note that any follow-up structures from here are unaligned in memory! */
 
+        if (child->stat.st_uid == e->cached_uid && e->cached_user_name) {
+                p = mempcpy(p,
+                            &(CaFormatHeader) {
+                                    .type = htole64(CA_FORMAT_USER),
+                                    .size = htole64(offsetof(CaFormatUser, name) + strlen(e->cached_user_name) + 1),
+                            },
+                            sizeof(CaFormatHeader));
+
+                p = stpcpy(p, e->cached_user_name) + 1;
+        }
+        if (child->stat.st_gid == e->cached_gid && e->cached_group_name) {
+                p = mempcpy(p,
+                            &(CaFormatHeader) {
+                                    .type = htole64(CA_FORMAT_GROUP),
+                                    .size = htole64(offsetof(CaFormatGroup, name) + strlen(e->cached_group_name) + 1),
+                            },
+                            sizeof(CaFormatHeader));
+
+                p = stpcpy(p, e->cached_group_name) + 1;
+        }
+
         if (S_ISREG(child->stat.st_mode)) {
                 memcpy(p,
                        &(CaFormatHeader) {
@@ -813,14 +1005,14 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                        sizeof(CaFormatHeader));
 
         } else if (S_ISLNK(child->stat.st_mode)) {
-                memcpy(p,
+                p = mempcpy(p,
                        &(CaFormatHeader) {
                                .type = htole64(CA_FORMAT_SYMLINK),
                                .size = htole64(offsetof(CaFormatSymlink, target) + strlen(child->symlink_target) + 1),
                        },
                        sizeof(CaFormatHeader));
 
-                strcpy(p + offsetof(CaFormatSymlink, target), child->symlink_target);
+                strcpy(p, child->symlink_target);
 
         } else if (S_ISBLK(child->stat.st_mode) || S_ISCHR(child->stat.st_mode)) {
                 memcpy(p,

@@ -67,7 +67,7 @@ enum {
 
         CA_FORMAT_WITH_BEST =
                 CA_FORMAT_WITH_32BIT_UIDS|
-                /* CA_FORMAT_WITH_USER_NAMES| */
+                CA_FORMAT_WITH_USER_NAMES|
                 CA_FORMAT_WITH_NSEC_TIME|
                 CA_FORMAT_WITH_PERMISSIONS|
                 CA_FORMAT_WITH_SYMLINKS|
