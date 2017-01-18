@@ -29,6 +29,7 @@ int ca_sync_set_index_path(CaSync *sync, const char *path);
 /* The raw, unarchived ("user") tree */
 int ca_sync_set_base_fd(CaSync *sync, int fd);
 int ca_sync_set_base_path(CaSync *sync, const char *path);
+int ca_sync_set_make_perm_mode(CaSync *sync, mode_t mode);
 int ca_sync_set_base_mode(CaSync *sync, mode_t mode);
 
 /* The serialization of the user tree */

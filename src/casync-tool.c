@@ -401,6 +401,14 @@ static int make(int argc, char *argv[]) {
         }
         input_fd = -1;
 
+        if (output) {
+                r = ca_sync_set_make_perm_mode(s, st.st_mode & 0666);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set make permission mode: %s\n", strerror(-r));
+                        goto finish;
+                }
+        }
+
         if (operation == MAKE_ARCHIVE) {
                 if (output)
                         r = ca_sync_set_archive_path(s, output);

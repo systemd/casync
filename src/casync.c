@@ -48,6 +48,7 @@ typedef struct CaSync {
         char *temporary_archive_path;
 
         mode_t base_mode;
+        mode_t make_perm_mode;
 
         ReallocBuffer buffer;
 
@@ -70,6 +71,7 @@ static CaSync *ca_sync_new(void) {
 
         s->base_fd = s->archive_fd = -1;
         s->base_mode = (mode_t) -1;
+        s->make_perm_mode = (mode_t) -1;
 
         return s;
 }
@@ -279,6 +281,21 @@ int ca_sync_set_base_path(CaSync *s, const char *path) {
         return 0;
 }
 
+int ca_sync_set_make_perm_mode(CaSync *s, mode_t m) {
+        if (!s)
+                return -EINVAL;
+        if (m & ~(S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH))
+                return -EINVAL;
+        if (s->direction != CA_SYNC_ENCODE)
+                return -ENOTTY;
+
+        if (s->make_perm_mode != (mode_t) -1)
+                return -EBUSY;
+
+        s->make_perm_mode = m;
+        return 0;
+}
+
 int ca_sync_set_base_mode(CaSync *s, mode_t m) {
         if (!s)
                 return -EINVAL;
@@ -469,14 +486,14 @@ static int ca_sync_start(CaSync *s) {
         assert(s);
 
         if (s->direction == CA_SYNC_ENCODE && s->archive_path && s->archive_fd < 0) {
-
                 if (!s->temporary_archive_path) {
                         r = tempfn_random(s->archive_path, &s->temporary_archive_path);
                         if (r < 0)
                                 return r;
                 }
 
-                s->archive_fd = open(s->temporary_archive_path, O_WRONLY|O_CLOEXEC|O_NOCTTY|O_CREAT|O_EXCL, 0777);
+                s->archive_fd = open(s->temporary_archive_path, O_WRONLY|O_CLOEXEC|O_NOCTTY|O_CREAT|O_EXCL,
+                                     s->make_perm_mode & 0666);
                 if (s->archive_fd < 0) {
                         s->temporary_archive_path = mfree(s->temporary_archive_path);
                         return -errno;
