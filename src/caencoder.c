@@ -278,7 +278,7 @@ static int ca_encoder_node_read_symlink(
                 const struct dirent *de,
                 CaEncoderNode *symlink) {
 
-        size_t k = 16;
+        int r;
 
         assert(n);
         assert(de);
@@ -294,29 +294,11 @@ static int ca_encoder_node_read_symlink(
         if (symlink->symlink_target)
                 return 0;
 
-        for (;;) {
-                ssize_t z;
-                char *buf;
+        r = readlinkat_malloc(n->fd, de->d_name, &symlink->symlink_target);
+        if (r < 0)
+                return r;
 
-                buf = malloc(k+1);
-                if (!buf)
-                        return -ENOMEM;
-
-                z = readlinkat(n->fd, de->d_name, buf, k);
-                if (z < 0) {
-                        free(buf);
-                        return -errno;
-                }
-                if ((size_t) z < k) {
-                        buf[z] = 0;
-
-                        symlink->symlink_target = buf;
-                        return 1;
-                }
-
-                free(buf);
-                k *= 2;
-        }
+        return 1;
 }
 
 static int ca_encoder_node_read_chattr(
