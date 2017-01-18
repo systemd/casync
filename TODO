@@ -7,7 +7,6 @@
 * nbd expose logic
 * deal with file properties of the "root" directory
 * dos flags
-* chattr
 * btrfs flags
 * xattrs
 * acls
@@ -17,5 +16,3 @@
 * per-file seed cache
 * exclude patterns
 * permit shifting UID/GIDs
-* properly implement user/group names
-* restore chattr(1)
