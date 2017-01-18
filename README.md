@@ -48,12 +48,12 @@ together in a moderately new, nice way. That's all. The primary
 influences are rsync and git, but there are other systems that use
 similar algorithms, in particular:
 
+- bup (https://bup.github.io/)
 - CAFS (https://github.com/indyjo/cafs)
+- dedupfs (https://github.com/xolox/dedupfs)
 - LBFS (https://pdos.csail.mit.edu/archive/lbfs/)
 - Tahoe-LAFS (https://tahoe-lafs.org/trac/tahoe-lafs)
 - Venti (https://en.wikipedia.org/wiki/Venti)
-- bup (https://bup.github.io/)
-- dedupfs (https://github.com/xolox/dedupfs)
 - zsync (http://zsync.moria.org.uk/)
 
 (ordered alphabetically, not in order of relevance)
@@ -67,7 +67,9 @@ similar algorithms, in particular:
 
 ## Operations on directory trees
 
+```
 # casync digest /home/lennart
+```
 
 ## Operations on archives
 
@@ -117,4 +119,9 @@ similar algorithms, in particular:
 
 ```
 # casync clone /home/lennart /home/lennart2 (NOT IMPLEMENTED YET)
+```
+
+```
+# casync gc /var/lib/backup.castr /home/lennart.caidx /home/foobar.caidx ... (NOT IMPLEMENTED YET)
+# casync make /home/lennart.catab /home/lennart (NOT IMPLEMENTED)
 ```

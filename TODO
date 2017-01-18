@@ -5,7 +5,7 @@
 * ssh/remoting protocol
 * fuse mount logic
 * nbd expose logic
-* deal with file properties of the "root" directory
+* store/extract file properties of the "root" directory
 * dos flags
 * btrfs flags
 * xattrs
@@ -16,3 +16,7 @@
 * per-file seed cache
 * exclude patterns
 * permit shifting UID/GIDs
+* delete old files in destination after sync
+* build seed while extracting
+* optionally make seeds persistent
+* stop at mount points
