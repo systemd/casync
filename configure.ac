@@ -20,6 +20,8 @@ LT_INIT([disable-static])
 
 AC_PROG_CC_C99
 
+AC_CHECK_FUNCS([scandirat], [], AC_MSG_ERROR([*** scandirat function was not found. Is your libc too old?]))
+
 AC_CHECK_DECLS([
         getrandom,
         ],
