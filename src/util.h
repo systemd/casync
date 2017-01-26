@@ -465,4 +465,13 @@ static inline size_t strlen_null(const char *s) {
 
 #define STR_IN_SET(x, ...) strv_contains(STRV_MAKE(__VA_ARGS__), x)
 
+static inline const char *empty_or_dash_to_null(const char *s) {
+        if (isempty(s))
+                return NULL;
+        if (streq(s, "-"))
+                return NULL;
+
+        return s;
+}
+
 #endif

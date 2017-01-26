@@ -1386,17 +1386,6 @@ finish:
         return r;
 }
 
-static const char *clean_argument(const char *s) {
-        if (!s)
-                return NULL;
-        if (streq(s, ""))
-                return NULL;
-        if (streq(s, "-"))
-                return NULL;
-
-        return s;
-}
-
 static void free_stores(CaStore **stores, size_t n_stores) {
         size_t i;
 
@@ -1485,10 +1474,10 @@ static int pull(int argc, char *argv[]) {
                 return -EINVAL;
         }
 
-        base_path = clean_argument(argv[1]);
-        archive_path = clean_argument(argv[2]);
-        index_path = clean_argument(argv[3]);
-        wstore_path = clean_argument(argv[4]);
+        base_path = empty_or_dash_to_null(argv[1]);
+        archive_path = empty_or_dash_to_null(argv[2]);
+        index_path = empty_or_dash_to_null(argv[3]);
+        wstore_path = empty_or_dash_to_null(argv[4]);
 
         n_stores = !!wstore_path + (argc - 5);
 
@@ -1634,10 +1623,10 @@ static int push(int argc, char *argv[]) {
                 return -EINVAL;
         }
 
-        base_path = clean_argument(argv[1]);
-        archive_path = clean_argument(argv[2]);
-        index_path = clean_argument(argv[3]);
-        wstore_path = clean_argument(argv[4]);
+        base_path = empty_or_dash_to_null(argv[1]);
+        archive_path = empty_or_dash_to_null(argv[2]);
+        index_path = empty_or_dash_to_null(argv[3]);
+        wstore_path = empty_or_dash_to_null(argv[4]);
 
         n_stores = !!wstore_path + (argc - 5);
 
