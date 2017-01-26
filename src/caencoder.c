@@ -976,53 +976,51 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         /* Note that any follow-up structures from here are unaligned in memory! */
 
         if (child->stat.st_uid == e->cached_uid && e->cached_user_name) {
-                p = mempcpy(p,
-                            &(CaFormatHeader) {
-                                    .type = htole64(CA_FORMAT_USER),
-                                    .size = htole64(offsetof(CaFormatUser, name) + strlen(e->cached_user_name) + 1),
-                            },
-                            sizeof(CaFormatHeader));
+                CaFormatHeader header = {
+                        .type = htole64(CA_FORMAT_USER),
+                        .size = htole64(offsetof(CaFormatUser, name) + strlen(e->cached_user_name) + 1),
+                };
 
+                p = mempcpy(p, &header, sizeof(header));
                 p = stpcpy(p, e->cached_user_name) + 1;
         }
-        if (child->stat.st_gid == e->cached_gid && e->cached_group_name) {
-                p = mempcpy(p,
-                            &(CaFormatHeader) {
-                                    .type = htole64(CA_FORMAT_GROUP),
-                                    .size = htole64(offsetof(CaFormatGroup, name) + strlen(e->cached_group_name) + 1),
-                            },
-                            sizeof(CaFormatHeader));
 
+        if (child->stat.st_gid == e->cached_gid && e->cached_group_name) {
+                CaFormatHeader header = {
+                        .type = htole64(CA_FORMAT_GROUP),
+                        .size = htole64(offsetof(CaFormatGroup, name) + strlen(e->cached_group_name) + 1),
+                };
+
+                p = mempcpy(p, &header, sizeof(header));
                 p = stpcpy(p, e->cached_group_name) + 1;
         }
 
         if (S_ISREG(child->stat.st_mode)) {
-                memcpy(p,
-                       &(CaFormatHeader) {
-                               .type = htole64(CA_FORMAT_PAYLOAD),
-                               .size = htole64(offsetof(CaFormatPayload, data) + child->stat.st_size),
-                       },
-                       sizeof(CaFormatHeader));
+                CaFormatHeader header = {
+                        .type = htole64(CA_FORMAT_PAYLOAD),
+                        .size = htole64(offsetof(CaFormatPayload, data) + child->stat.st_size),
+                };
+
+                memcpy(p, &header, sizeof(header));
 
         } else if (S_ISLNK(child->stat.st_mode)) {
-                p = mempcpy(p,
-                       &(CaFormatHeader) {
-                               .type = htole64(CA_FORMAT_SYMLINK),
-                               .size = htole64(offsetof(CaFormatSymlink, target) + strlen(child->symlink_target) + 1),
-                       },
-                       sizeof(CaFormatHeader));
+                CaFormatHeader header = {
+                        .type = htole64(CA_FORMAT_SYMLINK),
+                        .size = htole64(offsetof(CaFormatSymlink, target) + strlen(child->symlink_target) + 1),
+                };
 
+                p = mempcpy(p, &header, sizeof(header));
                 strcpy(p, child->symlink_target);
 
         } else if (S_ISBLK(child->stat.st_mode) || S_ISCHR(child->stat.st_mode)) {
-                memcpy(p,
-                       &(CaFormatDevice) {
-                               .header.type = htole64(CA_FORMAT_DEVICE),
-                               .header.size = htole64(sizeof(CaFormatDevice)),
-                               .major = htole64(major(child->stat.st_rdev)),
-                               .minor = htole64(minor(child->stat.st_rdev)),
-                       },
-                       sizeof(CaFormatDevice));
+                CaFormatDevice device = {
+                        .header.type = htole64(CA_FORMAT_DEVICE),
+                        .header.size = htole64(sizeof(CaFormatDevice)),
+                        .major = htole64(major(child->stat.st_rdev)),
+                        .minor = htole64(minor(child->stat.st_rdev)),
+                };
+
+                memcpy(p, &device, sizeof(device));
         }
 
         /* fprintf(stderr, "entry at %" PRIu64 " (%s)\n", e->archive_offset, entry->name); */
