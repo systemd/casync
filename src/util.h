@@ -156,6 +156,7 @@ static inline uint64_t random_u64(void) {
 #define _unlikely_(x) (__builtin_expect(!!(x),0))
 #define _malloc_ __attribute__ ((malloc))
 #define _pure_ __attribute__ ((pure))
+#define _packed_ __attribute__ ((packed))
 #ifdef __clang__
 #  define _alloc_(...)
 #else
