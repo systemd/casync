@@ -43,6 +43,12 @@ CaLocation* ca_location_unref(CaLocation *l) {
         if (!l)
                 return NULL;
 
+        assert(l->n_ref > 0);
+        l->n_ref--;
+
+        if (l->n_ref > 0)
+                return NULL;
+
         free(l->path);
         free(l->formatted);
 
@@ -53,6 +59,7 @@ CaLocation* ca_location_ref(CaLocation *l) {
         if (!l)
                 return NULL;
 
+        assert(l->n_ref > 0);
         l->n_ref++;
 
         return l;

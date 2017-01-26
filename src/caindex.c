@@ -3,22 +3,31 @@
 
 #include "caformat.h"
 #include "caindex.h"
+#include "def.h"
 #include "util.h"
 
-#undef EBADMSG
-#define EBADMSG __LINE__
+/* #undef EBADMSG */
+/* #define EBADMSG __LINE__ */
+
+typedef enum CaIndexMode {
+        CA_INDEX_WRITE,
+        CA_INDEX_READ,
+        CA_INDEX_INCREMENTAL_WRITE,
+        CA_INDEX_INCREMENTAL_READ,
+} CaIndexMode;
 
 struct CaIndex {
+        CaIndexMode mode;
+
         int open_flags;
         int fd;
 
         char *path;
         char *temporary_path;
 
-        bool opened;
         bool wrote_eof;
 
-        uint64_t start_offset, offset;
+        uint64_t start_offset, cooked_offset, raw_offset;
         uint64_t n_items;
         uint64_t previous_object;
 
@@ -45,6 +54,7 @@ CaIndex *ca_index_new_write(void) {
                 return NULL;
 
         i->open_flags = O_CLOEXEC|O_NOCTTY|O_WRONLY|O_CREAT|O_EXCL;
+        i->mode = CA_INDEX_WRITE;
         return i;
 }
 
@@ -56,6 +66,32 @@ CaIndex *ca_index_new_read(void) {
                 return NULL;
 
         i->open_flags = O_CLOEXEC|O_NOCTTY|O_RDONLY;
+        i->mode = CA_INDEX_READ;
+        return i;
+}
+
+CaIndex *ca_index_new_incremental_write(void) {
+        CaIndex *i;
+
+        i = ca_index_new();
+        if (!i)
+                return NULL;
+
+        i->open_flags = O_CLOEXEC|O_NOCTTY|O_RDWR|O_CREAT|O_EXCL;
+        i->mode = CA_INDEX_INCREMENTAL_WRITE;
+        return i;
+}
+
+
+CaIndex *ca_index_new_incremental_read(void) {
+        CaIndex *i;
+
+        i = ca_index_new();
+        if (!i)
+                return NULL;
+
+        i->open_flags = O_CLOEXEC|O_NOCTTY|O_RDWR|O_CREAT|O_EXCL;
+        i->mode = CA_INDEX_INCREMENTAL_READ;
         return i;
 }
 
@@ -70,7 +106,8 @@ CaIndex *ca_index_unref(CaIndex *i) {
                 free(i->temporary_path);
         }
 
-        safe_close(i->fd);
+        if (i->fd >= 2)
+                safe_close(i->fd);
 
         return mfree(i);
 }
@@ -114,14 +151,25 @@ static int ca_index_open_fd(CaIndex *i) {
         switch (i->open_flags & O_ACCMODE) {
 
         case O_RDONLY:
+
+                if (!i->path)
+                        return -EUNATCH;
+
                 p = i->path;
                 break;
 
         case O_WRONLY:
+        case O_RDWR:
+
                 if (!i->temporary_path) {
-                        r = tempfn_random(i->path, &i->temporary_path);
-                        if (r < 0)
-                                return r;
+                        if (i->path) {
+                                r = tempfn_random(i->path, &i->temporary_path);
+                                if (r < 0)
+                                        return r;
+                        } else {
+                                if (asprintf(&i->temporary_path, "/var/tmp/index.%" PRIx64, random_u64()) < 0)
+                                        return -ENOMEM;
+                        }
                 }
 
                 p = i->temporary_path;
@@ -152,16 +200,44 @@ static int ca_index_write_head(CaIndex *i) {
         };
         int r;
 
-        if ((i->open_flags & O_ACCMODE) != O_WRONLY)
+        assert(i);
+
+        if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
                 return 0;
+        if (i->start_offset != 0)
+                return 0;
+
+        assert(i->cooked_offset == 0);
 
         r = loop_write(i->fd, &head, sizeof(head));
         if (r < 0)
                 return r;
 
-        i->start_offset = i->offset = sizeof(head);
+        i->start_offset = i->cooked_offset = sizeof(head);
 
         return 0;
+}
+
+static int ca_index_enough_data(CaIndex *i, size_t n) {
+        size_t end;
+
+        assert(i);
+
+        if (i->mode == CA_INDEX_READ)
+                return 1;
+        if (i->mode != CA_INDEX_INCREMENTAL_READ)
+                return -ENOTTY;
+        if (i->wrote_eof)
+                return 1;
+
+        end = i->cooked_offset + n;
+        if (end < i->cooked_offset) /* Overflow? */
+                return -E2BIG;
+
+        if (end > i->raw_offset)
+                return 0;
+
+        return 1;
 }
 
 static int ca_index_read_head(CaIndex *i) {
@@ -170,9 +246,22 @@ static int ca_index_read_head(CaIndex *i) {
                 CaFormatHeader table;
         } head;
         ssize_t n;
+        int r;
 
-        if ((i->open_flags & O_ACCMODE) != O_RDONLY)
+        assert(i);
+
+        if (!IN_SET(i->mode, CA_INDEX_READ, CA_INDEX_INCREMENTAL_READ))
                 return 0;
+        if (i->start_offset != 0) /* already past the head */
+                return 0;
+
+        assert(i->cooked_offset == 0);
+
+        r = ca_index_enough_data(i, sizeof(head));
+        if (r < 0)
+                return r;
+        if (r == 0)
+                return -EAGAIN;
 
         n = loop_read(i->fd, &head, sizeof(head));
         if (n < 0)
@@ -192,7 +281,7 @@ static int ca_index_read_head(CaIndex *i) {
             head.table.type != htole64(CA_FORMAT_TABLE))
                 return -EBADMSG;
 
-        i->start_offset = i->offset = sizeof(head);
+        i->start_offset = i->cooked_offset = sizeof(head);
 
         return 0;
 }
@@ -202,36 +291,29 @@ int ca_index_open(CaIndex *i) {
 
         if (!i)
                 return -EINVAL;
-        if (i->fd < 0 && !i->path)
-                return -EINVAL;
-        if (i->opened)
-                return 0;
 
         r = ca_index_open_fd(i);
         if (r < 0)
                 return r;
 
         r = ca_index_read_head(i);
-        if (r < 0)
+        if (r < 0 && r != -EAGAIN)
                 return r;
 
         r = ca_index_write_head(i);
         if (r < 0)
                 return r;
 
-        i->opened = true;
-
         return 0;
 }
 
-static int ca_index_install(CaIndex *i) {
+int ca_index_install(CaIndex *i) {
         assert(i);
 
-        if ((i->open_flags & O_ACCMODE) == O_RDONLY)
-                return 0;
-
+        if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE, CA_INDEX_INCREMENTAL_READ))
+                return -ENOTTY;
         if (!i->wrote_eof)
-                return 0;
+                return -EBUSY;
 
         if (!i->temporary_path)
                 return 0;
@@ -242,19 +324,7 @@ static int ca_index_install(CaIndex *i) {
                 return -errno;
 
         i->temporary_path = mfree(i->temporary_path);
-        return 0;
-}
-
-int ca_index_close(CaIndex *i) {
-        if (!i)
-                return -EINVAL;
-        if (!i->opened)
-                return 0;
-
-        if (i->path || i->fd >= 2)
-                i->fd = safe_close(i->fd);
-
-        return ca_index_install(i);
+        return 1;
 }
 
 int ca_index_write_object(CaIndex *i, const CaObjectID *id, uint64_t size) {
@@ -268,14 +338,23 @@ int ca_index_write_object(CaIndex *i, const CaObjectID *id, uint64_t size) {
                 return -EINVAL;
         if (size == 0)
                 return -EINVAL;
-        if ((i->open_flags & O_ACCMODE) == O_RDONLY)
-                return -EROFS;
+        if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
+                return -ENOTTY;
         if (i->wrote_eof)
                 return -EBUSY;
+
+        r = ca_index_open(i);
+        if (r < 0)
+                return r;
 
         end = i->previous_object + size;
         if (end < i->previous_object)
                 return -E2BIG;
+
+        /* { */
+        /*         char ids[CA_OBJECT_ID_FORMAT_MAX]; */
+        /*         fprintf(stderr, "WRITING INDEX CHUNK: %s\n", ca_object_id_format(id, ids)); */
+        /* } */
 
         item.offset = htole64(end);
         memcpy(&item.object, id, sizeof(CaObjectID));
@@ -285,7 +364,7 @@ int ca_index_write_object(CaIndex *i, const CaObjectID *id, uint64_t size) {
                 return r;
 
         i->previous_object = end;
-        i->offset += sizeof(item);
+        i->cooked_offset += sizeof(item);
         i->n_items++;
 
         return 0;
@@ -302,10 +381,14 @@ int ca_index_write_eof(CaIndex *i) {
 
         if (!i)
                 return -EINVAL;
-        if ((i->open_flags & O_ACCMODE) == O_RDONLY)
-                return -EROFS;
+        if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
+                return -ENOTTY;
         if (i->wrote_eof)
                 return -EBUSY;
+
+        r = ca_index_open(i);
+        if (r < 0)
+                return r;
 
         write_le64(&tail.marker_item.offset, UINT64_MAX);
         memcpy(&tail.marker_item.object, &i->digest, CA_OBJECT_ID_SIZE);
@@ -318,6 +401,8 @@ int ca_index_write_eof(CaIndex *i) {
         if (r < 0)
                 return r;
 
+        i->cooked_offset += sizeof(tail);
+
         i->wrote_eof = true;
 
         return 0;
@@ -326,22 +411,36 @@ int ca_index_write_eof(CaIndex *i) {
 int ca_index_read_object(CaIndex *i, CaObjectID *ret_id, uint64_t *ret_size) {
         CaFormatTableItem item;
         ssize_t n;
+        int r;
 
         if (!i)
                 return -EINVAL;
         if (!ret_id)
                 return -EINVAL;
-        if (!ret_size)
-                return -EINVAL;
 
-        if ((i->open_flags & O_ACCMODE) == O_WRONLY)
-                return -EACCES;
+        r = ca_index_open(i);
+        if (r < 0)
+                return r;
+
+        if (!IN_SET(i->mode, CA_INDEX_READ, CA_INDEX_INCREMENTAL_READ))
+                return -ENOTTY;
+
+        r = ca_index_enough_data(i, sizeof(item) + sizeof(le64_t) + 1);
+        if (r < 0)
+                return r;
+        if (r == 0)
+                return -EAGAIN;
 
         n = loop_read(i->fd, &item, sizeof(item));
         if (n < 0)
                 return (int) n;
         if (n != sizeof(item))
                 return -EPIPE;
+
+        /* { */
+        /*         char ids[CA_OBJECT_ID_FORMAT_MAX]; */
+        /*         fprintf(stderr, "READING INDEX CHUNK: %s\n", ca_object_id_format((const CaObjectID*) item.object, ids)); */
+        /* } */
 
         if (le64toh(item.offset) == UINT64_MAX) {
                 struct {
@@ -356,16 +455,18 @@ int ca_index_read_object(CaIndex *i, CaObjectID *ret_id, uint64_t *ret_size) {
                 if (n != sizeof(le64_t))
                         return -EBADMSG;
 
-                i->offset += sizeof(item) + n;
+                i->cooked_offset += sizeof(item) + n;
 
-                if (le64toh(tail.final_size) != (i->offset - i->start_offset + offsetof(CaFormatTable, items)))
+                if (le64toh(tail.final_size) != (i->cooked_offset - i->start_offset + offsetof(CaFormatTable, items)))
                         return -EBADMSG;
 
                 memcpy(&i->digest, item.object, sizeof(CaObjectID));
                 i->digest_valid = true;
 
-                memset(&ret_id, 0, sizeof(CaObjectID));
-                *ret_size = 0;
+                memset(ret_id, 0, sizeof(CaObjectID));
+
+                if (ret_size)
+                        *ret_size = 0;
 
                 return 0; /* EOF */
         }
@@ -374,17 +475,114 @@ int ca_index_read_object(CaIndex *i, CaObjectID *ret_id, uint64_t *ret_size) {
                 return -EBADMSG;
 
         memcpy(ret_id, item.object, sizeof(CaObjectID));
-        *ret_size = le64toh(item.offset) - i->previous_object;
+
+        if (ret_size)
+                *ret_size = le64toh(item.offset) - i->previous_object;
 
         i->previous_object = le64toh(item.offset);
         i->n_items++;
-        i->offset += sizeof(item);
+        i->cooked_offset += sizeof(item);
 
         return 1;
 }
 
 int ca_index_seek(CaIndex *i, uint64_t offset) {
         return -EOPNOTSUPP;
+}
+
+int ca_index_incremental_write(CaIndex *i, const void *data, size_t size) {
+        uint64_t new_offset;
+        ssize_t n;
+        int r;
+
+        if (!i)
+                return -EINVAL;
+        if (!data)
+                return -EINVAL;
+        if (size == 0)
+                return -EINVAL;
+
+        if (i->mode != CA_INDEX_INCREMENTAL_READ)
+                return -ENOTTY;
+        if (i->wrote_eof)
+                return -EBUSY;
+
+        r = ca_index_open(i);
+        if (r < 0)
+                return r;
+
+        new_offset = i->raw_offset + size;
+        if (new_offset < i->raw_offset) /* overflow? */
+                return -EFBIG;
+
+        n = pwrite(i->fd, data, size, i->raw_offset);
+        if (n < 0)
+                return -errno;
+        if ((size_t) n != size)
+                return -EIO;
+
+        i->raw_offset = new_offset;
+        return 0;
+}
+
+int ca_index_incremental_eof(CaIndex *i) {
+        int r;
+
+        if (!i)
+                return -EINVAL;
+
+        if (i->mode != CA_INDEX_INCREMENTAL_READ)
+                return -ENOTTY;
+        if (i->wrote_eof)
+                return -EBUSY;
+
+        r = ca_index_open(i);
+        if (r < 0)
+                return r;
+
+        i->wrote_eof = true;
+        return 0;
+}
+
+int ca_index_incremental_read(CaIndex *i, ReallocBuffer *buffer) {
+        size_t m;
+        ssize_t n;
+        char *p;
+        int r;
+
+        if (!i)
+                return -EINVAL;
+        if (!buffer)
+                return -EINVAL;
+
+        if (i->mode != CA_INDEX_INCREMENTAL_WRITE)
+                return -ENOTTY;
+
+        r = ca_index_open(i);
+        if (r < 0)
+                return r;
+
+        if (i->raw_offset >= i->cooked_offset)
+                return i->wrote_eof ? 0 : -EAGAIN;
+
+        m = MIN(BUFFER_SIZE, i->cooked_offset - i->raw_offset);
+
+        p = realloc_buffer_acquire(buffer, m);
+        if (!p)
+                return -ENOMEM;
+
+        n = pread(i->fd, p, m, i->raw_offset);
+        if (n < 0) {
+                realloc_buffer_empty(buffer);
+                return -errno;
+        }
+
+        r = realloc_buffer_shorten(buffer, m - n);
+        if (r < 0)
+                return r;
+
+        i->raw_offset += n;
+        return 1;
 }
 
 int ca_index_get_digest(CaIndex *i, CaObjectID *ret) {
@@ -411,5 +609,6 @@ int ca_index_set_digest(CaIndex *i, const CaObjectID *id) {
 
         i->digest = *id;
         i->digest_valid = true;
+
         return 0;
 }

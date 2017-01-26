@@ -381,7 +381,7 @@ int ca_seed_step(CaSeed *s) {
         }
 }
 
-int ca_seed_get(CaSeed *s, const CaObjectID *object_id, void **ret, size_t *ret_size) {
+int ca_seed_get(CaSeed *s, const CaObjectID *object_id, const void **ret, size_t *ret_size) {
         char id[CA_OBJECT_ID_FORMAT_MAX], *target = NULL;
         const char *four, *combined;
         CaLocation *l = NULL;

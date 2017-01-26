@@ -1,14 +1,18 @@
 #include <fcntl.h>
 #include <gcrypt.h>
+#include <sys/poll.h>
 #include <sys/stat.h>
 
 #include "cadecoder.h"
 #include "caencoder.h"
 #include "caformat-util.h"
 #include "caindex.h"
+#include "caprotocol.h"
+#include "caremote.h"
 #include "caseed.h"
 #include "castore.h"
 #include "casync.h"
+#include "cautil.h"
 #include "chunker.h"
 #include "gcrypt-util.h"
 #include "realloc-buffer.h"
@@ -28,36 +32,46 @@ typedef struct CaSync {
         CaEncoder *encoder;
         CaDecoder *decoder;
 
+        CaChunker chunker;
+
+        CaIndex *index;
+        CaRemote *remote_index;
+
+        CaObjectID next_chunk;
+        size_t next_chunk_size;
+        bool next_chunk_valid;
+
         CaStore *wstore;
         CaStore **rstores;
         size_t n_rstores;
+        CaStore *cache_store;
+
+        CaRemote *remote_wstore;
+        CaRemote **remote_rstores;
+        size_t n_remote_rstores;
+        size_t current_remote;
 
         CaSeed **seeds;
         size_t n_seeds;
-        size_t current_seed;
-
-        CaChunker chunker;
+        size_t current_seed; /* The seed we are currently indexing */
 
         int base_fd;
         int archive_fd;
 
-        char *base_path;
-        char *archive_path;
-
-        char *temporary_base_path;
-        char *temporary_archive_path;
+        char *base_path, *temporary_base_path;
+        char *archive_path, *temporary_archive_path;
 
         mode_t base_mode;
         mode_t make_perm_mode;
 
         ReallocBuffer buffer;
+        ReallocBuffer index_buffer;
 
         gcry_md_hd_t object_digest;
         gcry_md_hd_t archive_digest;
 
-        CaIndex *index;
-
-        bool eof;
+        bool archive_eof;
+        bool remote_index_eof;
 
         uint64_t feature_flags;
 } CaSync;
@@ -111,6 +125,12 @@ CaSync *ca_sync_unref(CaSync *s) {
         for (i = 0; i < s->n_rstores; i++)
                 ca_store_unref(s->rstores[i]);
         free(s->rstores);
+        ca_store_unref(s->cache_store);
+
+        ca_remote_unref(s->remote_wstore);
+        for (i = 0; i < s->n_remote_rstores; i++)
+                ca_remote_unref(s->remote_rstores[i]);
+        free(s->remote_rstores);
 
         for (i = 0; i < s->n_seeds; i++)
                 ca_seed_unref(s->seeds[i]);
@@ -132,8 +152,10 @@ CaSync *ca_sync_unref(CaSync *s) {
         }
 
         ca_index_unref(s->index);
+        ca_remote_unref(s->remote_index);
 
         realloc_buffer_free(&s->buffer);
+        realloc_buffer_free(&s->index_buffer);
 
         gcry_md_close(s->object_digest);
         gcry_md_close(s->archive_digest);
@@ -172,6 +194,8 @@ static int ca_sync_allocate_index(CaSync *s) {
         assert(s);
 
         if (s->index)
+                return -EBUSY;
+        if (s->remote_index)
                 return -EBUSY;
 
         if (s->direction == CA_SYNC_ENCODE)
@@ -227,6 +251,71 @@ int ca_sync_set_index_path(CaSync *s, const char *path) {
         }
 
         return 0;
+}
+
+int ca_sync_set_index_remote(CaSync *s, const char *url) {
+        uint64_t flags;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!url)
+                return -EINVAL;
+
+        if (s->index)
+                return -EBUSY;
+        if (s->remote_index)
+                return -EBUSY;
+
+        flags = s->direction == CA_SYNC_ENCODE ? CA_PROTOCOL_PUSH_INDEX : CA_PROTOCOL_PULL_INDEX;
+
+        if (s->remote_wstore) {
+                /* Try to reuse the main store remote for the index too, if it matches the same server */
+
+                r = ca_remote_set_index_url(s->remote_wstore, url);
+                if (r >= 0) {
+                        r = ca_remote_add_local_feature_flags(s->remote_wstore, flags);
+                        if (r < 0)
+                                return r;
+
+                        s->remote_index = ca_remote_ref(s->remote_wstore);
+                        return 0;
+                }
+                if (r != -EBUSY) /* Fail, except when the reason is that it matches the same server. */
+                        return r;
+        }
+
+        s->remote_index = ca_remote_new();
+        if (!s->remote_index)
+                return -ENOMEM;
+
+        r = ca_remote_set_index_url(s->remote_index, url);
+        if (r < 0)
+                return r;
+
+        r = ca_remote_set_local_feature_flags(s->remote_index, flags);
+        if (r < 0)
+                return r;
+
+        return 0;
+}
+
+int ca_sync_set_index_auto(CaSync *s, const char *locator) {
+        CaLocatorClass c;
+
+        if (!s)
+                return -EINVAL;
+        if (!locator)
+                return -EINVAL;
+
+        c = ca_classify_locator(locator);
+        if (c < 0)
+                return -EINVAL;
+
+        if (c == CA_LOCATOR_PATH)
+                return ca_sync_set_index_path(s, locator);
+
+        return ca_sync_set_index_remote(s, locator);
 }
 
 int ca_sync_set_base_fd(CaSync *s, int fd) {
@@ -358,7 +447,7 @@ int ca_sync_set_archive_path(CaSync *s, const char *path) {
         return 0;
 }
 
-int ca_sync_set_store(CaSync *s, const char *path) {
+int ca_sync_set_store_path(CaSync *s, const char *path) {
         int r;
 
         if (!s)
@@ -368,12 +457,14 @@ int ca_sync_set_store(CaSync *s, const char *path) {
 
         if (s->wstore)
                 return -EBUSY;
+        if (s->remote_wstore)
+                return -EBUSY;
 
         s->wstore = ca_store_new();
         if (!s->wstore)
                 return -ENOMEM;
 
-        r = ca_store_set_local(s->wstore, path);
+        r = ca_store_set_path(s->wstore, path);
         if (r < 0) {
                 s->wstore = ca_store_unref(s->wstore);
                 return r;
@@ -382,7 +473,73 @@ int ca_sync_set_store(CaSync *s, const char *path) {
         return 0;
 }
 
-int ca_sync_add_store(CaSync *s, const char *path) {
+int ca_sync_set_store_remote(CaSync *s, const char *url) {
+        uint64_t flags;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!url)
+                return -EINVAL;
+
+        if (s->wstore)
+                return -EBUSY;
+        if (s->remote_wstore)
+                return -EBUSY;
+
+        flags = s->direction == CA_SYNC_ENCODE ? CA_PROTOCOL_PUSH_CHUNKS : CA_PROTOCOL_PULL_CHUNKS;
+
+        if (s->remote_index) {
+                /* Try to reuse the index remote for the main store too, if it matches the same server */
+
+                r = ca_remote_set_store_url(s->remote_index, url);
+                if (r >= 0) {
+
+                        r = ca_remote_add_local_feature_flags(s->remote_index, flags);
+                        if (r < 0)
+                                return r;
+
+                        s->remote_wstore = ca_remote_ref(s->remote_index);
+                        return 0;
+                }
+                if (r != -EBUSY)
+                        return r;
+        }
+
+        s->remote_wstore = ca_remote_new();
+        if (!s->remote_wstore)
+                return -ENOMEM;
+
+        r = ca_remote_set_store_url(s->remote_wstore, url);
+        if (r < 0)
+                return r;
+
+        r = ca_remote_set_local_feature_flags(s->remote_index, flags);
+        if (r < 0)
+                return r;
+
+        return 0;
+}
+
+int ca_sync_set_store_auto(CaSync *s, const char *locator) {
+        CaLocatorClass c;
+
+        if (!s)
+                return -EINVAL;
+        if (!locator)
+                return -EINVAL;
+
+        c = ca_classify_locator(locator);
+        if (c < 0)
+                return -EINVAL;
+
+        if (c == CA_LOCATOR_PATH)
+                return ca_sync_set_store_path(s, locator);
+
+        return ca_sync_set_store_remote(s, locator);
+}
+
+int ca_sync_add_store_path(CaSync *s, const char *path) {
         CaStore **array, *store;
         int r;
 
@@ -395,7 +552,7 @@ int ca_sync_add_store(CaSync *s, const char *path) {
         if (!store)
                 return -ENOMEM;
 
-        r = ca_store_set_local(store, path);
+        r = ca_store_set_path(store, path);
         if (r < 0) {
                 ca_store_unref(store);
                 return r;
@@ -411,6 +568,55 @@ int ca_sync_add_store(CaSync *s, const char *path) {
         s->rstores[s->n_rstores++] = store;
 
         return 0;
+}
+
+int ca_sync_add_store_remote(CaSync *s, const char *url) {
+        CaRemote **array, *remote;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!url)
+                return -EINVAL;
+
+        remote = ca_remote_new();
+        if (!remote)
+                return -ENOMEM;
+
+        r = ca_remote_set_store_url(remote, url);
+        if (r < 0) {
+                ca_remote_unref(remote);
+                return r;
+        }
+
+        array = realloc_multiply(s->remote_rstores, sizeof(CaRemote*),  s->n_remote_rstores+1);
+        if (!array) {
+                ca_remote_unref(remote);
+                return -ENOMEM;
+        }
+
+        s->remote_rstores = array;
+        s->remote_rstores[s->n_remote_rstores++] = remote;
+
+        return 0;
+}
+
+int ca_sync_add_store_auto(CaSync *s, const char *locator) {
+        CaLocatorClass c;
+
+        if (!s)
+                return -EINVAL;
+        if (!locator)
+                return -EINVAL;
+
+        c = ca_classify_locator(locator);
+        if (c < 0)
+                return -EINVAL;
+
+        if (c == CA_LOCATOR_PATH)
+                return ca_sync_add_store_path(s, locator);
+
+        return ca_sync_add_store_remote(s, locator);
 }
 
 static int ca_sync_extend_seeds_array(CaSync *s) {
@@ -585,6 +791,34 @@ static int ca_sync_start(CaSync *s) {
                 }
         }
 
+        if (s->remote_index && !s->index) {
+                if (s->direction == CA_SYNC_DECODE)
+                        s->index = ca_index_new_incremental_read();
+                else {
+                        assert(s->direction == CA_SYNC_ENCODE);
+                        s->index = ca_index_new_incremental_write();
+                }
+                if (!s->index)
+                        return -ENOMEM;
+        }
+
+        if (s->remote_index &&
+            s->remote_wstore == s->remote_index &&
+            s->direction == CA_SYNC_ENCODE &&
+            !s->cache_store) {
+
+                /* If we use the same server for index and storage, then we can optimize things a bit, and make the
+                 * server request what it is missing so far. */
+
+                s->cache_store = ca_store_new_cache();
+                if (!s->cache_store)
+                        return -ENOMEM;
+
+                r = ca_remote_add_local_feature_flags(s->remote_index, CA_PROTOCOL_PUSH_INDEX_CHUNKS);
+                if (r < 0)
+                        return r;
+        }
+
         if (s->index) {
                 r = ca_index_open(s->index);
                 if (r < 0)
@@ -645,12 +879,23 @@ static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l) {
         if (r < 0)
                 return r;
 
-        r = ca_store_put(s->wstore, &id, p, l);
-        if (r < 0)
-                return r;
+        if (s->wstore) {
+                r = ca_store_put(s->wstore, &id, p, l);
+                if (r < 0)
+                        return r;
+        }
 
-        if (s->index)
-                return ca_index_write_object(s->index, &id, l);
+        if (s->cache_store) {
+                r = ca_store_put(s->cache_store, &id, p, l);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->index) {
+                r = ca_index_write_object(s->index, &id, l);
+                if (r < 0)
+                        return r;
+        }
 
         return 0;
 }
@@ -661,7 +906,7 @@ static int ca_sync_write_chunks(CaSync *s, const void *p, size_t l) {
         assert(s);
         assert(p || l == 0);
 
-        if (!s->wstore)
+        if (!s->wstore && !s->cache_store && !s->index)
                 return 0;
 
         while (l > 0) {
@@ -704,7 +949,7 @@ static int ca_sync_write_final_chunk(CaSync *s) {
 
         assert(s);
 
-        if (!s->wstore)
+        if (!s->wstore && !s->cache_store && !s->index)
                 return 0;
 
         if (s->buffer.size == 0)
@@ -733,7 +978,7 @@ static int ca_sync_write_final_chunk(CaSync *s) {
                 if (r < 0)
                         return r;
 
-                r = ca_index_close(s->index);
+                r = ca_index_install(s->index);
                 if (r < 0)
                         return r;
         }
@@ -746,8 +991,8 @@ static int ca_sync_step_encode(CaSync *s) {
 
         assert(s);
 
-        if (s->eof)
-                return -EPIPE;
+        if (s->archive_eof)
+                return CA_SYNC_POLL;
 
         if (s->encoder) {
                 int step;
@@ -771,7 +1016,10 @@ static int ca_sync_step_encode(CaSync *s) {
                         if (r < 0)
                                 return r;
 
-                        s->eof = true;
+                        s->archive_eof = true;
+
+                        if (s->remote_index)
+                                return CA_SYNC_STEP;
 
                         return CA_SYNC_FINISHED;
 
@@ -814,40 +1062,48 @@ static int ca_sync_process_decoder_request(CaSync *s) {
         assert(s);
 
         if (s->index)  {
-                uint64_t index_size, object_size;
-                CaObjectID id;
-                void *p;
+                uint64_t object_size;
+                const void *p;
 
-                r = ca_index_read_object(s->index, &id, &index_size);
-                if (r < 0)
-                        return r;
-                if (r == 0) {
-                        /* EOF */
-                        r = ca_decoder_put_eof(s->decoder);
+                if (!s->next_chunk_valid) {
+                        r = ca_index_read_object(s->index, &s->next_chunk, &s->next_chunk_size);
+                        if (r == -EAGAIN) /* Not enough data */
+                                return CA_SYNC_POLL;
                         if (r < 0)
                                 return r;
+                        if (r == 0) {
+                                /* EOF */
+                                r = ca_decoder_put_eof(s->decoder);
+                                if (r < 0)
+                                        return r;
 
-                        return 0;
+                                return CA_SYNC_STEP;
+                        }
+
+                        s->next_chunk_valid = true;
                 }
 
-                r = ca_sync_get(s, &id, &p, &object_size);
+                r = ca_sync_get(s, &s->next_chunk, &p, &object_size);
+                if (r == -EAGAIN) /* Don't have this right now, but requested it now */
+                        return CA_SYNC_STEP;
+                if (r == -EALREADY) /* Don't have this right now, but it was already enqueued. */
+                        return CA_SYNC_POLL;
                 if (r < 0)
                         return r;
-
-                if (index_size != object_size) {
-                        free(p);
+                if (s->next_chunk_size != object_size)
                         return -EBADMSG;
-                }
 
-                r = ca_decoder_put_data(s->decoder, p, index_size);
+                s->next_chunk_valid = false;
+
+                r = ca_decoder_put_data(s->decoder, p, object_size);
                 if (r < 0)
                         return r;
 
-                r = ca_sync_write_archive_digest(s, p, index_size);
+                r = ca_sync_write_archive_digest(s, p, object_size);
                 if (r < 0)
                         return r;
 
-                return 0;
+                return CA_SYNC_STEP;
         }
 
         if (s->archive_fd >= 0) {
@@ -855,19 +1111,16 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                 if (r < 0)
                         return r;
 
-                return 0;
+                return CA_SYNC_STEP;
         }
 
         return -ENOTTY;
 }
 
 static int ca_sync_step_decode(CaSync *s) {
-
-        int r;
-
         assert(s);
 
-        if (s->eof)
+        if (s->archive_eof)
                 return -EPIPE;
 
         if (s->decoder) {
@@ -888,7 +1141,7 @@ static int ca_sync_step_decode(CaSync *s) {
                                 s->temporary_base_path = mfree(s->temporary_base_path);
                         }
 
-                        s->eof = true;
+                        s->archive_eof = true;
                         return CA_SYNC_FINISHED;
 
                 case CA_DECODER_NEXT_FILE:
@@ -899,16 +1152,20 @@ static int ca_sync_step_decode(CaSync *s) {
                         return CA_SYNC_STEP;
 
                 case CA_DECODER_REQUEST:
-
-                        r = ca_sync_process_decoder_request(s);
-                        if (r < 0)
-                                return r;
-
-                        return CA_SYNC_STEP;
+                        return ca_sync_process_decoder_request(s);
                 }
         }
 
         return -ENOTTY;
+}
+
+static CaSeed *ca_sync_current_seed(CaSync *s) {
+        assert(s);
+
+        if (s->current_seed >= s->n_seeds)
+                return NULL;
+
+        return s->seeds[s->current_seed];
 }
 
 static int ca_sync_seed_step(CaSync *s) {
@@ -919,11 +1176,9 @@ static int ca_sync_seed_step(CaSync *s) {
         for (;;) {
                 CaSeed *seed;
 
-                if (s->current_seed >= s->n_seeds)
+                seed = ca_sync_current_seed(s);
+                if (!seed)
                         return CA_SEED_READY;
-
-                seed = s->seeds[s->current_seed];
-                assert(seed);
 
                 r = ca_seed_step(seed);
                 if (r != CA_SEED_READY)
@@ -931,6 +1186,167 @@ static int ca_sync_seed_step(CaSync *s) {
 
                 s->current_seed++;
         }
+}
+
+static CaRemote *ca_sync_current_remote(CaSync *s) {
+        CaRemote *remote;
+
+        assert(s);
+
+        s->current_remote %= 2 + s->n_remote_rstores;
+
+        if (s->current_remote == 0)
+                remote = s->remote_index;
+        else if (s->current_remote == 1)
+                remote = s->remote_wstore;
+        else
+                remote = s->remote_rstores[s->current_remote-2];
+
+        return remote;
+}
+
+static int ca_sync_remote_push_index(CaSync *s) {
+        int r;
+
+        assert(s);
+
+        if (!s->remote_index)
+                return CA_SYNC_POLL;
+        if (!s->index)
+                return CA_SYNC_POLL;
+        if (s->direction != CA_SYNC_ENCODE)
+                return CA_SYNC_POLL;
+        if (s->remote_index_eof)  /* Already fully written? */
+                return CA_SYNC_POLL;
+
+        r = ca_remote_can_put_index(s->remote_index);
+        if (r < 0)
+                return r;
+        if (r == 0)
+                return CA_SYNC_POLL;
+
+        r = ca_index_incremental_read(s->index, &s->index_buffer);
+        if (r == -EAGAIN)
+                return CA_SYNC_POLL;
+        if (r < 0)
+                return r;
+        if (r == 0) {
+                r = ca_remote_put_index_eof(s->remote_index);
+                if (r < 0)
+                        return r;
+
+                s->remote_index_eof = true;
+                return CA_SYNC_STEP;
+        }
+
+        r = ca_remote_put_index(s->remote_index, s->index_buffer.data, s->index_buffer.size);
+        if (r < 0)
+                return r;
+
+        return CA_SYNC_STEP;
+}
+
+static int ca_sync_remote_push_chunk(CaSync *s) {
+        const void *p;
+        CaObjectID id;
+        size_t l;
+        int r;
+
+        assert(s);
+
+        if (!s->remote_index)
+                return CA_SYNC_POLL;
+        if (!s->remote_wstore)
+                return CA_SYNC_POLL;
+        if (s->direction != CA_SYNC_ENCODE)
+                return CA_SYNC_POLL;
+
+        r = ca_remote_can_put_chunk(s->remote_wstore);
+        if (r < 0)
+                return r;
+        if (r == 0)
+                return CA_SYNC_POLL;
+
+        r = ca_remote_next_request(s->remote_index, &id);
+        if (r == -ENODATA)
+                return CA_SYNC_POLL;
+        if (r < 0)
+                return r;
+
+        r = ca_sync_get_local(s, &id, &p, &l);
+        if (r == -ENOENT) {
+                r = ca_remote_put_missing(s->remote_wstore, &id);
+                if (r < 0)
+                        return r;
+
+                return CA_SYNC_STEP;
+        }
+        if (r < 0)
+                return r;
+
+        r = ca_remote_put_chunk(s->remote_wstore, &id, false, p, l);
+        if (r < 0)
+                return r;
+
+        return CA_SYNC_STEP;
+}
+
+static int ca_sync_remote_step_one(CaSync *s, CaRemote *rr) {
+        int r, step;
+
+        assert(s);
+        assert(rr);
+
+        step = ca_remote_step(rr);
+        switch (step) {
+
+        case CA_REMOTE_READ_INDEX: {
+                const void *data;
+                size_t size;
+
+                r = ca_remote_read_index(rr, &data, &size);
+                if (r < 0)
+                        return r;
+
+                r = ca_index_incremental_write(s->index, data, size);
+                if (r < 0)
+                        return r;
+
+                break;
+        }
+
+        case CA_REMOTE_READ_INDEX_EOF:
+                r = ca_index_incremental_eof(s->index);
+                if (r < 0)
+                        return r;
+
+                break;
+        }
+
+        return step;
+}
+
+static int ca_sync_remote_step(CaSync *s) {
+        size_t i;
+        int r;
+
+        assert(s);
+
+        for (i = 0; i < 2 + s->n_remote_rstores; i++) {
+                CaRemote *remote;
+
+                remote = ca_sync_current_remote(s);
+                if (!remote)
+                        continue;
+
+                s->current_remote++;
+
+                r = ca_sync_remote_step_one(s, remote);
+                if (r != CA_REMOTE_POLL)
+                        return r;
+        }
+
+        return CA_REMOTE_POLL;
 }
 
 int ca_sync_step(CaSync *s) {
@@ -952,7 +1368,7 @@ int ca_sync_step(CaSync *s) {
                 break;
 
         case CA_SEED_STEP:
-                return CA_SYNC_SEED_STEP;
+                return CA_SYNC_STEP;
 
         case CA_SEED_NEXT_FILE:
                 return CA_SYNC_SEED_NEXT_FILE;
@@ -961,15 +1377,50 @@ int ca_sync_step(CaSync *s) {
                 assert(false);
         }
 
+        r = ca_sync_remote_push_index(s);
+        if (r < 0)
+                return r;
+        if (r != CA_SYNC_POLL)
+                return r;
+
+        r = ca_sync_remote_push_chunk(s);
+        if (r < 0)
+                return r;
+        if (r != CA_SYNC_POLL)
+                return r;
+
+        r = ca_sync_remote_step(s);
+        if (r < 0)
+                return r;
+        switch (r) {
+
+        case CA_REMOTE_POLL:
+        case CA_REMOTE_WRITE_INDEX:
+                break;
+
+        case CA_REMOTE_REQUEST:
+        case CA_REMOTE_CHUNK:
+        case CA_REMOTE_READ_INDEX:
+        case CA_REMOTE_READ_INDEX_EOF:
+        case CA_REMOTE_STEP:
+                return CA_SYNC_STEP;
+
+        case CA_REMOTE_FINISHED:
+                return CA_SYNC_FINISHED;
+
+        default:
+                assert(false);
+        }
+
         if (s->direction == CA_SYNC_ENCODE)
                 return ca_sync_step_encode(s);
-        else if (s->direction == CA_SYNC_DECODE)
+        else {
+                assert(s->direction == CA_SYNC_DECODE);
                 return ca_sync_step_decode(s);
-
-        assert(false);
+        }
 }
 
-int ca_sync_get(CaSync *s, const CaObjectID *object_id, void **ret, size_t *ret_size) {
+int ca_sync_get_local(CaSync *s, const CaObjectID *object_id, const void **ret, size_t *ret_size) {
         size_t i;
         int r;
 
@@ -993,9 +1444,17 @@ int ca_sync_get(CaSync *s, const CaObjectID *object_id, void **ret, size_t *ret_
                         return r;
         }
 
-        r = ca_store_get(s->wstore, object_id, ret, ret_size);
-        if (r != -ENOENT)
-                return r;
+        if (s->wstore) {
+                r = ca_store_get(s->wstore, object_id, ret, ret_size);
+                if (r != -ENOENT)
+                        return r;
+        }
+
+        if (s->cache_store) {
+                r = ca_store_get(s->cache_store, object_id, ret, ret_size);
+                if (r != -ENOENT)
+                        return r;
+        }
 
         for (i = 0; i < s->n_rstores; i++) {
                 r = ca_store_get(s->rstores[i], object_id, ret, ret_size);
@@ -1006,18 +1465,36 @@ int ca_sync_get(CaSync *s, const CaObjectID *object_id, void **ret, size_t *ret_
         return -ENOENT;
 }
 
-int ca_sync_put(CaSync *s, const CaObjectID *object_id, const void *data, size_t size) {
+int ca_sync_get(CaSync *s, const CaObjectID *object_id, const void **ret, size_t *ret_size) {
+        size_t i;
+        int r;
+
         if (!s)
                 return -EINVAL;
         if (!object_id)
                 return -EINVAL;
-        if (!data && size > 0)
+        if (!ret)
+                return -EINVAL;
+        if (!ret_size)
                 return -EINVAL;
 
-        if (!s->wstore)
-                return -EROFS;
+        r = ca_sync_get_local(s, object_id, ret, ret_size);
+        if (r != -ENOENT)
+                return r;
 
-        return ca_store_put(s->wstore, object_id, data, size);
+        if (s->remote_wstore) {
+                r = ca_remote_request(s->remote_wstore, object_id, false, ret, ret_size);
+                if (r != -ENOENT)
+                        return r;
+        }
+
+        for (i = 0; i < s->n_remote_rstores; i++) {
+                r = ca_remote_request(s->remote_rstores[i], object_id, false, ret, ret_size);
+                if (r != -ENOENT)
+                        return r;
+        }
+
+        return -ENOENT;
 }
 
 int ca_sync_make_object_id(CaSync *s, const void *p, size_t l, CaObjectID *ret) {
@@ -1040,7 +1517,7 @@ int ca_sync_get_digest(CaSync *s, CaObjectID *ret) {
         if (!ret)
                 return -EINVAL;
 
-        if (!s->eof)
+        if (!s->archive_eof)
                 return -EBUSY;
 
         r = ca_sync_allocate_archive_digest(s);
@@ -1054,16 +1531,6 @@ int ca_sync_get_digest(CaSync *s, CaObjectID *ret) {
         memcpy(ret, q, sizeof(CaObjectID));
 
         return 0;
-
-}
-
-static CaSeed *ca_sync_current_seed(CaSync *s) {
-        assert(s);
-
-        if (s->current_seed >= s->n_seeds)
-                return NULL;
-
-        return s->seeds[s->current_seed];
 }
 
 int ca_sync_current_path(CaSync *s, char **ret) {
@@ -1104,4 +1571,62 @@ int ca_sync_current_mode(CaSync *s, mode_t *ret) {
                 return ca_decoder_current_mode(s->decoder, ret);
 
         return -ENOTTY;
+}
+
+static int ca_sync_add_pollfd(CaRemote *rr, struct pollfd *pollfd) {
+        int r;
+
+        assert(pollfd);
+
+        if (!rr)
+                return 0;
+
+        r = ca_remote_get_io_fds(rr, &pollfd[0].fd, &pollfd[1].fd);
+        if (r < 0)
+                return r;
+
+        r = ca_remote_get_io_events(rr, &pollfd[0].events, &pollfd[1].events);
+        if (r < 0)
+                return r;
+
+        return 2;
+}
+
+int ca_sync_poll(CaSync *s, uint64_t timeout_usec) {
+        struct pollfd *pollfd;
+        size_t i, n = 0;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+
+        if (!s->remote_index &&
+            !s->remote_wstore &&
+            s->n_remote_rstores == 0)
+                return -EUNATCH;
+
+        pollfd = newa(struct pollfd, !!s->remote_index + !!s->remote_wstore + s->n_remote_rstores);
+
+        r = ca_sync_add_pollfd(s->remote_index, pollfd);
+        if (r < 0)
+                return r;
+        n += r;
+
+        r = ca_sync_add_pollfd(s->remote_wstore, pollfd + n);
+        if (r < 0)
+                return r;
+        n += r;
+
+        for (i = 0; i < s->n_remote_rstores; i++) {
+                r = ca_sync_add_pollfd(s->remote_rstores[i], pollfd + n);
+                if (r < 0)
+                        return r;
+
+                n += r;
+        }
+
+        if (poll(pollfd, n, timeout_usec == UINT64_MAX ? -1 : (int) ((timeout_usec + 999U)/1000U)) < 0)
+                return -errno;
+
+        return n;
 }

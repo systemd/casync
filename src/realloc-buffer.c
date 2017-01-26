@@ -79,6 +79,17 @@ void *realloc_buffer_extend(ReallocBuffer *b, size_t add) {
         return (uint8_t*) p + old_size;
 }
 
+void *realloc_buffer_extend0(ReallocBuffer *b, size_t add) {
+        void *p;
+
+        p = realloc_buffer_extend(b, add);
+        if (!p)
+                return NULL;
+
+        memset(p, 0, add);
+        return p;
+}
+
 void *realloc_buffer_append(ReallocBuffer *b, const void *p, size_t size) {
         void *m;
 

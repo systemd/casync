@@ -49,7 +49,8 @@ AM_CFLAGS = \
 	-fstack-protector-strong \
 	-fPIE \
 	--param=ssp-buffer-size=4 \
-	-D_GNU_SOURCE
+	-D_GNU_SOURCE \
+	-DCASYNC_CALLOUT_PATH=\"$(prefix)/lib\"
 
 AM_CPPFLAGS = \
 	-include $(top_builddir)/config.h \
@@ -58,7 +59,8 @@ AM_CPPFLAGS = \
 tests = \
 	test-caencoder \
 	test-chunker \
-	test-casync
+	test-casync \
+	test-cautil
 
 bin_PROGRAMS = casync
 
@@ -79,12 +81,19 @@ lib_SOURCES = \
 	src/calocation.h \
 	src/caobjectid.c \
 	src/caobjectid.h \
+	src/caprotocol.h \
+	src/caprotocol-util.h \
+	src/caprotocol-util.c \
+	src/caremote.c \
+	src/caremote.h \
 	src/caseed.c \
 	src/caseed.h \
 	src/castore.c \
 	src/castore.h \
 	src/casync.c \
 	src/casync.h \
+	src/cautil.c \
+	src/cautil.h \
 	src/chunker.c \
 	src/chunker.h \
 	src/def.h \
@@ -146,6 +155,21 @@ test_casync_CFLAGS = \
 	$(LIBGCRYPT_CFLAGS)
 
 test_casync_LDADD = \
+	$(LIBLZMA_LIBS) \
+	$(LIBGCRYPT_LIBS)
+
+## test-cautil
+
+test_cautil_SOURCES = \
+	test/test-cautil.c \
+	$(lib_SOURCES)
+
+test_cautil_CFLAGS = \
+	$(AM_CFLAGS) \
+	$(LIBLZMA_CFLAGS) \
+	$(LIBGCRYPT_CFLAGS)
+
+test_cautil_LDADD = \
 	$(LIBLZMA_LIBS) \
 	$(LIBGCRYPT_LIBS)
 

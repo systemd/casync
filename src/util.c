@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <time.h>
 
 /* When we include libgen.h because we need dirname() we immediately
@@ -199,10 +200,24 @@ int dev_urandom(void *p, size_t n) {
         return 0;
 }
 
-static char hexchar(int x) {
+char hexchar(int x) {
         static const char table[16] = "0123456789abcdef";
 
         return table[x & 15];
+}
+
+int unhexchar(char c) {
+
+        if (c >= '0' && c <= '9')
+                return c - '0';
+
+        if (c >= 'a' && c <= 'f')
+                return c - 'a' + 10;
+
+        if (c >= 'A' && c <= 'F')
+                return c - 'A' + 10;
+
+        return -EINVAL;
 }
 
 char *hexmem(const void *p, size_t l) {
@@ -468,7 +483,6 @@ int safe_atou(const char *s, unsigned *ret_u) {
         unsigned long l;
 
         assert(s);
-        assert(ret_u);
 
         /* strtoul() is happy to parse negative values, and silently
          * converts them to unsigned values without generating an
@@ -486,12 +500,14 @@ int safe_atou(const char *s, unsigned *ret_u) {
                 return -errno;
         if (!x || x == s || *x)
                 return -EINVAL;
-        if (s[0] == '-')
+        if (*s == '-')
                 return -ERANGE;
         if ((unsigned long) (unsigned) l != l)
                 return -ERANGE;
 
-        *ret_u = (unsigned) l;
+        if (ret_u)
+                *ret_u = (unsigned) l;
+
         return 0;
 }
 
@@ -500,7 +516,6 @@ int safe_atollu(const char *s, long long unsigned *ret_llu) {
         unsigned long long l;
 
         assert(s);
-        assert(ret_llu);
 
         s += strspn(s, WHITESPACE);
 
@@ -508,12 +523,14 @@ int safe_atollu(const char *s, long long unsigned *ret_llu) {
         l = strtoull(s, &x, 0);
         if (errno > 0)
                 return -errno;
-        if (!x || x == s || *x)
+        if (!x || x == s || *x != 0)
                 return -EINVAL;
         if (*s == '-')
                 return -ERANGE;
 
-        *ret_llu = l;
+        if (ret_llu)
+                *ret_llu = l;
+
         return 0;
 }
 
@@ -764,4 +781,39 @@ int parse_uid(const char *s, uid_t *ret) {
                 *ret = uid;
 
         return 0;
+}
+
+int wait_for_terminate(pid_t pid, siginfo_t *status) {
+        siginfo_t dummy;
+
+        assert(pid >= 1);
+
+        if (!status)
+                status = &dummy;
+
+        for (;;) {
+                memset(status, 0, sizeof(siginfo_t));
+
+                if (waitid(P_PID, pid, status, WEXITED) < 0) {
+
+                        if (errno == EINTR)
+                                continue;
+
+                        return -errno;
+                }
+
+                return 0;
+        }
+}
+
+char *strv_find(char **l, const char *name) {
+        char **i;
+
+        assert(name);
+
+        STRV_FOREACH(i, l)
+                if (streq(*i, name))
+                        return *i;
+
+        return NULL;
 }

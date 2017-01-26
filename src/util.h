@@ -5,6 +5,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -154,6 +155,7 @@ static inline uint64_t random_u64(void) {
 #define _likely_(x) (__builtin_expect(!!(x),1))
 #define _unlikely_(x) (__builtin_expect(!!(x),0))
 #define _malloc_ __attribute__ ((malloc))
+#define _pure_ __attribute__ ((pure))
 #ifdef __clang__
 #  define _alloc_(...)
 #else
@@ -203,6 +205,8 @@ static inline uint64_t random_u64(void) {
                 _found;                         \
         })
 
+char hexchar(int x);
+int unhexchar(char c);
 
 char *hexmem(const void *p, size_t l);
 
@@ -283,6 +287,9 @@ size_t strv_length(char **l);
 int strv_push(char ***l, char *value);
 int strv_consume(char ***l, char *value);
 int strv_extend(char ***l, const char *value);
+char *strv_find(char **l, const char *name) _pure_;
+
+#define strv_contains(l, s) (!!strv_find((l), (s)))
 
 static inline bool size_multiply_overflow(size_t size, size_t need) {
         return need != 0 && size > (SIZE_MAX / need);
@@ -343,6 +350,15 @@ char *strextend(char **x, ...) _sentinel_;
 #  error Unknown gid_t size
 #endif
 
+#if SIZEOF_PID_T == 4
+#  define PID_PRI PRIi32
+#elif SIZEOF_PID_T == 2
+#  define PID_PRI PRIi16
+#else
+#  error Unknown pid_t size
+#endif
+#define PID_FMT "%" PID_PRI
+
 bool uid_is_valid(uid_t uid);
 
 static inline bool gid_is_valid(gid_t gid) {
@@ -354,5 +370,99 @@ int parse_uid(const char *s, uid_t* ret_uid);
 static inline int parse_gid(const char *s, gid_t *ret_gid) {
         return parse_uid(s, (uid_t*) ret_gid);
 }
+
+#define ALPHABET_LOWER "abcdefghijklmnopqrstuvwxyz"
+#define ALPHABET_UPPER "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+#define ALPHABET ALPHABET_LOWER ALPHABET_UPPER
+#define DIGITS "0123456789"
+
+/* This is a bit more restricted than RFC3986 */
+#define URL_PROTOCOL_FIRST ALPHABET_LOWER
+#define URL_PROTOCOL_CHARSET ALPHABET_LOWER DIGITS "+.-"
+#define HOSTNAME_CHARSET ALPHABET DIGITS "-_."
+
+int wait_for_terminate(pid_t pid, siginfo_t *status);
+
+static inline void safe_close_pair(int pair[2]) {
+        if (!pair)
+                return;
+
+        pair[0] = safe_close(pair[0]);
+        pair[1] = safe_close(pair[1]);
+}
+
+static inline char *startswith(const char *s, const char *prefix) {
+        size_t l;
+
+        l = strlen(prefix);
+        if (strncmp(s, prefix, l) == 0)
+                return (char*) s + l;
+
+        return NULL;
+}
+
+static inline bool strv_isempty(char **l) {
+        return !l || !l[0];
+}
+
+#if !HAVE_DECL_RENAMEAT2
+#  ifndef __NR_renameat2
+#    if defined __x86_64__
+#      define __NR_renameat2 316
+#    elif defined __arm__
+#      define __NR_renameat2 382
+#    elif defined _MIPS_SIM
+#      if _MIPS_SIM == _MIPS_SIM_ABI32
+#        define __NR_renameat2 4351
+#      endif
+#      if _MIPS_SIM == _MIPS_SIM_NABI32
+#        define __NR_renameat2 6315
+#      endif
+#      if _MIPS_SIM == _MIPS_SIM_ABI64
+#        define __NR_renameat2 5311
+#      endif
+#    elif defined __i386__
+#      define __NR_renameat2 353
+#    else
+#      warning "__NR_renameat2 unknown for your architecture"
+#    endif
+#  endif
+
+static inline int renameat2(int oldfd, const char *oldname, int newfd, const char *newname, unsigned flags) {
+#  ifdef __NR_renameat2
+        return syscall(__NR_renameat2, oldfd, oldname, newfd, newname, flags);
+#  else
+        errno = ENOSYS;
+        return -1;
+#  endif
+}
+#endif
+
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
+#endif
+
+static inline size_t strlen_null(const char *s) {
+        if (!s)
+                return 0;
+
+        return strlen(s);
+}
+
+#define STRV_MAKE(...) ((char**) ((const char*[]) { __VA_ARGS__, NULL }))
+
+#define FOREACH_STRING(x, ...)                               \
+        for (char **_l = ({                                  \
+                char **_ll = STRV_MAKE(__VA_ARGS__);         \
+                x = _ll ? _ll[0] : NULL;                     \
+                _ll;                                         \
+        });                                                  \
+        _l && *_l;                                           \
+        x = ({                                               \
+                _l ++;                                       \
+                _l[0];                                       \
+        }))
+
+#define STR_IN_SET(x, ...) strv_contains(STRV_MAKE(__VA_ARGS__), x)
 
 #endif

@@ -4,14 +4,18 @@
 #include <unistd.h>
 
 #include "castore.h"
+#include "cautil.h"
 #include "def.h"
 #include "realloc-buffer.h"
 #include "util.h"
 
+/* #undef EINVAL */
+/* #define EINVAL __LINE__ */
+
 struct CaStore {
-        CaStoreType type;
         char *root;
         bool compress;
+        bool destroy;
         ReallocBuffer buffer;
 };
 
@@ -22,9 +26,25 @@ CaStore* ca_store_new(void) {
         if (!store)
                 return NULL;
 
-        store->type = _CA_STORE_TYPE_INVALID;
         store->compress = true;
         return store;
+}
+
+CaStore *ca_store_new_cache(void) {
+        CaStore *s;
+
+        s = new0(CaStore, 1);
+        if (!s)
+                return NULL;
+
+        s->destroy = true;
+
+        if (asprintf(&s->root, "/var/tmp/%" PRIx64 ".castr/", random_u64()) < 0) {
+                free(s);
+                return NULL;
+        }
+
+        return s;
 }
 
 CaStore* ca_store_unref(CaStore *store) {
@@ -37,20 +57,21 @@ CaStore* ca_store_unref(CaStore *store) {
         return mfree(store);
 }
 
-int ca_store_set_local(CaStore *store, const char *path) {
+int ca_store_set_path(CaStore *store, const char *path) {
         if (!store)
                 return -EINVAL;
+        if (!path)
+                return -EINVAL;
 
-        if (store->type != _CA_STORE_TYPE_INVALID)
-                return -EBUSY;
         if (store->root)
                 return -EBUSY;
 
-        store->root = strdup(path);
+        if (endswith(path, "/"))
+                store->root = strdup(path);
+        else
+                store->root = strjoin(path, "/", NULL);
         if (!store->root)
                 return -ENOMEM;
-
-        store->type = CA_STORE_LOCAL;
 
         return 0;
 }
@@ -63,7 +84,7 @@ int ca_store_set_compress(CaStore *store, bool b) {
         return 0;
 }
 
-static int load_uncompressed(CaStore *store, int fd, void **ret, size_t *ret_size) {
+static int load_uncompressed(CaStore *store, int fd, const void **ret, size_t *ret_size) {
         assert(store);
         assert(fd >= 0);
         assert(ret);
@@ -94,7 +115,7 @@ static int load_uncompressed(CaStore *store, int fd, void **ret, size_t *ret_siz
         return 0;
 }
 
-static int load_compressed(CaStore *store, int fd, void **ret, size_t *ret_size) {
+static int load_compressed(CaStore *store, int fd, const void **ret, size_t *ret_size) {
         lzma_stream xz = {};
         lzma_ret xzr;
         bool got_xz_eof = false;
@@ -177,7 +198,7 @@ fail:
         return r;
 }
 
-int ca_store_get(CaStore *store, const CaObjectID *object_id, void **ret, size_t *ret_size) {
+int ca_store_get(CaStore *store, const CaObjectID *object_id, const void **ret, size_t *ret_size) {
         char *fn, *sid;
         int fd, r;
         size_t n;
@@ -224,6 +245,19 @@ int ca_store_get(CaStore *store, const CaObjectID *object_id, void **ret, size_t
 
         safe_close(fd);
         return r;
+}
+
+int ca_store_has(CaStore *store, const CaObjectID *object_id) {
+
+        if (!store)
+                return -EINVAL;
+        if (!object_id)
+                return -EINVAL;
+
+        if (!store->root)
+                return -ENOTTY;
+
+        return ca_test_chunk_file(AT_FDCWD, store->root, object_id);
 }
 
 static int save_compressed(int fd, const void *data, size_t size) {

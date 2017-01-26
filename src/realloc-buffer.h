@@ -10,9 +10,10 @@ typedef struct ReallocBuffer {
 } ReallocBuffer;
 
 void* realloc_buffer_acquire(ReallocBuffer *b, size_t size);
-void *realloc_buffer_acquire0(ReallocBuffer *b, size_t size);
+void* realloc_buffer_acquire0(ReallocBuffer *b, size_t size);
 void* realloc_buffer_extend(ReallocBuffer *b, size_t size);
-void *realloc_buffer_append(ReallocBuffer *b, const void *p, size_t size);
+void* realloc_buffer_extend0(ReallocBuffer *b, size_t size);
+void* realloc_buffer_append(ReallocBuffer *b, const void *p, size_t size);
 
 void realloc_buffer_free(ReallocBuffer *b);
 

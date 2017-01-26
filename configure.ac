@@ -24,13 +24,19 @@ AC_CHECK_FUNCS([scandirat], [], AC_MSG_ERROR([*** scandirat function was not fou
 
 AC_CHECK_DECLS([
         getrandom,
+        renameat2,
         ],
         [], [], [[
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include <linux/random.h>
 ]])
 
 AC_CHECK_SIZEOF(uid_t)
 AC_CHECK_SIZEOF(gid_t)
+AC_CHECK_SIZEOF(pid_t)
 
 AM_PATH_LIBGCRYPT([1.4.5],, AC_MSG_ERROR([*** libgcrypt was not found.]))
 AC_SUBST([LIBGCRYPT_CFLAGS])

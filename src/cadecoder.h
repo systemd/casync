@@ -23,7 +23,7 @@ int ca_decoder_get_feature_flags(CaDecoder *d, uint64_t *ret);
 /* Output: a file descriptor to a directory tree, block device node, or regular file */
 int ca_decoder_set_base_fd(CaDecoder *d, int fd);
 
-/* Output: if no output to the file system is desired: specbify instead what kind of object is to be read */
+/* Output: if no output to the file system is desired: specify instead what kind of object is to be read */
 int ca_decoder_set_base_mode(CaDecoder *d, mode_t mode);
 
 int ca_decoder_step(CaDecoder *d);

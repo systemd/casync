@@ -42,3 +42,4 @@ config.log
 config.status
 configure
 stamp-*
+test-cautil

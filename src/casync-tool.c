@@ -2,15 +2,29 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 
 #include "caformat-util.h"
 #include "caformat.h"
+#include "caindex.h"
+#include "caprotocol.h"
+#include "caremote.h"
+#include "castore.h"
 #include "casync.h"
+#include "cautil.h"
 #include "util.h"
 
+static enum {
+        WHAT_ARCHIVE,
+        WHAT_ARCHIVE_INDEX,
+        WHAT_BLOB,
+        WHAT_BLOB_INDEX,
+        WHAT_DIRECTORY,
+        _WHAT_INVALID = -1,
+} arg_what = _WHAT_INVALID;
 static bool arg_verbose = false;
 static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
@@ -29,6 +43,12 @@ static void help(void) {
                "     --store=PATH            The primary object store to use\n"
                "     --extra-store=PATH      Additional object store to look for objects in\n"
                "     --seed=PATH             Additional file or directory to use as seed\n\n"
+               "Input/output selector:\n"
+               "     --what=archive          Operate on archive file\n"
+               "     --what=archive-index    Operate on archive index file\n"
+               "     --what=blob             Operate on blob file\n"
+               "     --what=blob-index       Operate on blob index file\n"
+               "     --what=directory        Operate on directory\n\n"
                "Archive feature sets:\n"
                "     --with=best             Store most accurate information\n"
                "     --with=unix             Store UNIX baseline information\n"
@@ -70,6 +90,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_SEED,
                 ARG_WITH,
                 ARG_WITHOUT,
+                ARG_WHAT,
         };
 
         static const struct option options[] = {
@@ -153,6 +174,24 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
                 }
 
+                case ARG_WHAT:
+                        if (streq(optarg, "archive"))
+                                arg_what = WHAT_ARCHIVE;
+                        else if (streq(optarg, "archive-index"))
+                                arg_what = WHAT_ARCHIVE_INDEX;
+                        else if (streq(optarg, "blob"))
+                                arg_what = WHAT_BLOB;
+                        else if (streq(optarg, "blob-index"))
+                                arg_what = WHAT_BLOB_INDEX;
+                        else if (streq(optarg, "directory"))
+                                arg_what = WHAT_DIRECTORY;
+                        else {
+                                fprintf(stderr, "Failed to parse --what= selector: %s\n", optarg);
+                                return -EINVAL;
+                        }
+
+                        break;
+
                 case '?':
                         return -EINVAL;
 
@@ -176,14 +215,39 @@ static int set_default_store(const char *index_path) {
                 arg_store = strdup(e);
         else if (index_path) {
                 char *d;
+                CaLocatorClass c;
 
                 /* Otherwise, derive it from the index file path */
-                d = dirname_malloc(index_path);
-                if (!d)
-                        return log_oom();
 
-                arg_store = strjoin(d, "/default.castr");
-                free(d);
+                c = ca_classify_locator(index_path);
+                if (c < 0) {
+                        fprintf(stderr, "Failed to automatically derive store location: %s\n", index_path);
+                        return -EINVAL;
+                }
+
+                if (c == CA_LOCATOR_URL) {
+                        const char *p;
+
+                        p = index_path + strcspn(index_path, ";?");
+                        for (;;) {
+                                if (p <= index_path)
+                                        break;
+
+                                if (p[-1] == '/')
+                                        break;
+
+                                p--;
+                        }
+
+                        d = strndupa(index_path, p - index_path);
+                        arg_store = strjoin(d, "default.castr");
+                } else {
+                        d = dirname_malloc(index_path);
+                        if (!d)
+                                return log_oom();
+                        arg_store = strjoin(d, "/default.castr");
+                        free(d);
+                }
         } else
                 /* And if we don't know any, then place it in the current directory */
                 arg_store = strdup("default.castr");
@@ -201,7 +265,7 @@ static int load_seeds_and_extra_stores(CaSync *s) {
         assert(s);
 
         STRV_FOREACH(i, arg_extra_stores) {
-                r = ca_sync_add_store(s, *i);
+                r = ca_sync_add_store_auto(s, *i);
                 if (r < 0)
                         fprintf(stderr, "Failed to add extra store %s, ignoring: %s\n", *i, strerror(-r));
         }
@@ -307,25 +371,51 @@ static int make(int argc, char *argv[]) {
         } MakeOperation;
 
         MakeOperation operation = _MAKE_OPERATION_INVALID;
-        const char *input, *output;
+        char *input = NULL, *output = NULL;
         int r, input_fd = -1;
         CaSync *s = NULL;
         struct stat st;
 
         if (argc > 3) {
-                fprintf(stderr, "A pair of output and input path expected.\n");
-                return -EINVAL;
+                fprintf(stderr, "A pair of output and input path/URL expected.\n");
+                r = -EINVAL;
+                goto finish;
         }
 
-        output = argc > 1 ? argv[1] : NULL;
-        input = argc > 2 ? argv[2] : NULL;
+        if (argc > 1) {
+                output = ca_strip_file_url(argv[1]);
+                if (!output) {
+                        r = log_oom();
+                        goto finish;
+                }
+        }
 
-        if (output && !streq(output, "-")) {
-                if (endswith(output, ".catar"))
+        if (argc > 2) {
+                input = ca_strip_file_url(argv[2]);
+                if (!input) {
+                        r = log_oom();
+                        goto finish;
+                }
+        }
+
+        if (arg_what == WHAT_ARCHIVE)
+                operation = MAKE_ARCHIVE;
+        else if (arg_what == WHAT_ARCHIVE_INDEX)
+                operation = MAKE_ARCHIVE_INDEX;
+        else if (arg_what == WHAT_BLOB_INDEX)
+                operation = MAKE_BLOB_INDEX;
+        else if (arg_what != _WHAT_INVALID) {
+                fprintf(stderr, "\"make\" operation may only be combined with --what=archive, --what=archive-index or --what=blob-index.\n");
+                r = -EINVAL;
+                goto finish;
+        }
+
+        if (operation == _MAKE_OPERATION_INVALID && output && !streq(output, "-")) {
+                if (ca_locator_has_suffix(output, ".catar"))
                         operation = MAKE_ARCHIVE;
-                else if (endswith(output, ".caidx"))
+                else if (ca_locator_has_suffix(output, ".caidx"))
                         operation = MAKE_ARCHIVE_INDEX;
-                else if (endswith(output, ".caibx"))
+                else if (ca_locator_has_suffix(output, ".caibx"))
                         operation = MAKE_BLOB_INDEX;
                 else {
                         fprintf(stderr, "File to create does not have valid suffix, refusing. (May be one of: .catar, .caidx, .caibx)\n");
@@ -334,12 +424,32 @@ static int make(int argc, char *argv[]) {
                 }
         }
 
-        if (!input && IN_SET(operation, MAKE_ARCHIVE, MAKE_ARCHIVE_INDEX))
-                input =  ".";
+        if (!input && IN_SET(operation, MAKE_ARCHIVE, MAKE_ARCHIVE_INDEX)) {
+                input = strdup(".");
+                if (!input) {
+                        r = log_oom();
+                        goto finish;
+                }
+        }
 
         if (!input || streq(input, "-"))
                 input_fd = STDIN_FILENO;
         else {
+                CaLocatorClass input_class;
+
+                input_class = ca_classify_locator(input);
+                if (input_class < 0) {
+                        fprintf(stderr, "Failed to determine class of locator: %s\n", input);
+                        r = -EINVAL;
+                        goto finish;
+                }
+
+                if (input_class != CA_LOCATOR_PATH) {
+                        fprintf(stderr, "Input must be local path: %s\n", input);
+                        r = -EINVAL;
+                        goto finish;
+                }
+
                 input_fd = open(input, O_CLOEXEC|O_RDONLY|O_NOCTTY);
                 if (input_fd < 0) {
                         r = -errno;
@@ -382,6 +492,12 @@ static int make(int argc, char *argv[]) {
         if (streq_ptr(output, "-"))
                 output = NULL;
 
+        if (operation == _MAKE_OPERATION_INVALID) {
+                fprintf(stderr, "Failed to determine what to make. Use --what=archive, --what=archive-index or --what=blob-index.\n");
+                r = -EINVAL;
+                goto finish;
+        }
+
         if (IN_SET(operation, MAKE_ARCHIVE_INDEX, MAKE_BLOB_INDEX)) {
                 r = set_default_store(output);
                 if (r < 0)
@@ -420,7 +536,7 @@ static int make(int argc, char *argv[]) {
                 }
         } else {
                 if (output)
-                        r = ca_sync_set_index_path(s, output);
+                        r = ca_sync_set_index_auto(s, output);
                 else
                         r = ca_sync_set_index_fd(s, STDOUT_FILENO);
                 if (r < 0) {
@@ -430,7 +546,7 @@ static int make(int argc, char *argv[]) {
         }
 
         if (arg_store) {
-                r = ca_sync_set_store(s, arg_store);
+                r = ca_sync_set_store_auto(s, arg_store);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
                         goto finish;
@@ -470,6 +586,12 @@ static int make(int argc, char *argv[]) {
                 case CA_SYNC_STEP:
                         break;
 
+                case CA_SYNC_POLL:
+                        r = ca_sync_poll(s, UINT64_MAX);
+                        if (r < 0)
+                                goto finish;
+                        break;
+
                 default:
                         assert(false);
                 }
@@ -486,6 +608,9 @@ finish:
         if (input_fd >= 3)
                 (void) close(input_fd);
 
+        free(input);
+        free(output);
+
         return r;
 }
 
@@ -500,46 +625,86 @@ static int extract(int argc, char *argv[]) {
 
         ExtractOperation operation = _EXTRACT_OPERATION_INVALID;
         int r, output_fd = -1, input_fd = -1;
-        const char *input, *output;
+        char *input = NULL, *output = NULL;
         CaSync *s = NULL;
 
         if (argc > 3) {
-                fprintf(stderr, "A pairt of output and input path expected.\n");
+                fprintf(stderr, "A pair of output and input path/URL expected.\n");
                 return -EINVAL;
         }
 
-        input = argc > 1 ? argv[1] : NULL;
-        output = argc > 2 ? argv[2] : NULL;
+        if (argc > 1) {
+                input = ca_strip_file_url(argv[1]);
+                if (!input) {
+                        r = log_oom();
+                        goto finish;
+                }
+        }
 
-        if (!input || streq(input, "-"))
-                input_fd = STDIN_FILENO;
-        else {
-                if (endswith(input, ".catar"))
+        if (argc > 2) {
+                output = ca_strip_file_url(argv[2]);
+                if (!output) {
+                        r = log_oom();
+                        goto finish;
+                }
+        }
+
+        if (arg_what == WHAT_ARCHIVE)
+                operation = EXTRACT_ARCHIVE;
+        else if (arg_what == WHAT_ARCHIVE_INDEX)
+                operation = EXTRACT_ARCHIVE_INDEX;
+        else if (arg_what == WHAT_BLOB_INDEX)
+                operation = EXTRACT_BLOB_INDEX;
+        else if (arg_what != _WHAT_INVALID) {
+                fprintf(stderr, "\"extract\" operation may only be combined with --what=archive, --what=archive-index, --what=blob-index.\n");
+                r = -EINVAL;
+                goto finish;
+        }
+
+        if (operation == _EXTRACT_OPERATION_INVALID && input && !streq(input, "-")) {
+
+                if (ca_locator_has_suffix(input, ".catar"))
                         operation = EXTRACT_ARCHIVE;
-                else if (endswith(input, ".caidx"))
+                else if (ca_locator_has_suffix(input, ".caidx"))
                         operation = EXTRACT_ARCHIVE_INDEX;
-                else if (endswith(input, ".caibx"))
+                else if (ca_locator_has_suffix(input, ".caibx"))
                         operation = EXTRACT_BLOB_INDEX;
                 else {
                         fprintf(stderr, "File to read from does not have valid suffix, refusing. (May be one of: .catar, .caidx, .caibx)\n");
                         r = -EINVAL;
                         goto finish;
                 }
+        }
 
-                input_fd = open(input, O_CLOEXEC|O_RDONLY|O_NOCTTY);
-                if (input_fd < 0) {
-                        r = -errno;
-                        fprintf(stderr, "Failed to open %s: %s\n", input, strerror(-r));
+        if (!input || streq(input, "-"))
+                input_fd = STDIN_FILENO;
+
+        if (!output && IN_SET(operation, EXTRACT_ARCHIVE, EXTRACT_ARCHIVE_INDEX)) {
+                output = strdup(".");
+                if (!output) {
+                        r = log_oom();
                         goto finish;
                 }
         }
 
-        if (!output && IN_SET(operation, EXTRACT_ARCHIVE, EXTRACT_ARCHIVE_INDEX))
-                output = ".";
-
         if (!output || streq(output, "-"))
                 output_fd = STDOUT_FILENO;
         else {
+                CaLocatorClass output_class;
+
+                output_class = ca_classify_locator(output);
+                if (output_class < 0) {
+                        fprintf(stderr, "Failed to determine locator class: %s\n", output);
+                        r = -EINVAL;
+                        goto finish;
+                }
+
+                if (output_class != CA_LOCATOR_PATH) {
+                        fprintf(stderr, "Output must be local path: %s\n", output);
+                        r = -EINVAL;
+                        goto finish;
+                }
+
                 output_fd = open(output, O_CLOEXEC|O_WRONLY|O_NOCTTY);
                 if (output_fd < 0 && errno == EISDIR)
                         output_fd = open(output, O_CLOEXEC|O_RDONLY|O_NOCTTY|O_DIRECTORY);
@@ -587,13 +752,13 @@ static int extract(int argc, char *argv[]) {
         }
 
         if (operation == _EXTRACT_OPERATION_INVALID) {
-                fprintf(stderr, "Couldn't figure out operation to execute. Refusing.\n");
+                fprintf(stderr, "Couldn't figure out what to extract. Refusing. Use --what=archive, --what=archive-index or --what=blob-index.\n");
                 r = -EINVAL;
                 goto finish;
         }
 
         if (IN_SET(operation, EXTRACT_ARCHIVE_INDEX, EXTRACT_BLOB_INDEX)) {
-                r = set_default_store(output);
+                r = set_default_store(input);
                 if (r < 0)
                         goto finish;
         }
@@ -626,16 +791,20 @@ static int extract(int argc, char *argv[]) {
                 output_fd = -1;
 
         if (operation == EXTRACT_ARCHIVE) {
-                assert(input_fd >= 0);
-
-                r = ca_sync_set_archive_fd(s, input_fd);
+                if (input_fd >= 0)
+                        r = ca_sync_set_archive_fd(s, input_fd);
+                else
+                        r = ca_sync_set_archive_path(s, input);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set sync archive: %s\n", strerror(-r));
                         goto finish;
                 }
 
         } else {
-                r = ca_sync_set_index_fd(s, input_fd);
+                if (input_fd >= 0)
+                        r = ca_sync_set_index_fd(s, input_fd);
+                else
+                        r = ca_sync_set_index_auto(s, input);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set sync index: %s\n", strerror(-r));
                         goto finish;
@@ -644,7 +813,7 @@ static int extract(int argc, char *argv[]) {
         input_fd = -1;
 
         if (arg_store) {
-                r = ca_sync_set_store(s, arg_store);
+                r = ca_sync_set_store_auto(s, arg_store);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
                         goto finish;
@@ -683,9 +852,6 @@ static int extract(int argc, char *argv[]) {
                         break;
                 }
 
-                case CA_SYNC_SEED_STEP:
-                        break;
-
                 case CA_SYNC_SEED_NEXT_FILE: {
                         r = verbose_print_path(s, "Seeding");
                         if (r < 0)
@@ -693,6 +859,12 @@ static int extract(int argc, char *argv[]) {
 
                         break;
                 }
+
+                case CA_SYNC_POLL:
+                        r = ca_sync_poll(s, UINT64_MAX);
+                        if (r < 0)
+                                goto finish;
+                        break;
 
                 default:
                         assert(false);
@@ -712,6 +884,9 @@ finish:
         if (output_fd >= 3)
                 (void) close(output_fd);
 
+        free(input);
+        free(output);
+
         return r;
 }
 
@@ -724,78 +899,119 @@ static int list(int argc, char *argv[]) {
                 _LIST_OPERATION_INVALID = -1
         } ListOperation;
 
+        CaLocatorClass input_class = _CA_LOCATOR_CLASS_INVALID;
         ListOperation operation = _LIST_OPERATION_INVALID;
-        const char *input;
         int r, input_fd = -1;
+        char *input = NULL;
         CaSync *s = NULL;
-        struct stat st;
 
         if (argc > 2) {
                 fprintf(stderr, "A single input file name expected.\n");
                 return -EINVAL;
         }
 
-        input = argc > 1 ? argv[1] : NULL;
+        if (argc > 1) {
+                input = ca_strip_file_url(argv[1]);
+                if (!input) {
+                        r = log_oom();
+                        goto finish;
+                }
+        }
 
-        if (input && !streq(input, "-")) {
+        if (arg_what == WHAT_ARCHIVE)
+                operation = LIST_ARCHIVE;
+        else if (arg_what == WHAT_ARCHIVE_INDEX)
+                operation = LIST_ARCHIVE_INDEX;
+        else if (arg_what == WHAT_DIRECTORY)
+                operation = LIST_DIRECTORY;
+        else if (arg_what != _WHAT_INVALID) {
+                fprintf(stderr, "\"list\" operation may only be combined with --what=archive, --what=archive-index or --what=directory.\n");
+                r = -EINVAL;
+                goto finish;
+        }
 
-                if (endswith(input, ".catar"))
+        if (operation == _LIST_OPERATION_INVALID && input && !streq(input, "-")) {
+                if (ca_locator_has_suffix(input, ".catar"))
                         operation = LIST_ARCHIVE;
-                else if (endswith(input, ".caidx"))
+                else if (ca_locator_has_suffix(input, ".caidx"))
                         operation = LIST_ARCHIVE_INDEX;
         }
 
-        if (!input)
-                input = ".";
+        if (!input && operation == LIST_DIRECTORY) {
+                input = strdup(".");
+                if (!input) {
+                        r = log_oom();
+                        goto finish;
+                }
+        }
 
-        if (streq(input, "-"))
+        if (!input || streq(input, "-"))
                 input_fd = STDIN_FILENO;
         else {
-                input_fd = open(input, O_CLOEXEC|O_RDONLY|O_NOCTTY);
-                if (input_fd < 0) {
+                input_class = ca_classify_locator(input);
+                if (input_class < 0) {
+                        fprintf(stderr, "Failed to determine type of locator: %s\n", input);
+                        r = -EINVAL;
+                        goto finish;
+                }
+
+                if (input_class == CA_LOCATOR_PATH) {
+                        input_fd = open(input, O_CLOEXEC|O_RDONLY|O_NOCTTY);
+                        if (input_fd < 0) {
+                                r = -errno;
+                                fprintf(stderr, "Failed to open %s: %s\n", input, strerror(-r));
+                                goto finish;
+                        }
+                }
+        }
+
+        if (input_fd >= 0) {
+                struct stat st;
+
+                if (fstat(input_fd, &st) < 0) {
                         r = -errno;
-                        fprintf(stderr, "Failed to open %s: %s\n", input, strerror(-r));
+                        fprintf(stderr, "Failed to stat input: %s\n", strerror(-r));
                         goto finish;
                 }
-        }
 
-        if (fstat(input_fd, &st) < 0) {
-                r = -errno;
-                fprintf(stderr, "Failed to stat input: %s\n", strerror(-r));
-                goto finish;
-        }
+                if (S_ISDIR(st.st_mode)) {
+                        if (operation == _LIST_OPERATION_INVALID)
+                                operation = LIST_DIRECTORY;
+                        else if (operation != LIST_DIRECTORY) {
+                                fprintf(stderr, "Input is a directory, but attempted to list archive or index.\n");
+                                r = -EINVAL;
+                                goto finish;
+                        }
 
-        if (S_ISDIR(st.st_mode)) {
-                if (operation == _LIST_OPERATION_INVALID)
-                        operation = LIST_DIRECTORY;
-                else if (operation != LIST_DIRECTORY) {
-                        fprintf(stderr, "Input is a directory, but attempted to list archive or index.\n");
+                } else if (S_ISREG(st.st_mode)) {
+
+                        if (operation == _LIST_OPERATION_INVALID)
+                                operation = LIST_ARCHIVE;
+                        else if (!IN_SET(operation, LIST_ARCHIVE, LIST_ARCHIVE_INDEX)) {
+                                fprintf(stderr, "Input is a regular file, but attempted to list it as directory.\n");
+                                r = -EINVAL;
+                                goto finish;
+                        }
+                } else {
+                        fprintf(stderr, "Input is neither a file or directory. Refusing.\n");
                         r = -EINVAL;
                         goto finish;
                 }
-
-        } else if (S_ISREG(st.st_mode)) {
-
-                if (operation == _LIST_OPERATION_INVALID)
-                        operation = LIST_ARCHIVE;
-                else if (!IN_SET(operation, LIST_ARCHIVE, LIST_ARCHIVE_INDEX)) {
-                        fprintf(stderr, "Input is a regular file, but attempted to list it as directory.\n");
-                        r = -EINVAL;
-                        goto finish;
-                }
-        } else {
-                fprintf(stderr, "Input is neither a file or directory. Refusing.\n");
-                r = -EINVAL;
-                goto finish;
         }
 
         if (streq_ptr(input, "-"))
                 input = NULL;
 
+        if (operation == _LIST_OPERATION_INVALID) {
+                fprintf(stderr, "Failed to determine what to list. Use --what=archive, --what=archive-index or --what=directory.\n");
+                r = -EINVAL;
+                goto finish;
+        }
+
         if (operation == LIST_ARCHIVE_INDEX) {
                 r = set_default_store(input);
                 if (r < 0)
-                        return r;
+                        goto finish;
         }
 
         if (operation == LIST_DIRECTORY)
@@ -809,9 +1025,12 @@ static int list(int argc, char *argv[]) {
 
         if (operation == LIST_ARCHIVE)
                 r = ca_sync_set_archive_fd(s, input_fd);
-        else if (operation == LIST_ARCHIVE_INDEX)
-                r = ca_sync_set_index_fd(s, input_fd);
-        else if (operation == LIST_DIRECTORY)
+        else if (operation == LIST_ARCHIVE_INDEX) {
+                if (input_fd >= 0)
+                        r = ca_sync_set_index_fd(s, input_fd);
+                else
+                        r = ca_sync_set_index_auto(s, input);
+        } else if (operation == LIST_DIRECTORY)
                 r = ca_sync_set_base_fd(s, input_fd);
         else
                 assert(false);
@@ -830,7 +1049,7 @@ static int list(int argc, char *argv[]) {
         }
 
         if (arg_store) {
-                r = ca_sync_set_store(s, arg_store);
+                r = ca_sync_set_store_auto(s, arg_store);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
                         goto finish;
@@ -882,9 +1101,6 @@ static int list(int argc, char *argv[]) {
                         break;
                 }
 
-                case CA_SYNC_SEED_STEP:
-                        break;
-
                 case CA_SYNC_SEED_NEXT_FILE: {
                         r = verbose_print_path(s, "Seeding");
                         if (r < 0)
@@ -892,6 +1108,13 @@ static int list(int argc, char *argv[]) {
 
                         break;
                 }
+
+                case CA_SYNC_POLL:
+                        r = ca_sync_poll(s, UINT64_MAX);
+                        if (r < 0)
+                                goto finish;
+                        break;
+
                 default:
                         assert(false);
                 }
@@ -908,6 +1131,7 @@ finish:
         if (input_fd >= 3)
                 (void) close(input_fd);
 
+        free(input);
         return r;
 }
 
@@ -922,94 +1146,153 @@ static int digest(int argc, char *argv[]) {
 
         DigestOperation operation = _DIGEST_OPERATION_INVALID;
         int r, input_fd = -1;
-        const char *input;
+        char *input = NULL;
         CaSync *s = NULL;
-        struct stat st;
 
         if (argc > 2) {
                 fprintf(stderr, "A single input file name expected.\n");
                 return -EINVAL;
         }
 
-        input = argc > 1 ? argv[1] : NULL;
+        if (argc > 1) {
+                input = ca_strip_file_url(argv[1]);
+                if (!input) {
+                        r = log_oom();
+                        goto finish;
+                }
+        }
+
+        if (IN_SET(arg_what, WHAT_ARCHIVE, WHAT_BLOB))
+                operation = DIGEST_BLOB;
+        else if (IN_SET(arg_what, WHAT_ARCHIVE_INDEX, WHAT_BLOB_INDEX))
+                operation = DIGEST_INDEX;
+        else if (arg_what == WHAT_DIRECTORY)
+                operation = DIGEST_DIRECTORY;
+        else if (arg_what != _WHAT_INVALID) {
+                fprintf(stderr, "\"make\" operation may only be combined with --what=archive, --what=blob, --what=archive-index, --what=blob-index or --what=directory.\n");
+                r = -EINVAL;
+                goto finish;
+        }
 
         if (input && !streq(input, "-")) {
 
-                if (endswith(input, ".catar"))
+                if (ca_locator_has_suffix(input, ".catar"))
                         operation = DIGEST_BLOB;
-                else if (endswith(input, ".caidx") || endswith(input, ".caibx"))
+                else if (ca_locator_has_suffix(input, ".caidx") || ca_locator_has_suffix(input, ".caibx"))
                         operation = DIGEST_INDEX;
         }
 
-        if (!input)
-                input = ".";
+        if (!input && operation == DIGEST_DIRECTORY) {
+                input = strdup(".");
+                if (!input) {
+                        r = log_oom();
+                        goto finish;
+                }
+        }
 
-        if (streq(input, "-"))
+        if (!input || streq(input, "-"))
                 input_fd = STDIN_FILENO;
         else {
-                input_fd = open(input, O_CLOEXEC|O_RDONLY|O_NOCTTY);
-                if (input_fd < 0) {
+                CaLocatorClass input_class;
+
+                input_class = ca_classify_locator(input);
+                if (input_class < 0) {
+                        fprintf(stderr, "Failed to determine class of locator: %s\n", input);
+                        r = -EINVAL;
+                        goto finish;
+                }
+
+                if (operation == DIGEST_DIRECTORY && input_class != CA_LOCATOR_PATH) {
+                        fprintf(stderr, "Input must be local path: %s\n", input);
+                        r = -EINVAL;
+                        goto finish;
+                }
+
+                if (input_class == CA_LOCATOR_PATH) {
+                        input_fd = open(input, O_CLOEXEC|O_RDONLY|O_NOCTTY);
+                        if (input_fd < 0) {
+                                r = -errno;
+                                fprintf(stderr, "Failed to open %s: %s\n", input, strerror(-r));
+                                goto finish;
+                        }
+                }
+        }
+
+        if (input_fd >= 0) {
+                struct stat st;
+
+                if (fstat(input_fd, &st) < 0) {
                         r = -errno;
-                        fprintf(stderr, "Failed to open %s: %s\n", input, strerror(-r));
+                        fprintf(stderr, "Failed to stat input: %s\n", strerror(-r));
                         goto finish;
                 }
-        }
 
-        if (fstat(input_fd, &st) < 0) {
-                r = -errno;
-                fprintf(stderr, "Failed to stat input: %s\n", strerror(-r));
-                goto finish;
-        }
+                if (S_ISDIR(st.st_mode)) {
 
-        if (S_ISDIR(st.st_mode)) {
+                        if (operation == _DIGEST_OPERATION_INVALID)
+                                operation = DIGEST_DIRECTORY;
+                        else if (operation != DIGEST_DIRECTORY) {
+                                fprintf(stderr, "Input is a directory, but attempted to list as blob. Refusing.\n");
+                                r = -EINVAL;
+                                goto finish;
+                        }
 
-                if (operation == _DIGEST_OPERATION_INVALID)
-                        operation = DIGEST_DIRECTORY;
-                else if (operation != DIGEST_DIRECTORY) {
-                        fprintf(stderr, "Input is a directory, but attempted to list as blob. Refusing.\n");
+                } else if (S_ISREG(st.st_mode) || S_ISBLK(st.st_mode)) {
+
+                        if (operation == _DIGEST_OPERATION_INVALID)
+                                operation = DIGEST_BLOB;
+                        else if (!IN_SET(operation, DIGEST_BLOB, DIGEST_INDEX)) {
+                                fprintf(stderr, "Input is not a regular file or block device, but attempted to list as one. Refusing.\n");
+                                r = -EINVAL;
+                                goto finish;
+                        }
+                } else {
+                        fprintf(stderr, "Input is a neither a directory, a regular file, nor a block device. Refusing.\n");
                         r = -EINVAL;
                         goto finish;
                 }
-
-        } else if (S_ISREG(st.st_mode) || S_ISBLK(st.st_mode)) {
-
-                if (operation == _DIGEST_OPERATION_INVALID)
-                        operation = DIGEST_BLOB;
-                else if (!IN_SET(operation, DIGEST_BLOB, DIGEST_INDEX)) {
-                        fprintf(stderr, "Input is not a regular file or block device, but attempted to list as one. Refusing.\n");
-                        r = -EINVAL;
-                        goto finish;
-                }
-        } else {
-                fprintf(stderr, "Input is a neither a directory, a regular file, nor a block device. Refusing.\n");
-                r = -EINVAL;
-                goto finish;
         }
 
         if (streq_ptr(input, "-"))
                 input = NULL;
 
+        if (operation == _DIGEST_OPERATION_INVALID) {
+                fprintf(stderr, "Failed to determine what to calculate digest of. Use --what=archive, --what=blob, --what=archive-index, --what=blob-index or --what=directory.\n");
+                r = -EINVAL;
+                goto finish;
+        }
+
         if (operation == DIGEST_INDEX) {
                 r = set_default_store(input);
                 if (r < 0)
-                        return r;
+                        goto finish;
         }
 
-        if (operation == DIGEST_INDEX)
-                s = ca_sync_new_decode();
-        else
+        if (operation == DIGEST_DIRECTORY)
                 s = ca_sync_new_encode();
+        else
+                s = ca_sync_new_decode();
         if (!s) {
                 r = log_oom();
                 goto finish;
         }
 
-        if (IN_SET(operation, DIGEST_BLOB, DIGEST_DIRECTORY))
+        if (operation == DIGEST_DIRECTORY)
                 r = ca_sync_set_base_fd(s, input_fd);
-        else if (operation == DIGEST_INDEX)
-                r = ca_sync_set_index_fd(s, input_fd);
-        else
-                assert(false);
+        else if (operation == DIGEST_INDEX) {
+                if (input_fd >= 0)
+                        r = ca_sync_set_index_fd(s, input_fd);
+                else
+                        r = ca_sync_set_index_auto(s, input);
+        } else {
+                assert(operation == DIGEST_BLOB);
+
+                if (input_fd >= 0)
+                        r = ca_sync_set_archive_fd(s, input_fd);
+                else
+                        r = ca_sync_set_archive_path(s, input);
+
+        }
         if (r < 0) {
                 fprintf(stderr, "Failed to set sync input: %s", strerror(-r));
                 goto finish;
@@ -1025,7 +1308,7 @@ static int digest(int argc, char *argv[]) {
         }
 
         if (arg_store) {
-                r = ca_sync_set_store(s, arg_store);
+                r = ca_sync_set_store_auto(s, arg_store);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
                         goto finish;
@@ -1068,9 +1351,6 @@ static int digest(int argc, char *argv[]) {
                                 goto finish;
                         break;
 
-                case CA_SYNC_SEED_STEP:
-                        break;
-
                 case CA_SYNC_SEED_NEXT_FILE: {
                         r = verbose_print_path(s, "Seeding");
                         if (r < 0)
@@ -1078,6 +1358,13 @@ static int digest(int argc, char *argv[]) {
 
                         break;
                 }
+
+                case CA_SYNC_POLL:
+                        r = ca_sync_poll(s, UINT64_MAX);
+                        if (r < 0)
+                                goto finish;
+                        break;
+
                 default:
                         assert(false);
                 }
@@ -1093,6 +1380,499 @@ finish:
 
         if (input_fd >= 3)
                 (void) close(input_fd);
+
+        free(input);
+
+        return r;
+}
+
+static const char *clean_argument(const char *s) {
+        if (!s)
+                return NULL;
+        if (streq(s, ""))
+                return NULL;
+        if (streq(s, "-"))
+                return NULL;
+
+        return s;
+}
+
+static void free_stores(CaStore **stores, size_t n_stores) {
+        size_t i;
+
+        assert(stores || n_stores == 0);
+
+        for (i = 0; i < n_stores; i++)
+                ca_store_unref(stores[i]);
+        free(stores);
+}
+
+static int allocate_stores(
+                const char *wstore_path,
+                char **rstore_paths,
+                size_t n_rstores,
+                CaStore ***ret,
+                size_t *ret_n) {
+
+        CaStore **stores = NULL;
+        size_t n_stores, n = 0;
+        char **rstore_path;
+        int r;
+
+        assert(ret);
+        assert(ret_n);
+
+        n_stores = !!wstore_path + n_rstores;
+
+        if (n_stores > 0) {
+                stores = new0(CaStore*, n_stores);
+                if (!stores) {
+                        r = log_oom();
+                        goto fail;
+                }
+        }
+
+        if (wstore_path) {
+                stores[n] = ca_store_new();
+                if (!stores[n]) {
+                        r = log_oom();
+                        goto fail;
+                }
+                n++;
+
+                r = ca_store_set_path(stores[n-1], wstore_path);
+                if (r < 0) {
+                        fprintf(stderr, "Unable to set store path %s: %s\n", wstore_path, strerror(-r));
+                        goto fail;
+                }
+        }
+
+        STRV_FOREACH(rstore_path, rstore_paths) {
+                stores[n] = ca_store_new();
+                if (!stores[n]) {
+                        r = log_oom();
+                        goto fail;
+                }
+                n++;
+
+                r = ca_store_set_path(stores[n-1], *rstore_path);
+                if (r < 0) {
+                        fprintf(stderr, "Unable to set store path %s: %s\n", *rstore_path, strerror(-r));
+                        goto fail;
+                }
+        }
+
+        *ret = stores;
+        *ret_n = n;
+
+        return 0;
+
+fail:
+        free_stores(stores, n);
+
+        return r;
+}
+
+static int pull(int argc, char *argv[]) {
+        const char *base_path, *archive_path, *index_path, *wstore_path;
+        size_t n_stores = 0, i;
+        CaStore **stores = NULL;
+        CaRemote *rr;
+        int r;
+
+        if (argc < 5) {
+                fprintf(stderr, "Expected at least 5 arguments.\n");
+                return -EINVAL;
+        }
+
+        base_path = clean_argument(argv[1]);
+        archive_path = clean_argument(argv[2]);
+        index_path = clean_argument(argv[3]);
+        wstore_path = clean_argument(argv[4]);
+
+        n_stores = !!wstore_path + (argc - 5);
+
+        if (base_path || archive_path) {
+                fprintf(stderr, "Pull from base or archive not yet supported.\n");
+                return -EOPNOTSUPP;
+        }
+
+        if (!index_path && n_stores == 0) {
+                fprintf(stderr, "Nothing to do.\n");
+                return -EINVAL;
+        }
+
+        /* fprintf(stderr, "pull index: %s wstore: %s\n", strna(index_path), strna(wstore_path)); */
+
+        rr = ca_remote_new();
+        if (!rr)
+                return log_oom();
+
+        r = ca_remote_set_local_feature_flags(rr,
+                                              (n_stores > 0 ? CA_PROTOCOL_READABLE_STORE : 0) |
+                                              (index_path ? CA_PROTOCOL_READABLE_INDEX : 0));
+        if (r < 0) {
+                fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
+                return r;
+        }
+
+        r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);
+        if (r < 0) {
+                fprintf(stderr, "Failed to set I/O file descriptors: %s\n", strerror(-r));
+                return r;
+        }
+
+        if (index_path) {
+                r = ca_remote_set_index_path(rr, index_path);
+                if (r < 0) {
+                        fprintf(stderr, "Unable to set index file %s: %s\n", index_path, strerror(-r));
+                        goto finish;
+                }
+        }
+
+        r = allocate_stores(wstore_path, argv + 5, argc - 5, &stores, &n_stores);
+        if (r < 0)
+                goto finish;
+
+        for (;;) {
+                unsigned put_count;
+                int step;
+
+                step = ca_remote_step(rr);
+                if (step == -EPIPE) /* When somebody pulls from us, he's welcome to terminate any time he likes */
+                        break;
+                if (step < 0) {
+                        fprintf(stderr, "Failed to process remote: %s\n", strerror(-step));
+                        r = step;
+                        goto finish;
+                }
+
+                if (step == CA_REMOTE_FINISHED)
+                        break;
+
+                put_count = 0;
+                for (;;) {
+                        const void *p;
+                        CaObjectID id;
+                        size_t l;
+                        bool found = false;
+
+                        r = ca_remote_can_put_chunk(rr);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to determine whether there's buffer space for sending: %s\n", strerror(-r));
+                                goto finish;
+                        }
+                        if (r == 0) /* No space to put more */
+                                break;
+
+                        r = ca_remote_next_request(rr, &id);
+                        if (r == -ENODATA) /* No data requested */
+                                break;
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to determine which chunk to send next: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        for (i = 0; i < n_stores; i++) {
+                                r = ca_store_get(stores[i], &id, &p, &l);
+                                if (r >= 0) {
+                                        found = true;
+                                        break;
+                                }
+                                if (r != -ENOENT) {
+                                        fprintf(stderr, "Failed to query store: %s\n", strerror(-r));
+                                        goto finish;
+                                }
+                        }
+
+                        if (found)
+                                r = ca_remote_put_chunk(rr, &id, false, p, l);
+                        else
+                                r = ca_remote_put_missing(rr, &id);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to enqueue response: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        put_count ++;
+                }
+
+                if (put_count > 0) /* We enqueued more, let's do another step, maybe the remoter wants to write this mow */
+                        continue;
+
+                if (step != CA_REMOTE_POLL)
+                        continue;
+
+                r = ca_remote_poll(rr, UINT64_MAX);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to run remoting engine: %s\n", strerror(-r));
+                        goto finish;
+                }
+        }
+
+        r = 0;
+
+finish:
+        free_stores(stores, n_stores);
+        ca_remote_unref(rr);
+
+        return r;
+}
+
+static int push(int argc, char *argv[]) {
+
+        const char *base_path, *archive_path, *index_path, *wstore_path;
+        bool index_processed = false, index_written = false;
+        CaStore **stores = NULL;
+        CaIndex *index = NULL;
+        CaRemote *rr = NULL;
+        size_t n_stores = 0;
+        int r;
+
+        if (argc < 5) {
+                fprintf(stderr, "Expected at least 5 arguments.\n");
+                return -EINVAL;
+        }
+
+        base_path = clean_argument(argv[1]);
+        archive_path = clean_argument(argv[2]);
+        index_path = clean_argument(argv[3]);
+        wstore_path = clean_argument(argv[4]);
+
+        n_stores = !!wstore_path + (argc - 5);
+
+        if (base_path || archive_path) {
+                fprintf(stderr, "Push to base or archive not yet supported.\n");
+                return -EOPNOTSUPP;
+        }
+
+        if (!index_path && n_stores == 0) {
+                fprintf(stderr, "Nothing to do.\n");
+                return -EINVAL;
+        }
+
+        /* fprintf(stderr, "push index: %s wstore: %s\n", strna(index_path), strna(wstore_path)); */
+
+        rr = ca_remote_new();
+        if (!rr)
+                return log_oom();
+
+        r = ca_remote_set_local_feature_flags(rr,
+                                              (wstore_path ? CA_PROTOCOL_WRITABLE_STORE : 0) |
+                                              (index_path ? CA_PROTOCOL_WRITABLE_INDEX : 0));
+        if (r < 0) {
+                fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
+                return r;
+        }
+
+        r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);
+        if (r < 0) {
+                fprintf(stderr, "Failed to set I/O file descriptors: %s\n", strerror(-r));
+                return r;
+        }
+
+        if (index_path) {
+                index = ca_index_new_incremental_read();
+                if (!index) {
+                        r = log_oom();
+                        goto finish;
+                }
+
+                r = ca_index_set_path(index, index_path);
+                if (r < 0) {
+                        fprintf(stderr, "Unable to set index file %s: %s\n", index_path, strerror(-r));
+                        goto finish;
+                }
+
+                r = ca_index_open(index);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to open index file %s: %s\n", index_path, strerror(-r));
+                        goto finish;
+                }
+        }
+
+        r = allocate_stores(wstore_path, argv + 5, argc - 5, &stores, &n_stores);
+        if (r < 0)
+                goto finish;
+
+        for (;;) {
+                int step;
+
+                step = ca_remote_step(rr);
+                if (step < 0) {
+                        fprintf(stderr, "Failed to process remote: %s\n", strerror(-step));
+                        r = step;
+                        goto finish;
+                }
+
+                if (step == CA_REMOTE_FINISHED)
+                        break;
+
+                switch (step) {
+
+                case CA_REMOTE_POLL:
+                        r = ca_remote_poll(rr, UINT64_MAX);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to run remoting engine: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        break;
+
+                case CA_REMOTE_STEP:
+                        break;
+
+                case CA_REMOTE_READ_INDEX: {
+                        const void *p;
+                        size_t n;
+
+                        r = ca_remote_read_index(rr, &p, &n);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to read index data: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        r = ca_index_incremental_write(index, p, n);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to write index data: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        break;
+                }
+
+                case CA_REMOTE_READ_INDEX_EOF:
+                        r = ca_index_incremental_eof(index);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to write index EOF: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        index_written = true;
+                        break;
+
+                case CA_REMOTE_CHUNK: {
+                        CaObjectID id;
+                        const void *p;
+                        size_t n;
+
+                        r = ca_remote_next_chunk(rr, &id, &p, &n);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to determine most recent chunk: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        r = ca_store_put(stores[0], &id, p, n); /* Write to wstore */
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to write chunk to store: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        break;
+                }
+
+                default:
+                        assert(false);
+                }
+
+                for (;;) {
+                        /* char ids[CA_OBJECT_ID_FORMAT_MAX]; */
+                        uint64_t remote_flags;
+                        CaObjectID id;
+                        size_t i;
+
+                        if (!index)
+                                break;
+                        if (index_processed)
+                                break;
+                        if (!wstore_path)
+                                break;
+
+                        r = ca_remote_get_remote_feature_flags(rr, &remote_flags);
+                        if (r == -ENODATA)
+                                break;
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to get remote feature flags: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        /* Only request chunks if this is requested by the client side */
+                        if ((remote_flags & CA_PROTOCOL_PUSH_INDEX_CHUNKS) == 0) {
+                                index_processed = true;
+                                break;
+                        }
+
+                        r = ca_index_read_object(index, &id, NULL);
+                        if (r == -EAGAIN) /* Not read enough yet */
+                                break;
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to read index: %s\n", strerror(-r));
+                                goto finish;
+                        }
+                        if (r == 0) { /* EOF */
+                                index_processed = true;
+                                break;
+                        }
+
+                        /* fprintf(stderr, "Need %s\n", ca_object_id_format(&id, ids)); */
+
+                        r = 0;
+                        for (i = 0; i < n_stores; i++) {
+                                r = ca_store_has(stores[i], &id);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to test whether chunk exists locally already: %s\n", strerror(-r));
+                                        goto finish;
+                                }
+                                if (r > 0)
+                                        break;
+                        }
+                        if (r > 0) {
+                                /* fprintf(stderr, "Already have %s\n", ca_object_id_format(&id, ids)); */
+                                continue;
+                        }
+
+                        /* fprintf(stderr, "Requesting %s\n", ca_object_id_format(&id, ids)); */
+
+                        r = ca_remote_request_async(rr, &id, false);
+                        if (r < 0 && r != -EALREADY && r != -EAGAIN) {
+                                fprintf(stderr, "Failed to request chunk: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        /* if (r > 0) */
+                        /*         fprintf(stderr, "New request for %s\n", ca_object_id_format(&id, ids)); */
+                }
+
+                if (index && index_written && index_processed) {
+
+                        r = ca_remote_has_pending_requests(rr);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to determine if further requests are pending: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        if (r == 0) {
+                                r = ca_remote_goodbye(rr);
+                                if (r < 0 && r != -EALREADY) {
+                                        fprintf(stderr, "Failed to enqueue goodbye: %s\n", strerror(-r));
+                                        goto finish;
+                                }
+                        }
+                }
+        }
+
+        r = ca_index_install(index);
+        if (r < 0) {
+                fprintf(stderr, "Failed to install index on location: %s\n", strerror(-r));
+                goto finish;
+        }
+
+        r = 0;
+
+finish:
+        free_stores(stores, n_stores);
+        ca_remote_unref(rr);
+        ca_index_unref(index);
 
         return r;
 }
@@ -1116,6 +1896,10 @@ static int dispatch_verb(int argc, char *argv[]) {
                 r = list(argc, argv);
         else if (streq(argv[0], "digest"))
                 r = digest(argc, argv);
+        else if (streq(argv[0], "pull")) /* "Secret" verb, only to be called by ssh-based remoting. */
+                r = pull(argc, argv);
+        else if (streq(argv[0], "push")) /* Same here. */
+                r = push(argc, argv);
         else {
                 fprintf(stderr, "Unknown verb.\n");
                 r = -EINVAL;
@@ -1125,7 +1909,14 @@ static int dispatch_verb(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
+        static const struct sigaction sa = {
+                .sa_handler = SIG_IGN,
+                .sa_flags = SA_RESTART,
+        };
+
         int r;
+
+        assert_se(sigaction(SIGPIPE, &sa, NULL) >= 0);
 
         r = parse_argv(argc, argv);
         if (r <= 0)

@@ -16,7 +16,7 @@ int main(int argc, char *argv[]) {
         assert_se(base_fd >= 0);
         assert_se(ca_sync_set_base_fd(s, base_fd) >= 0);
 
-        assert_se(ca_sync_set_store(s, "/var/tmp/teststore") >= 0);
+        assert_se(ca_sync_set_store_path(s, "/var/tmp/teststore") >= 0);
         assert_se(ca_sync_set_index_path(s, "/var/tmp/testindex") >= 0);
 
         for (;;) {
@@ -47,7 +47,7 @@ step2:
         assert_se(base_fd >= 0);
         assert_se(ca_sync_set_base_fd(s, base_fd) >= 0);
 
-        assert_se(ca_sync_set_store(s, "/var/tmp/teststore") >= 0);
+        assert_se(ca_sync_set_store_path(s, "/var/tmp/teststore") >= 0);
         assert_se(ca_sync_set_index_path(s, "/var/tmp/testindex") >= 0);
 
         for (;;) {
