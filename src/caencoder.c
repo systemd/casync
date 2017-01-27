@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <linux/fs.h>
+#include <linux/magic.h>
 
 #include "caencoder.h"
 #include "caformat-util.h"
@@ -268,6 +269,31 @@ static int ca_encoder_node_read_dirents(CaEncoderNode *n) {
 
 static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
         unsigned long u = 0;
+        le32_t magic;
+        int r;
+
+        struct {
+                le32_t magic;
+
+                union {
+                        struct {
+                                /* unsigned int   s_magic; */
+                                unsigned int   inodes;
+                                int            mkfs_time;
+                                unsigned int   block_size;
+                                unsigned int   fragments;
+                                unsigned short compression;
+                                unsigned short block_log;
+                                unsigned short flags;
+                                unsigned short no_ids;
+                                unsigned short s_major;
+                                unsigned short s_minor;
+                                long long      root_inode;
+                                le64_t         bytes_used;
+                                /* ignore the rest */
+                        } _packed_ squashfs;
+                };
+        } _packed_ superblock;
 
         assert(n);
 
@@ -278,10 +304,23 @@ static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
         if (n->fd < 0)
                 return -EBADFD;
 
-        if (ioctl(n->fd, BLKGETSIZE, &u) < 0)
-                return -errno;
+        r = pread(n->fd, &superblock, sizeof(superblock), 0);
+        if (r == sizeof(magic))
+                return -EIO;
 
-        n->device_size = (uint64_t) u * 512;
+        switch(le32toh(superblock.magic)) {
+                case SQUASHFS_MAGIC:
+                        n->device_size = le64toh(superblock.squashfs.bytes_used);
+                        break;
+
+                default:
+                        if (ioctl(n->fd, BLKGETSIZE, &u) < 0)
+                                return -errno;
+
+                        n->device_size = (uint64_t) u * 512;
+                        break;
+        }
+
         return 1;
 }
 
