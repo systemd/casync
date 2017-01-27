@@ -267,6 +267,9 @@ static int ca_encoder_node_read_dirents(CaEncoderNode *n) {
         return 1;
 }
 
+#define _ANDROID_BOOTIMG_MAGIC_1 0x52444e41
+#define _ANDROID_BOOTIMG_MAGIC_2 0x2144494f
+
 static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
         unsigned long u = 0;
         le32_t magic;
@@ -292,6 +295,21 @@ static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
                                 le64_t         bytes_used;
                                 /* ignore the rest */
                         } _packed_ squashfs;
+
+                        struct {
+                                le32_t magic2;
+
+                                le32_t kernel_size;
+                                unsigned int kernel_addr;
+
+                                le32_t initrd_size;
+                                unsigned int initrd_addr;
+
+                                le32_t second_size;
+                                unsigned int second_addr;
+
+                                /* ignore the rest */
+                        } _packed_ android_bootimg;
                 };
         } _packed_ superblock;
 
@@ -311,15 +329,24 @@ static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
         switch(le32toh(superblock.magic)) {
                 case SQUASHFS_MAGIC:
                         n->device_size = le64toh(superblock.squashfs.bytes_used);
-                        break;
+                        return 1;
 
-                default:
-                        if (ioctl(n->fd, BLKGETSIZE, &u) < 0)
-                                return -errno;
+                case _ANDROID_BOOTIMG_MAGIC_1:
+                        if (le32toh(superblock.android_bootimg.magic2) == _ANDROID_BOOTIMG_MAGIC_2) {
+                                n->device_size = 608 /* header size */ +
+                                                 le32toh(superblock.android_bootimg.kernel_size) +
+                                                 le32toh(superblock.android_bootimg.initrd_size) +
+                                                 le32toh(superblock.android_bootimg.second_size);
+                                return 1;
+                        }
 
-                        n->device_size = (uint64_t) u * 512;
                         break;
         }
+
+        if (ioctl(n->fd, BLKGETSIZE, &u) < 0)
+                return -errno;
+
+        n->device_size = (uint64_t) u * 512;
 
         return 1;
 }
