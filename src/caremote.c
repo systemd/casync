@@ -806,9 +806,9 @@ static int ca_remote_start(CaRemote *rr) {
                         if (rr->callout) {
                                 const char *e;
 
-                                e = getenv("CASYNC_CALLOUT_PATH");
+                                e = getenv("CASYNC_PROTOCOL_PATH");
                                 if (!e)
-                                        e = CASYNC_CALLOUT_PATH;
+                                        e = CASYNC_PROTOCOL_PATH;
 
                                 args[i++] = strjoina(e, "/casync-", rr->callout);
 

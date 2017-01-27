@@ -5,6 +5,8 @@ AUTOMAKE_OPTIONS = color-tests parallel-tests
 GCC_COLORS ?= 'ooh, shiny!'
 export GCC_COLORS
 
+protocoldir=$(prefix)/lib/casync/protocols
+
 SUBDIRS = .
 
 AM_CFLAGS = \
@@ -50,7 +52,7 @@ AM_CFLAGS = \
 	-fPIE \
 	--param=ssp-buffer-size=4 \
 	-D_GNU_SOURCE \
-	-DCASYNC_CALLOUT_PATH=\"$(prefix)/lib\"
+	-DCASYNC_PROTOCOL_PATH=\"$(protocoldir)\"
 
 AM_CPPFLAGS = \
 	-include $(top_builddir)/config.h \
@@ -62,10 +64,17 @@ tests = \
 	test-casync \
 	test-cautil
 
-bin_PROGRAMS = casync
+bin_PROGRAMS = \
+	casync
 
-noinst_PROGRAMS = $(tests)
-TESTS = $(tests)
+protocol_PROGRAMS = \
+	casync-http
+
+noinst_PROGRAMS = \
+	$(tests)
+
+TESTS = \
+	$(tests)
 
 lib_SOURCES = \
 	src/cadecoder.c \
@@ -106,7 +115,9 @@ lib_SOURCES = \
 
 ## casync
 
-casync_SOURCES = src/casync-tool.c $(lib_SOURCES)
+casync_SOURCES = \
+	src/casync-tool.c \
+	$(lib_SOURCES)
 
 casync_CFLAGS = \
 	$(AM_CFLAGS) \
@@ -117,6 +128,22 @@ casync_LDADD = \
 	$(LIBLZMA_LIBS) \
 	$(LIBGCRYPT_LIBS)
 
+## casync-http
+
+casync_http_SOURCES = \
+	src/casync-http.c \
+	$(lib_SOURCES)
+
+casync_http_CFLAGS = \
+	$(AM_CFLAGS) \
+	$(LIBLZMA_CFLAGS) \
+	$(LIBGCRYPT_CFLAGS) \
+	$(LIBCURL_CFLAGS)
+
+casync_http_LDADD = \
+	$(LIBLZMA_LIBS) \
+	$(LIBGCRYPT_LIBS) \
+	$(LIBCURL_LIBS)
 
 ## test-caencoder
 

@@ -1528,16 +1528,13 @@ static int pull(int argc, char *argv[]) {
                 int step;
 
                 step = ca_remote_step(rr);
-                if (step == -EPIPE) /* When somebody pulls from us, he's welcome to terminate any time he likes */
+                if (step == -EPIPE || step == CA_REMOTE_FINISHED) /* When somebody pulls from us, he's welcome to terminate any time he likes */
                         break;
                 if (step < 0) {
                         fprintf(stderr, "Failed to process remote: %s\n", strerror(-step));
                         r = step;
                         goto finish;
                 }
-
-                if (step == CA_REMOTE_FINISHED)
-                        break;
 
                 put_count = 0;
                 for (;;) {
@@ -1594,7 +1591,7 @@ static int pull(int argc, char *argv[]) {
 
                 r = ca_remote_poll(rr, UINT64_MAX);
                 if (r < 0) {
-                        fprintf(stderr, "Failed to run remoting engine: %s\n", strerror(-r));
+                        fprintf(stderr, "Failed to poll remoting engine: %s\n", strerror(-r));
                         goto finish;
                 }
         }
