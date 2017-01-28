@@ -290,10 +290,10 @@ static int ca_remote_url_prefix_install(CaRemote *rr, const char *url) {
         if (k <= 0)
                 return -EINVAL;
 
-        if (e[k] != '/')
+        if (e[k] != '/' && e[k] != 0)
                 return -EINVAL;
 
-        prefix = strndup(url, n + 3 + k + 1);
+        prefix = strndup(url, n + 3 + k);
         if (!prefix)
                 return -ENOMEM;
 

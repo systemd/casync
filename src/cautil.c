@@ -391,7 +391,7 @@ bool ca_is_url(const char *s) {
         if (k <= 0)
                 return false;
 
-        if (e[k] != '/')
+        if (e[k] != '/' && e[k] != 0)
                 return false;
 
         return true;
