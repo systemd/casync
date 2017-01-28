@@ -139,6 +139,25 @@ static size_t write_chunk(const void *buffer, size_t size, size_t nmemb, void *u
         return product;
 }
 
+static char *chunk_url(const char *store_url, const CaObjectID *id) {
+        char ids[CA_OBJECT_ID_FORMAT_MAX], *buffer;
+        size_t n;
+
+        /* Chop off URL arguments and multiple trailing dashes, then append the chunk ID and ".xz" */
+
+        n = strcspn(store_url, "?;");
+        while (n > 0 && store_url[n-1] == '/')
+                n--;
+
+        buffer = new(char, n + 1 + 4 + 1 + CA_OBJECT_ID_FORMAT_MAX-1 + 3 + 1);
+
+        ca_object_id_format(id, ids);
+
+        strcpy(mempcpy(mempcpy(mempcpy(mempcpy(mempcpy(buffer, store_url, n), "/", 1), ids, 4), "/", 1), ids, CA_OBJECT_ID_FORMAT_MAX-1), ".xz");
+
+        return buffer;
+}
+
 static int run(int argc, char *argv[]) {
         const char *base_url, *archive_url, *index_url, *wstore_url;
         size_t n_stores = 0, current_store = 0;
@@ -243,7 +262,6 @@ static int run(int argc, char *argv[]) {
         }
 
         for (;;) {
-                char ids[CA_OBJECT_ID_FORMAT_MAX], id_prefix[5];
                 const char *store_url;
                 CaObjectID id;
 
@@ -277,12 +295,7 @@ static int run(int argc, char *argv[]) {
                 /* current_store++; */
 
                 free(url_buffer);
-
-                ca_object_id_format(&id, ids);
-                memcpy(id_prefix, ids, 4);
-                id_prefix[4] = 0;
-
-                url_buffer = strjoin(store_url, "/", id_prefix, "/", ids, ".xz");
+                url_buffer = chunk_url(store_url, &id);
                 if (!url_buffer) {
                         r = log_oom();
                         goto finish;
