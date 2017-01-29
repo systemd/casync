@@ -200,11 +200,32 @@ test_cautil_LDADD = \
 	$(LIBLZMA_LIBS) \
 	$(LIBGCRYPT_LIBS)
 
+## test-script.sh
+
+test-script.sh: test/test-script.sh.in
+	sed -e "s,@top_srcdir\@,$(top_srcdir)," \
+	-e "s,@top_builddir\@,$(top_builddir)," $^ > $@
+	chmod +x $@
+
+noinst_SCRIPTS = \
+	test-script.sh
+
+EXTRA_DIST = \
+	test-script.sh.in
+
 test-files:
 	test -e test-files/thisisafifo || mkfifo test-files/thisisafifo
 	test -e test-files/ablockdevice || mknod test-files/ablockdevice b 0 0
 	test -e test-files/achardevice || mknod test-files/achardevice c 0 0
-	test -e test-files/immutable || touch test-files/immutable && chattr +i test-files/immutable
-	test -e test-files/nocow || touch test-files/nocow && chattr +C test-files/nocow
+	test -e test-files/immutable || ( touch test-files/immutable && chattr +i test-files/immutable )
+	test -e test-files/nocow || ( touch test-files/nocow && chattr +C test-files/nocow )
+
+rm-test-files:
+	chattr -i test-files/immutable || :
+	rm -f test-files/thisisafifo
+	rm -f test-files/ablockdevice
+	rm -f test-files/achardevice
+	rm -f test-files/immutable
+	rm -f test-files/nocow
 
 .PHONY: test-files
