@@ -817,3 +817,17 @@ char *strv_find(char **l, const char *name) {
 
         return NULL;
 }
+
+size_t page_size(void) {
+        static size_t pgsz = 0;
+        long v;
+
+        if (_likely_(pgsz > 0))
+                return pgsz;
+
+        v = sysconf(_SC_PAGESIZE);
+        assert(v > 0);
+
+        pgsz = (size_t) v;
+        return pgsz;
+}

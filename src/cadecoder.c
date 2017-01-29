@@ -684,8 +684,8 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
 
         assert(d);
 
-        p = d->buffer.data;
-        n = d->buffer.size;
+        p = realloc_buffer_data(&d->buffer);
+        n = realloc_buffer_size(&d->buffer);
         for (;;) {
                 const CaFormatHeader *h;
                 uint64_t t, l;
@@ -983,10 +983,10 @@ static int ca_decoder_parse_hello(CaDecoder *d) {
         assert(d);
         assert(d->state == CA_DECODER_INIT);
 
-        if (d->buffer.size < sizeof(CaFormatHello)) /* Not read enough yet */
+        if (realloc_buffer_size(&d->buffer) < sizeof(CaFormatHello)) /* Not read enough yet */
                 return CA_DECODER_REQUEST;
 
-        h = validate_format_hello(d, d->buffer.data);
+        h = validate_format_hello(d, realloc_buffer_data(&d->buffer));
         if (!h)
                 return -EBADMSG;
 
@@ -1373,7 +1373,7 @@ static int ca_decoder_step_directory(CaDecoder *d, CaDecoderNode *n) {
         mode = ca_decoder_node_mode(n);
         assert(S_ISDIR(mode));
 
-        if (d->buffer.size == 0 && d->eof)
+        if (realloc_buffer_size(&d->buffer) == 0 && d->eof)
                 return -EPIPE;
 
         switch (d->state) {
@@ -1459,7 +1459,7 @@ static int ca_decoder_step_regular(CaDecoder *d, CaDecoderNode *n) {
         if (d->step_size > 0) {
 
                 if (n->fd >= 0) {
-                        r = loop_write(n->fd, d->buffer.data, d->step_size);
+                        r = loop_write(n->fd, realloc_buffer_data(&d->buffer), d->step_size);
                         if (r < 0)
                                 return r;
                 }
@@ -1477,12 +1477,12 @@ static int ca_decoder_step_regular(CaDecoder *d, CaDecoderNode *n) {
             d->payload_offset >= n->size)
                 return CA_DECODER_FINISHED;
 
-        if (d->buffer.size > 0) {
+        if (realloc_buffer_size(&d->buffer) > 0) {
 
                 if (n->size == UINT64_MAX)
-                        d->step_size = d->buffer.size;
+                        d->step_size = realloc_buffer_size(&d->buffer);
                 else
-                        d->step_size = MIN(d->buffer.size, n->size - d->payload_offset);
+                        d->step_size = MIN(realloc_buffer_size(&d->buffer), n->size - d->payload_offset);
 
                 return CA_DECODER_PAYLOAD;
         }
@@ -1559,8 +1559,6 @@ int ca_decoder_get_request_offset(CaDecoder *d, uint64_t *ret) {
 }
 
 int ca_decoder_put_data(CaDecoder *d, const void *p, size_t size) {
-        void *m;
-
         if (!d)
                 return -EINVAL;
         if (size == 0)
@@ -1574,11 +1572,9 @@ int ca_decoder_put_data(CaDecoder *d, const void *p, size_t size) {
         if (size == 0)
                 return 0;
 
-        m = realloc_buffer_extend(&d->buffer, size);
-        if (!m)
+        if (!realloc_buffer_append(&d->buffer, p, size))
                 return -ENOMEM;
 
-        memcpy(m, p, size);
         return 0;
 }
 
@@ -1619,7 +1615,7 @@ int ca_decoder_put_data_fd(CaDecoder *d, int fd, uint64_t offset, uint64_t size)
         if (l == 0)
                 d->eof = true;
 
-        assert(l <= (ssize_t) size);
+        assert((size_t) l <= size);
         realloc_buffer_shorten(&d->buffer, size - l);
 
         return 0;
@@ -1654,14 +1650,14 @@ int ca_decoder_get_payload(CaDecoder *d, const void **ret, size_t *ret_size) {
 
         if (d->state != CA_DECODER_INIT)
                 return -ENODATA;
-        if (d->buffer.size == 0)
+        if (realloc_buffer_size(&d->buffer) == 0)
                 return -ENODATA;
         if (d->step_size == 0)
                 return -ENODATA;
 
-        assert(d->step_size <= d->buffer.size);
+        assert(d->step_size <= realloc_buffer_size(&d->buffer));
 
-        *ret = d->buffer.data;
+        *ret = realloc_buffer_data(&d->buffer);
         *ret_size = d->step_size;
 
         return 0;

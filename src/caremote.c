@@ -250,12 +250,12 @@ int ca_remote_get_io_events(CaRemote *rr, short *ret_input_events, short *ret_ou
         if (!ret_output_events)
                 return -EINVAL;
 
-        if (rr->input_buffer.size < REMOTE_BUFFER_SIZE)
+        if (realloc_buffer_size(&rr->input_buffer) < REMOTE_BUFFER_SIZE)
                 *ret_input_events = POLLIN;
         else
                 *ret_input_events = 0;
 
-        if (rr->output_buffer.size > 0)
+        if (realloc_buffer_size(&rr->output_buffer) > 0)
                 *ret_output_events = POLLOUT;
         else
                 *ret_output_events = 0;
@@ -919,10 +919,10 @@ static int ca_remote_read(CaRemote *rr) {
 
         assert(rr);
 
-        if (rr->input_buffer.size >= REMOTE_BUFFER_SIZE)
+        if (realloc_buffer_size(&rr->input_buffer) >= REMOTE_BUFFER_SIZE)
                 return CA_REMOTE_POLL;
 
-        left = REMOTE_BUFFER_SIZE - rr->input_buffer.size;
+        left = REMOTE_BUFFER_SIZE - realloc_buffer_size(&rr->input_buffer);
 
         p = realloc_buffer_extend(&rr->input_buffer, left);
         if (!p)
@@ -943,16 +943,16 @@ static int ca_remote_write(CaRemote *rr) {
 
         assert(rr);
 
-        if (rr->output_buffer.size == 0)
+        if (realloc_buffer_size(&rr->output_buffer) == 0)
                 return CA_REMOTE_POLL;
 
-        n = write(rr->output_fd, rr->output_buffer.data, rr->output_buffer.size);
+        n = write(rr->output_fd, realloc_buffer_data(&rr->output_buffer), realloc_buffer_size(&rr->output_buffer));
         if (n < 0)
                 return errno == EAGAIN ? CA_REMOTE_POLL : -errno;
 
         realloc_buffer_advance(&rr->output_buffer, n);
 
-        if (rr->sent_goodbye && rr->output_buffer.size == 0)
+        if (rr->sent_goodbye && realloc_buffer_size(&rr->output_buffer) == 0)
                 return CA_REMOTE_FINISHED;
 
         return CA_REMOTE_STEP;
@@ -1288,10 +1288,10 @@ static int ca_remote_process_message(CaRemote *rr) {
         if (!IN_SET(rr->state, CA_REMOTE_HELLO, CA_REMOTE_RUNNING))
                 return CA_REMOTE_POLL;
 
-        if (rr->input_buffer.size < sizeof(CaProtocolHeader))
+        if (realloc_buffer_size(&rr->input_buffer) < sizeof(CaProtocolHeader))
                 return CA_REMOTE_POLL;
 
-        h = rr->input_buffer.data;
+        h = realloc_buffer_data(&rr->input_buffer);
 
         size = read_le64(&h->size);
         if (size < CA_PROTOCOL_SIZE_MIN)
@@ -1299,7 +1299,7 @@ static int ca_remote_process_message(CaRemote *rr) {
         if (size > CA_PROTOCOL_SIZE_MAX)
                 return -EBADMSG;
 
-        if (rr->input_buffer.size < size)
+        if (realloc_buffer_size(&rr->input_buffer) < size)
                 return CA_REMOTE_POLL;
 
         /* fprintf(stderr, PID_FMT " Got message: %s\n", getpid(), strna(ca_protocol_type_name(read_le64(&h->type)))); */
@@ -1481,7 +1481,7 @@ static int ca_remote_send_index(CaRemote *rr) {
         if (rr->index_complete)
                 return CA_REMOTE_POLL;
 
-        if (rr->output_buffer.size > REMOTE_BUFFER_LOW)
+        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
                 return CA_REMOTE_POLL;
 
         if (rr->index_fd < 0)
@@ -1539,7 +1539,7 @@ static int ca_remote_send_request(CaRemote *rr) {
                 return CA_REMOTE_POLL;
 
         /* Only write out queue when the send queue is short */
-        if (rr->output_buffer.size > REMOTE_BUFFER_LOW)
+        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
                 return CA_REMOTE_POLL;
 
         for (;;) {
@@ -1637,13 +1637,13 @@ int ca_remote_poll(CaRemote *rr, uint64_t timeout) {
         if (rr->input_fd < 0 || rr->output_fd < 0)
                 return -EUNATCH;
 
-        if (rr->input_buffer.size < REMOTE_BUFFER_SIZE) {
+        if (realloc_buffer_size(&rr->input_buffer) < REMOTE_BUFFER_SIZE) {
                 pollfd[n].fd = rr->input_fd;
                 pollfd[n].events = POLLIN;
                 n++;
         }
 
-        if (rr->output_buffer.size > 0) {
+        if (realloc_buffer_size(&rr->output_buffer) > 0) {
                 pollfd[n].fd = rr->output_fd;
                 pollfd[n].events = POLLOUT;
                 n++;
@@ -1695,8 +1695,8 @@ int ca_remote_request(CaRemote *rr, const CaChunkID *chunk_id, bool high_priorit
         if (r < 0)
                 return r;
 
-        *ret = rr->chunk_buffer.data;
-        *ret_size = rr->chunk_buffer.size;
+        *ret = realloc_buffer_data(&rr->chunk_buffer);
+        *ret_size = realloc_buffer_size(&rr->chunk_buffer);
         return 1;
 }
 
@@ -1744,7 +1744,7 @@ int ca_remote_can_put_chunk(CaRemote *rr) {
 
         if (rr->state != CA_REMOTE_RUNNING)
                 return 0;
-        if (rr->output_buffer.size > REMOTE_BUFFER_LOW)
+        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
                 return 0;
 
         return 1;
@@ -1771,7 +1771,7 @@ int ca_remote_put_chunk(CaRemote *rr, const CaChunkID *chunk_id, bool compressed
 
         if (rr->state != CA_REMOTE_RUNNING)
                 return -EAGAIN; /* can't take your data right now. */
-        if (rr->output_buffer.size > REMOTE_BUFFER_LOW)
+        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
                 return -EAGAIN; /* won't take your data right now, already got enough in my queue */
 
         msz = offsetof(CaProtocolChunk, data) + size;
@@ -1812,7 +1812,7 @@ int ca_remote_put_missing(CaRemote *rr, const CaChunkID *chunk_id) {
 
         if (rr->state != CA_REMOTE_RUNNING)
                 return -EAGAIN;
-        if (rr->output_buffer.size > REMOTE_BUFFER_LOW)
+        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
                 return -EAGAIN;
 
         missing = realloc_buffer_extend0(&rr->output_buffer, sizeof(CaProtocolMissing));
@@ -1846,7 +1846,7 @@ int ca_remote_can_put_index(CaRemote *rr) {
 
         if (rr->state != CA_REMOTE_RUNNING)
                 return 0;
-        if (rr->output_buffer.size > REMOTE_BUFFER_LOW)
+        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
                 return 0;
 
         return 1;
@@ -1874,7 +1874,7 @@ int ca_remote_put_index(CaRemote *rr, const void *data, size_t size) {
 
         if (rr->state != CA_REMOTE_RUNNING)
                 return -EAGAIN;
-        if (rr->output_buffer.size > REMOTE_BUFFER_LOW)
+        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
                 return -EAGAIN;
 
         msz = offsetof(CaProtocolIndex, data) + size;
@@ -1912,7 +1912,7 @@ int ca_remote_put_index_eof(CaRemote *rr) {
 
         if (rr->state != CA_REMOTE_RUNNING)
                 return -EAGAIN;
-        if (rr->output_buffer.size > REMOTE_BUFFER_LOW)
+        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
                 return -EAGAIN;
 
         eof = realloc_buffer_extend(&rr->output_buffer, sizeof(CaProtocolIndexEOF));
@@ -1933,7 +1933,7 @@ int ca_remote_read_index(CaRemote *rr, const void **ret, size_t *ret_size) {
         if (rr->index_fd >= 0)
                 return -ENOTTY;
 
-        if (rr->index_buffer.size == 0) {
+        if (realloc_buffer_size(&rr->index_buffer) == 0) {
 
                 if (rr->index_complete) {
                         *ret = NULL;
@@ -1944,8 +1944,8 @@ int ca_remote_read_index(CaRemote *rr, const void **ret, size_t *ret_size) {
                 return -EAGAIN;
         }
 
-        *ret = rr->index_buffer.data;
-        *ret_size = rr->index_buffer.size;
+        *ret = realloc_buffer_data(&rr->index_buffer);
+        *ret_size = realloc_buffer_size(&rr->index_buffer);
 
         return 1;
 }
@@ -2046,8 +2046,8 @@ int ca_remote_next_chunk(CaRemote *rr, CaChunkID *ret_id, const void **ret_data,
                 if (r < 0)
                         return r;
 
-                *ret_data = rr->chunk_buffer.data;
-                *ret_size = rr->chunk_buffer.size;
+                *ret_data = realloc_buffer_data(&rr->chunk_buffer);
+                *ret_size = realloc_buffer_size(&rr->chunk_buffer);
         }
 
         *ret_id = rr->last_chunk;

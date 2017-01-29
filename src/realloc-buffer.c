@@ -5,71 +5,112 @@
 #include "realloc-buffer.h"
 
 void* realloc_buffer_acquire(ReallocBuffer *b, size_t size) {
+        size_t ns, na, ne;
+        void *p;
+
         if (!b)
                 return NULL;
 
-        if (b->allocated < size) {
-                size_t ns, na;
-                void *p;
+        if (size == 0) {
+                b->start = b->end = 0;
 
-                na = b->allocated*2;
-                if (na < b->allocated)
-                        return NULL;
+                /* If a buffer of size 0 is requested, that's OK and not an error. On non-error we want to return
+                 * non-NULL, but also not actually allocate any memory. Hence return a pointer to the ReallocBuffer
+                 * object itself, as that's a known valid pointer. */
 
-                ns = MAX(na, size);
+                return b->data ?: b;
+        }
 
+        ne = b->start + size;
+        if (ne < b->start) /* overflow? */
+                return NULL;
+
+        if (ne <= b->allocated) {
+                b->end = ne;
+                return realloc_buffer_data(b);
+        }
+
+        na = b->allocated * 2;
+        if (na < b->allocated) /* overflow? */
+                return NULL;
+
+        ns = MAX(na, size);
+        ns = ALIGN_TO(ns, page_size());
+
+        if (b->start == 0) {
                 p = realloc(b->data, ns);
                 if (!p)
                         return NULL;
+        } else {
+                p = malloc(ns);
+                if (!p)
+                        return NULL;
 
-                b->data = p;
-                b->allocated = ns;
+                memcpy(p, realloc_buffer_data(b), realloc_buffer_size(b));
+                free(b->data);
+
+                b->start = 0;
         }
 
-        b->size = size;
+        b->data = p;
+        b->end = size;
+        b->allocated = ns;
+
         return b->data;
 }
 
 void *realloc_buffer_acquire0(ReallocBuffer *b, size_t size) {
+        size_t na, ns;
+        void *p;
+
         if (!b)
                 return NULL;
 
-        if (b->allocated < size) {
-                size_t na, ns;
-                void *p;
+        if (size == 0) {
+                b->start = b->end = 0;
+                return b->data ?: b;
+        }
 
-                na = b->allocated*2;
-                if (na < b->allocated)
-                        return NULL;
-
-                ns = MAX(na, size);
-
-                p = calloc(ns, 1);
-                if (!p)
-                        return NULL;
-
-                free(b->data);
-                b->data = p;
-                b->allocated = ns;
-        } else
+        if (size < b->allocated) {
                 memset(b->data, 0, size);
 
-        b->size = size;
+                b->start = 0;
+                b->end = size;
+
+                return realloc_buffer_data(b);
+        }
+
+        na = b->allocated * 2;
+        if (na < b->allocated) /* overflow? */
+                return NULL;
+
+        ns = MAX(na, size);
+        ns = ALIGN_TO(ns, page_size());
+
+        p = calloc(ns, 1);
+        if (!p)
+                return NULL;
+
+        free(b->data);
+        b->data = p;
+        b->allocated = ns;
+        b->start = 0;
+        b->end = size;
 
         return b->data;
 }
 
 void *realloc_buffer_extend(ReallocBuffer *b, size_t add) {
-        void *p;
         size_t old_size, new_size;
+        void *p;
 
         if (!b)
                 return NULL;
 
-        old_size = b->size;
-        new_size = old_size + add;
+        old_size = realloc_buffer_size(b);
 
-        if (new_size < old_size)
+        new_size = old_size + add;
+        if (new_size < old_size) /* overflow? */
                 return NULL;
 
         p = realloc_buffer_acquire(b, new_size);
@@ -109,25 +150,30 @@ void realloc_buffer_free(ReallocBuffer *b) {
                 return;
 
         b->data = mfree(b->data);
-        b->allocated = b->size = 0;
+        b->allocated = b->end = b->start = 0;
 }
 
 int realloc_buffer_advance(ReallocBuffer *b, size_t sz) {
+        size_t ns;
 
         /* Remove something from the beginning of the buffer */
 
         if (!b)
                 return -EINVAL;
 
-        if (sz > b->size)
+        if (sz == 0)
+                return 0;
+
+        ns = b->start + sz;
+        if (ns < b->start) /* Overflow? */
+                return -EINVAL;
+        if (ns > b->end)
                 return -EINVAL;
 
-        if (sz == b->size)
-                b->size = 0;
-        else {
-                b->size -= sz;
-                memmove(b->data, (uint8_t*) b->data + sz, b->size);
-        }
+        if (ns == b->end)
+                b->start = b->end = 0;
+        else
+                b->start = ns;
 
         return 0;
 }
@@ -138,21 +184,31 @@ int realloc_buffer_shorten(ReallocBuffer *b, size_t sz) {
 
         if (!b)
                 return -EINVAL;
-
-        if (sz > b->size)
+        if (sz > realloc_buffer_size(b))
                 return -EINVAL;
+        if (sz == 0)
+                return 0;
 
-        b->size -= sz;
+        b->end -= sz;
+
+        if (b->end == b->start)
+                b->start = b->end = 0;
+
         return 0;
 }
 
 int realloc_buffer_truncate(ReallocBuffer *b, size_t sz) {
-
         if (!b)
                 return -EINVAL;
-        if (sz > b->size)
+
+        if (sz == 0) {
+                b->start = b->end = 0;
+                return 0;
+        }
+
+        if (sz > realloc_buffer_size(b))
                 return -EINVAL;
 
-        b->size = sz;
+        b->end = b->start + sz;
         return 0;
 }

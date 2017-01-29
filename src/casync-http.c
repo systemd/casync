@@ -120,8 +120,8 @@ static size_t write_chunk(const void *buffer, size_t size, size_t nmemb, void *u
 
         product = size * nmemb;
 
-        z = chunk_buffer->size + product;
-        if (z < chunk_buffer->size) {
+        z = realloc_buffer_size(chunk_buffer) + product;
+        if (z < realloc_buffer_size(chunk_buffer)) {
                 fprintf(stderr, "Overflow\n");
                 return 0;
         }
@@ -333,7 +333,7 @@ static int run(int argc, char *argv[]) {
                 if (r < 0)
                         goto finish;
 
-                r = ca_remote_put_chunk(rr, &id, true, chunk_buffer.data, chunk_buffer.size);
+                r = ca_remote_put_chunk(rr, &id, true, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
                 if (r < 0) {
                         fprintf(stderr, "Failed to write chunk: %s\n", strerror(-r));
                         goto finish;

@@ -878,7 +878,7 @@ static int ca_encoder_get_payload_data(CaEncoder *e, CaEncoderNode *n) {
         if (e->payload_offset >= size) /* at EOF? */
                 return 0;
 
-        if (e->buffer.size > 0) /* already in buffer? */
+        if (realloc_buffer_size(&e->buffer) > 0) /* already in buffer? */
                 return 1;
 
         k = (size_t) MIN(BUFFER_SIZE, size - e->payload_offset);
@@ -912,7 +912,7 @@ static int ca_encoder_get_hello_data(CaEncoder *e, CaEncoderNode *n) {
         assert(S_ISDIR(n->stat.st_mode));
         assert(e->state == CA_ENCODER_HELLO);
 
-        if (e->buffer.size > 0) /* Already generated */
+        if (realloc_buffer_size(&e->buffer) > 0) /* Already generated */
                 return 1;
 
         h = realloc_buffer_acquire(&e->buffer, sizeof(CaFormatHello));
@@ -942,7 +942,7 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         assert(S_ISDIR(n->stat.st_mode));
         assert(e->state == CA_ENCODER_ENTRY);
 
-        if (e->buffer.size > 0) /* Already generated */
+        if (realloc_buffer_size(&e->buffer) > 0) /* Already generated */
                 return 1;
 
         de = ca_encoder_node_current_dirent(n);
@@ -1102,7 +1102,7 @@ static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
         assert(S_ISDIR(n->stat.st_mode));
         assert(e->state == CA_ENCODER_GOODBYE);
 
-        if (e->buffer.size > 0) /* Already generated */
+        if (realloc_buffer_size(&e->buffer) > 0) /* Already generated */
                 return 1;
 
         g = realloc_buffer_acquire0(&e->buffer,
@@ -1186,9 +1186,8 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
                 return 0;
         }
 
-        *ret = e->buffer.data;
-        *ret_size = e->buffer.size;
-        e->step_size = e->buffer.size;
+        *ret = realloc_buffer_data(&e->buffer);
+        *ret_size = e->step_size = realloc_buffer_size(&e->buffer);
 
         return 1;
 }

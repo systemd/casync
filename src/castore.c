@@ -109,8 +109,8 @@ static int load_uncompressed(CaStore *store, int fd, const void **ret, size_t *r
                         break;
         }
 
-        *ret = store->buffer.data;
-        *ret_size = store->buffer.size;
+        *ret = realloc_buffer_data(&store->buffer);
+        *ret_size = realloc_buffer_size(&store->buffer);
 
         return 0;
 }
@@ -187,8 +187,8 @@ static int load_compressed(CaStore *store, int fd, const void **ret, size_t *ret
 
         lzma_end(&xz);
 
-        *ret = store->buffer.data;
-        *ret_size = store->buffer.size;
+        *ret = realloc_buffer_data(&store->buffer);
+        *ret_size = realloc_buffer_size(&store->buffer);
 
         return 0;
 

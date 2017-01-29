@@ -475,4 +475,11 @@ static inline const char *empty_or_dash_to_null(const char *s) {
         return s;
 }
 
+size_t page_size(void);
+
+static inline size_t ALIGN_TO(size_t l, size_t ali) {
+        return ((l + ali - 1) & ~(ali - 1));
+}
+
+
 #endif

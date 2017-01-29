@@ -287,15 +287,15 @@ static int ca_seed_cache_chunks(CaSeed *s) {
                         return 0;
                 }
 
-                if (s->buffer.size == 0) {
+                if (realloc_buffer_size(&s->buffer) == 0) {
                         chunk = p;
                         chunk_size = k;
                 } else {
                         if (!realloc_buffer_append(&s->buffer, p, k))
                                 return -ENOMEM;
 
-                        chunk = s->buffer.data;
-                        chunk_size = s->buffer.size;
+                        chunk = realloc_buffer_data(&s->buffer);
+                        chunk_size = realloc_buffer_size(&s->buffer);
                 }
 
                 r = ca_seed_write_cache_entry(s, s->buffer_location, chunk, chunk_size);
@@ -319,13 +319,13 @@ static int ca_seed_cache_final_chunk(CaSeed *s) {
 
         assert(s);
 
-        if (s->buffer.size == 0)
+        if (realloc_buffer_size(&s->buffer) == 0)
                 return 0;
 
         if (!s->buffer_location)
                 return 0;
 
-        r = ca_seed_write_cache_entry(s, s->buffer_location, s->buffer.data, s->buffer.size);
+        r = ca_seed_write_cache_entry(s, s->buffer_location, realloc_buffer_data(&s->buffer), realloc_buffer_size(&s->buffer));
         if (r < 0)
                 return 0;
 

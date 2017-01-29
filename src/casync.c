@@ -920,15 +920,15 @@ static int ca_sync_write_chunks(CaSync *s, const void *p, size_t l) {
                         return 0;
                 }
 
-                if (s->buffer.size == 0) {
+                if (realloc_buffer_size(&s->buffer) == 0) {
                         chunk = p;
                         chunk_size = k;
                 } else {
                         if (!realloc_buffer_append(&s->buffer, p, k))
                                 return -ENOMEM;
 
-                        chunk = s->buffer.data;
-                        chunk_size = s->buffer.size;
+                        chunk = realloc_buffer_data(&s->buffer);
+                        chunk_size = realloc_buffer_size(&s->buffer);
                 }
 
                 r = ca_sync_write_one_chunk(s, chunk, chunk_size);
@@ -952,10 +952,10 @@ static int ca_sync_write_final_chunk(CaSync *s) {
         if (!s->wstore && !s->cache_store && !s->index)
                 return 0;
 
-        if (s->buffer.size == 0)
+        if (realloc_buffer_size(&s->buffer) == 0)
                 return 0;
 
-        r = ca_sync_write_one_chunk(s, s->buffer.data, s->buffer.size);
+        r = ca_sync_write_one_chunk(s, realloc_buffer_data(&s->buffer), realloc_buffer_size(&s->buffer));
         if (r < 0)
                 return r;
 
@@ -1239,7 +1239,7 @@ static int ca_sync_remote_push_index(CaSync *s) {
                 return CA_SYNC_STEP;
         }
 
-        r = ca_remote_put_index(s->remote_index, s->index_buffer.data, s->index_buffer.size);
+        r = ca_remote_put_index(s->remote_index, realloc_buffer_data(&s->index_buffer), realloc_buffer_size(&s->index_buffer));
         if (r < 0)
                 return r;
 
