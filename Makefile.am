@@ -74,7 +74,8 @@ noinst_PROGRAMS = \
 	$(tests)
 
 TESTS = \
-	$(tests)
+	$(tests) \
+	test-script.sh
 
 lib_SOURCES = \
 	src/cadecoder.c \

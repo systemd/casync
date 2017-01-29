@@ -43,4 +43,5 @@
 /test-casync
 /test-cautil
 /test-chunker
+/test-script.sh
 Makefile.in
