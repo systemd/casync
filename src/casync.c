@@ -6,6 +6,7 @@
 #include "cadecoder.h"
 #include "caencoder.h"
 #include "caformat-util.h"
+#include "caformat.h"
 #include "caindex.h"
 #include "caprotocol.h"
 #include "caremote.h"
@@ -98,6 +99,8 @@ CaSync *ca_sync_new_encode(void) {
                 return NULL;
 
         s->direction = CA_SYNC_ENCODE;
+        s->feature_flags = CA_FORMAT_WITH_BEST;
+
         return s;
 }
 
