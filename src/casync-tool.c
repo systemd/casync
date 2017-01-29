@@ -937,7 +937,7 @@ static int list(int argc, char *argv[]) {
                         operation = LIST_ARCHIVE_INDEX;
         }
 
-        if (!input && operation == LIST_DIRECTORY) {
+        if (!input && IN_SET(operation, LIST_DIRECTORY, _LIST_OPERATION_INVALID)) {
                 input = strdup(".");
                 if (!input) {
                         r = log_oom();
@@ -1182,7 +1182,7 @@ static int digest(int argc, char *argv[]) {
                         operation = DIGEST_INDEX;
         }
 
-        if (!input && operation == DIGEST_DIRECTORY) {
+        if (!input && IN_SET(operation, DIGEST_DIRECTORY, _DIGEST_OPERATION_INVALID)) {
                 input = strdup(".");
                 if (!input) {
                         r = log_oom();
@@ -1291,7 +1291,6 @@ static int digest(int argc, char *argv[]) {
                         r = ca_sync_set_archive_fd(s, input_fd);
                 else
                         r = ca_sync_set_archive_path(s, input);
-
         }
         if (r < 0) {
                 fprintf(stderr, "Failed to set sync input: %s", strerror(-r));
@@ -1299,7 +1298,7 @@ static int digest(int argc, char *argv[]) {
         }
         input_fd = -1;
 
-        if (operation == DIGEST_INDEX) {
+        if (IN_SET(operation, DIGEST_INDEX, DIGEST_BLOB)) {
                 r = ca_sync_set_base_mode(s, S_IFREG);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set base mode to regular file: %s\n", strerror(-r));
