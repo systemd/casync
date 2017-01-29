@@ -88,8 +88,8 @@ lib_SOURCES = \
 	src/caindex.h \
 	src/calocation.c \
 	src/calocation.h \
-	src/caobjectid.c \
-	src/caobjectid.h \
+	src/cachunkid.c \
+	src/cachunkid.h \
 	src/caprotocol.h \
 	src/caprotocol-util.h \
 	src/caprotocol-util.c \

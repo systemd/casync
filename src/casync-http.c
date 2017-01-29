@@ -139,8 +139,8 @@ static size_t write_chunk(const void *buffer, size_t size, size_t nmemb, void *u
         return product;
 }
 
-static char *chunk_url(const char *store_url, const CaObjectID *id) {
-        char ids[CA_OBJECT_ID_FORMAT_MAX], *buffer;
+static char *chunk_url(const char *store_url, const CaChunkID *id) {
+        char ids[CA_CHUNK_ID_FORMAT_MAX], *buffer;
         size_t n;
 
         /* Chop off URL arguments and multiple trailing dashes, then append the chunk ID and ".xz" */
@@ -149,11 +149,11 @@ static char *chunk_url(const char *store_url, const CaObjectID *id) {
         while (n > 0 && store_url[n-1] == '/')
                 n--;
 
-        buffer = new(char, n + 1 + 4 + 1 + CA_OBJECT_ID_FORMAT_MAX-1 + 3 + 1);
+        buffer = new(char, n + 1 + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX-1 + 3 + 1);
 
-        ca_object_id_format(id, ids);
+        ca_chunk_id_format(id, ids);
 
-        strcpy(mempcpy(mempcpy(mempcpy(mempcpy(mempcpy(buffer, store_url, n), "/", 1), ids, 4), "/", 1), ids, CA_OBJECT_ID_FORMAT_MAX-1), ".xz");
+        strcpy(mempcpy(mempcpy(mempcpy(mempcpy(mempcpy(buffer, store_url, n), "/", 1), ids, 4), "/", 1), ids, CA_CHUNK_ID_FORMAT_MAX-1), ".xz");
 
         return buffer;
 }
@@ -263,7 +263,7 @@ static int run(int argc, char *argv[]) {
 
         for (;;) {
                 const char *store_url;
-                CaObjectID id;
+                CaChunkID id;
 
                 if (n_stores == 0) { /* No stores? Then we did all we could do */
                         r = process_remote(rr, PROCESS_UNTIL_FINISHED);

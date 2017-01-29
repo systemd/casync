@@ -15,7 +15,7 @@ struct CaSeed {
         char *cache_path;
 
         CaChunker chunker;
-        gcry_md_hd_t object_digest;
+        gcry_md_hd_t chunk_digest;
 
         bool ready;
         bool remove_cache;
@@ -107,7 +107,7 @@ CaSeed *ca_seed_unref(CaSeed *s) {
         safe_close(s->cache_fd);
         free(s->cache_path);
 
-        gcry_md_close(s->object_digest);
+        gcry_md_close(s->chunk_digest);
 
         realloc_buffer_free(&s->buffer);
         ca_location_unref(s->buffer_location);
@@ -220,8 +220,8 @@ static int ca_seed_open(CaSeed *s) {
 
 static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void *data, size_t l) {
         const char *t, *four, *combined;
-        char ids[CA_OBJECT_ID_FORMAT_MAX];
-        CaObjectID id;
+        char ids[CA_CHUNK_ID_FORMAT_MAX];
+        CaChunkID id;
         int r;
 
         assert(s);
@@ -237,11 +237,11 @@ static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void
         if (!t)
                 return -ENOMEM;
 
-        r = ca_object_id_make(&s->object_digest, data, l, &id);
+        r = ca_chunk_id_make(&s->chunk_digest, data, l, &id);
         if (r < 0)
                 return r;
 
-        if (!ca_object_id_format(&id, ids))
+        if (!ca_chunk_id_format(&id, ids))
                 return -EINVAL;
 
         four = strndupa(ids, 4);
@@ -270,8 +270,8 @@ static int ca_seed_cache_chunks(CaSeed *s) {
                 return r;
 
         while (l > 0) {
-                const void *object;
-                size_t object_size, k;
+                const void *chunk;
+                size_t chunk_size, k;
 
                 if (!s->buffer_location) {
                         r = ca_encoder_current_location(s->encoder, offset, &s->buffer_location);
@@ -288,17 +288,17 @@ static int ca_seed_cache_chunks(CaSeed *s) {
                 }
 
                 if (s->buffer.size == 0) {
-                        object = p;
-                        object_size = k;
+                        chunk = p;
+                        chunk_size = k;
                 } else {
                         if (!realloc_buffer_append(&s->buffer, p, k))
                                 return -ENOMEM;
 
-                        object = s->buffer.data;
-                        object_size = s->buffer.size;
+                        chunk = s->buffer.data;
+                        chunk_size = s->buffer.size;
                 }
 
-                r = ca_seed_write_cache_entry(s, s->buffer_location, object, object_size);
+                r = ca_seed_write_cache_entry(s, s->buffer_location, chunk, chunk_size);
                 if (r < 0)
                         return r;
 
@@ -381,8 +381,8 @@ int ca_seed_step(CaSeed *s) {
         }
 }
 
-int ca_seed_get(CaSeed *s, const CaObjectID *object_id, const void **ret, size_t *ret_size) {
-        char id[CA_OBJECT_ID_FORMAT_MAX], *target = NULL;
+int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *ret_size) {
+        char id[CA_CHUNK_ID_FORMAT_MAX], *target = NULL;
         const char *four, *combined;
         CaLocation *l = NULL;
         uint64_t size, n = 0;
@@ -391,14 +391,14 @@ int ca_seed_get(CaSeed *s, const CaObjectID *object_id, const void **ret, size_t
 
         if (!s)
                 return -EINVAL;
-        if (!object_id)
+        if (!chunk_id)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
         if (!ret_size)
                 return -EINVAL;
 
-        if (!ca_object_id_format(object_id, id))
+        if (!ca_chunk_id_format(chunk_id, id))
                 return -EINVAL;
 
         four = strndupa(id, 4);
@@ -452,13 +452,13 @@ int ca_seed_get(CaSeed *s, const CaObjectID *object_id, const void **ret, size_t
                         n += m;
 
                         if (n >= size) {
-                                CaObjectID test_id;
+                                CaChunkID test_id;
 
-                                r = ca_object_id_make(&s->object_digest, p, size, &test_id);
+                                r = ca_chunk_id_make(&s->chunk_digest, p, size, &test_id);
                                 if (r < 0)
                                         return r;
 
-                                if (!ca_object_id_equal(object_id, &test_id)) {
+                                if (!ca_chunk_id_equal(chunk_id, &test_id)) {
 
                                         /* fprintf(stderr, "FROM SEED (%" PRIu64 ":\n", size); */
                                         /* hexdump(stderr, p, MIN(1024U, size)); */

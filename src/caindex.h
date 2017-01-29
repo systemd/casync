@@ -1,7 +1,7 @@
 #ifndef foocaindexhfoo
 #define foocaindexhfoo
 
-#include "caobjectid.h"
+#include "cachunkid.h"
 #include "realloc-buffer.h"
 
 typedef struct CaIndex CaIndex;
@@ -19,10 +19,10 @@ int ca_index_open(CaIndex *i);
 
 int ca_index_install(CaIndex *i);
 
-int ca_index_write_object(CaIndex *i, const CaObjectID *id, uint64_t size);
+int ca_index_write_chunk(CaIndex *i, const CaChunkID *id, uint64_t size);
 int ca_index_write_eof(CaIndex *i);
 
-int ca_index_read_object(CaIndex *i, CaObjectID *id, uint64_t *ret_size);
+int ca_index_read_chunk(CaIndex *i, CaChunkID *id, uint64_t *ret_size);
 
 int ca_index_seek(CaIndex *i, uint64_t offset);
 
@@ -31,7 +31,7 @@ int ca_index_incremental_eof(CaIndex *i);
 
 int ca_index_incremental_read(CaIndex *i, ReallocBuffer *buffer);
 
-int ca_index_get_digest(CaIndex *i, CaObjectID *ret);
-int ca_index_set_digest(CaIndex *i, const CaObjectID *id);
+int ca_index_get_digest(CaIndex *i, CaChunkID *ret);
+int ca_index_set_digest(CaIndex *i, const CaChunkID *id);
 
 #endif

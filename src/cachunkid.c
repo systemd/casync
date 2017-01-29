@@ -2,7 +2,7 @@
 #include <errno.h>
 
 #include "gcrypt-util.h"
-#include "caobjectid.h"
+#include "cachunkid.h"
 
 static char encode_char(uint8_t x) {
         x &= 0xF;
@@ -18,14 +18,14 @@ static int decode_char(char x) {
         return -EINVAL;
 }
 
-CaObjectID* ca_object_id_parse(const char *v, CaObjectID *ret) {
-        CaObjectID id;
+CaChunkID* ca_chunk_id_parse(const char *v, CaChunkID *ret) {
+        CaChunkID id;
         size_t i;
 
         assert(v);
         assert(ret);
 
-        for (i = 0; i < sizeof(CaObjectID); i++) {
+        for (i = 0; i < sizeof(CaChunkID); i++) {
                 int x, y;
 
                 x = decode_char(v[i*2]);
@@ -38,29 +38,29 @@ CaObjectID* ca_object_id_parse(const char *v, CaObjectID *ret) {
                 id.bytes[i] = (uint8_t) x << 4 | (uint8_t) y;
         }
 
-        if (v[sizeof(CaObjectID)*2] != 0)
+        if (v[sizeof(CaChunkID)*2] != 0)
                 return NULL;
 
         *ret = id;
         return ret;
 }
 
-char* ca_object_id_format(const CaObjectID *id, char v[CA_OBJECT_ID_FORMAT_MAX]) {
+char* ca_chunk_id_format(const CaChunkID *id, char v[CA_CHUNK_ID_FORMAT_MAX]) {
         size_t i;
 
         assert(id);
         assert(v);
 
-        for (i = 0; i < sizeof(CaObjectID); i++) {
+        for (i = 0; i < sizeof(CaChunkID); i++) {
                 v[i*2] = encode_char(id->bytes[i] >> 4);
                 v[i*2+1] = encode_char(id->bytes[i] & 0xF);
         }
 
-        v[sizeof(CaObjectID) * 2] = 0;
+        v[sizeof(CaChunkID) * 2] = 0;
         return v;
 }
 
-int ca_object_id_make(gcry_md_hd_t *digest, const void *p, size_t l, CaObjectID *ret) {
+int ca_chunk_id_make(gcry_md_hd_t *digest, const void *p, size_t l, CaChunkID *ret) {
         const void *q;
 
         assert(p || l == 0);
@@ -71,7 +71,7 @@ int ca_object_id_make(gcry_md_hd_t *digest, const void *p, size_t l, CaObjectID 
         else {
                 initialize_libgcrypt();
 
-                assert(gcry_md_get_algo_dlen(GCRY_MD_SHA256) == sizeof(CaObjectID));
+                assert(gcry_md_get_algo_dlen(GCRY_MD_SHA256) == sizeof(CaChunkID));
 
                 if (gcry_md_open(digest, GCRY_MD_SHA256, 0) != 0)
                         return -EIO;
@@ -83,6 +83,6 @@ int ca_object_id_make(gcry_md_hd_t *digest, const void *p, size_t l, CaObjectID 
         if (!q)
                 return -EIO;
 
-        memcpy(ret, q, sizeof(CaObjectID));
+        memcpy(ret, q, sizeof(CaChunkID));
         return 0;
 }

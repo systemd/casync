@@ -40,8 +40,8 @@ static void help(void) {
                "Content-Addressable Data Synchronization Tool\n\n"
                "  -h --help                  Show this help\n"
                "  -v --verbose               Show terse status information during runtime\n"
-               "     --store=PATH            The primary object store to use\n"
-               "     --extra-store=PATH      Additional object store to look for objects in\n"
+               "     --store=PATH            The primary chunk store to use\n"
+               "     --extra-store=PATH      Additional chunk store to look for chunks in\n"
                "     --seed=PATH             Additional file or directory to use as seed\n\n"
                "Input/output selector:\n"
                "     --what=archive          Operate on archive file\n"
@@ -567,11 +567,11 @@ static int make(int argc, char *argv[]) {
                 switch (r) {
 
                 case CA_SYNC_FINISHED: {
-                        CaObjectID digest;
-                        char t[CA_OBJECT_ID_FORMAT_MAX];
+                        CaChunkID digest;
+                        char t[CA_CHUNK_ID_FORMAT_MAX];
 
                         assert_se(ca_sync_get_digest(s, &digest) >= 0);
-                        printf("%s\n", ca_object_id_format(&digest, t));
+                        printf("%s\n", ca_chunk_id_format(&digest, t));
 
                         r = 0;
                         goto finish;
@@ -1333,11 +1333,11 @@ static int digest(int argc, char *argv[]) {
                 switch (r) {
 
                 case CA_SYNC_FINISHED: {
-                        CaObjectID digest;
-                        char t[CA_OBJECT_ID_FORMAT_MAX];
+                        CaChunkID digest;
+                        char t[CA_CHUNK_ID_FORMAT_MAX];
 
                         assert_se(ca_sync_get_digest(s, &digest) >= 0);
-                        printf("%s\n", ca_object_id_format(&digest, t));
+                        printf("%s\n", ca_chunk_id_format(&digest, t));
                         r = 0;
                         goto finish;
                 }
@@ -1539,7 +1539,7 @@ static int pull(int argc, char *argv[]) {
                 put_count = 0;
                 for (;;) {
                         const void *p;
-                        CaObjectID id;
+                        CaChunkID id;
                         size_t l;
                         bool found = false;
 
@@ -1738,7 +1738,7 @@ static int push(int argc, char *argv[]) {
                         break;
 
                 case CA_REMOTE_CHUNK: {
-                        CaObjectID id;
+                        CaChunkID id;
                         const void *p;
                         size_t n;
 
@@ -1762,9 +1762,9 @@ static int push(int argc, char *argv[]) {
                 }
 
                 for (;;) {
-                        /* char ids[CA_OBJECT_ID_FORMAT_MAX]; */
+                        /* char ids[CA_CHUNK_ID_FORMAT_MAX]; */
                         uint64_t remote_flags;
-                        CaObjectID id;
+                        CaChunkID id;
                         size_t i;
 
                         if (!index)
@@ -1788,7 +1788,7 @@ static int push(int argc, char *argv[]) {
                                 break;
                         }
 
-                        r = ca_index_read_object(index, &id, NULL);
+                        r = ca_index_read_chunk(index, &id, NULL);
                         if (r == -EAGAIN) /* Not read enough yet */
                                 break;
                         if (r < 0) {
@@ -1800,7 +1800,7 @@ static int push(int argc, char *argv[]) {
                                 break;
                         }
 
-                        /* fprintf(stderr, "Need %s\n", ca_object_id_format(&id, ids)); */
+                        /* fprintf(stderr, "Need %s\n", ca_chunk_id_format(&id, ids)); */
 
                         r = 0;
                         for (i = 0; i < n_stores; i++) {
@@ -1813,11 +1813,11 @@ static int push(int argc, char *argv[]) {
                                         break;
                         }
                         if (r > 0) {
-                                /* fprintf(stderr, "Already have %s\n", ca_object_id_format(&id, ids)); */
+                                /* fprintf(stderr, "Already have %s\n", ca_chunk_id_format(&id, ids)); */
                                 continue;
                         }
 
-                        /* fprintf(stderr, "Requesting %s\n", ca_object_id_format(&id, ids)); */
+                        /* fprintf(stderr, "Requesting %s\n", ca_chunk_id_format(&id, ids)); */
 
                         r = ca_remote_request_async(rr, &id, false);
                         if (r < 0 && r != -EALREADY && r != -EAGAIN) {
@@ -1826,7 +1826,7 @@ static int push(int argc, char *argv[]) {
                         }
 
                         /* if (r > 0) */
-                        /*         fprintf(stderr, "New request for %s\n", ca_object_id_format(&id, ids)); */
+                        /*         fprintf(stderr, "New request for %s\n", ca_chunk_id_format(&id, ids)); */
                 }
 
                 if (index && index_written && index_processed) {

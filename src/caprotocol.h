@@ -4,7 +4,7 @@
 #include <inttypes.h>
 
 #include "util.h"
-#include "caobjectid.h"
+#include "cachunkid.h"
 
 enum {
         CA_PROTOCOL_HELLO     = UINT64_C(0x3c71d0948ca5fbee),
@@ -100,7 +100,7 @@ typedef struct CaProtocolIndexEOF {
 typedef struct CaProtocolRequest {
         CaProtocolHeader header;
         le64_t flags;
-        uint8_t objects[]; /* multiple of CA_OBJECT_ID_SIZE */
+        uint8_t chunks[]; /* multiple of CA_CHUNK_ID_SIZE */
 } CaProtocolRequest;
 
 enum {
@@ -111,7 +111,7 @@ enum {
 typedef struct CaProtocolChunk {
         CaProtocolHeader header;
         le64_t flags;
-        uint8_t object[CA_OBJECT_ID_SIZE];
+        uint8_t chunk[CA_CHUNK_ID_SIZE];
         uint8_t data[];
 } CaProtocolChunk;
 
@@ -122,7 +122,7 @@ enum {
 
 typedef struct CaProtocolMissing {
         CaProtocolHeader header;
-        uint8_t object[CA_OBJECT_ID_SIZE];
+        uint8_t chunk[CA_CHUNK_ID_SIZE];
 } CaProtocolMissing;
 
 typedef struct CaProtocolGoodbye {

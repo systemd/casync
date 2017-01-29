@@ -37,7 +37,7 @@ typedef struct CaSync {
         CaIndex *index;
         CaRemote *remote_index;
 
-        CaObjectID next_chunk;
+        CaChunkID next_chunk;
         size_t next_chunk_size;
         bool next_chunk_valid;
 
@@ -67,7 +67,7 @@ typedef struct CaSync {
         ReallocBuffer buffer;
         ReallocBuffer index_buffer;
 
-        gcry_md_hd_t object_digest;
+        gcry_md_hd_t chunk_digest;
         gcry_md_hd_t archive_digest;
 
         bool archive_eof;
@@ -157,7 +157,7 @@ CaSync *ca_sync_unref(CaSync *s) {
         realloc_buffer_free(&s->buffer);
         realloc_buffer_free(&s->index_buffer);
 
-        gcry_md_close(s->object_digest);
+        gcry_md_close(s->chunk_digest);
         gcry_md_close(s->archive_digest);
         free(s);
 
@@ -846,7 +846,7 @@ static int ca_sync_allocate_archive_digest(CaSync *s) {
 
         initialize_libgcrypt();
 
-        assert(gcry_md_get_algo_dlen(GCRY_MD_SHA256) == sizeof(CaObjectID));
+        assert(gcry_md_get_algo_dlen(GCRY_MD_SHA256) == sizeof(CaChunkID));
 
         if (gcry_md_open(&s->archive_digest, GCRY_MD_SHA256, 0) != 0)
                 return -EIO;
@@ -869,13 +869,13 @@ static int ca_sync_write_archive_digest(CaSync *s, const void *p, size_t l) {
 }
 
 static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l) {
-        CaObjectID id;
+        CaChunkID id;
         int r;
 
         assert(s);
         assert(p || l == 0);
 
-        r = ca_sync_make_object_id(s, p, l, &id);
+        r = ca_sync_make_chunk_id(s, p, l, &id);
         if (r < 0)
                 return r;
 
@@ -892,7 +892,7 @@ static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l) {
         }
 
         if (s->index) {
-                r = ca_index_write_object(s->index, &id, l);
+                r = ca_index_write_chunk(s->index, &id, l);
                 if (r < 0)
                         return r;
         }
@@ -910,8 +910,8 @@ static int ca_sync_write_chunks(CaSync *s, const void *p, size_t l) {
                 return 0;
 
         while (l > 0) {
-                const void *object;
-                size_t object_size, k;
+                const void *chunk;
+                size_t chunk_size, k;
 
                 k = ca_chunker_scan(&s->chunker, p, l);
                 if (k == (size_t) -1) {
@@ -921,17 +921,17 @@ static int ca_sync_write_chunks(CaSync *s, const void *p, size_t l) {
                 }
 
                 if (s->buffer.size == 0) {
-                        object = p;
-                        object_size = k;
+                        chunk = p;
+                        chunk_size = k;
                 } else {
                         if (!realloc_buffer_append(&s->buffer, p, k))
                                 return -ENOMEM;
 
-                        object = s->buffer.data;
-                        object_size = s->buffer.size;
+                        chunk = s->buffer.data;
+                        chunk_size = s->buffer.size;
                 }
 
-                r = ca_sync_write_one_chunk(s, object, object_size);
+                r = ca_sync_write_one_chunk(s, chunk, chunk_size);
                 if (r < 0)
                         return r;
 
@@ -970,7 +970,7 @@ static int ca_sync_write_final_chunk(CaSync *s) {
                 if (!q)
                         return -EIO;
 
-                r = ca_index_set_digest(s->index, (CaObjectID*) q);
+                r = ca_index_set_digest(s->index, (CaChunkID*) q);
                 if (r < 0)
                         return r;
 
@@ -1062,11 +1062,11 @@ static int ca_sync_process_decoder_request(CaSync *s) {
         assert(s);
 
         if (s->index)  {
-                uint64_t object_size;
+                uint64_t chunk_size;
                 const void *p;
 
                 if (!s->next_chunk_valid) {
-                        r = ca_index_read_object(s->index, &s->next_chunk, &s->next_chunk_size);
+                        r = ca_index_read_chunk(s->index, &s->next_chunk, &s->next_chunk_size);
                         if (r == -EAGAIN) /* Not enough data */
                                 return CA_SYNC_POLL;
                         if (r < 0)
@@ -1083,23 +1083,23 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                         s->next_chunk_valid = true;
                 }
 
-                r = ca_sync_get(s, &s->next_chunk, &p, &object_size);
+                r = ca_sync_get(s, &s->next_chunk, &p, &chunk_size);
                 if (r == -EAGAIN) /* Don't have this right now, but requested it now */
                         return CA_SYNC_STEP;
                 if (r == -EALREADY) /* Don't have this right now, but it was already enqueued. */
                         return CA_SYNC_POLL;
                 if (r < 0)
                         return r;
-                if (s->next_chunk_size != object_size)
+                if (s->next_chunk_size != chunk_size)
                         return -EBADMSG;
 
                 s->next_chunk_valid = false;
 
-                r = ca_decoder_put_data(s->decoder, p, object_size);
+                r = ca_decoder_put_data(s->decoder, p, chunk_size);
                 if (r < 0)
                         return r;
 
-                r = ca_sync_write_archive_digest(s, p, object_size);
+                r = ca_sync_write_archive_digest(s, p, chunk_size);
                 if (r < 0)
                         return r;
 
@@ -1248,7 +1248,7 @@ static int ca_sync_remote_push_index(CaSync *s) {
 
 static int ca_sync_remote_push_chunk(CaSync *s) {
         const void *p;
-        CaObjectID id;
+        CaChunkID id;
         size_t l;
         int r;
 
@@ -1420,13 +1420,13 @@ int ca_sync_step(CaSync *s) {
         }
 }
 
-int ca_sync_get_local(CaSync *s, const CaObjectID *object_id, const void **ret, size_t *ret_size) {
+int ca_sync_get_local(CaSync *s, const CaChunkID *chunk_id, const void **ret, size_t *ret_size) {
         size_t i;
         int r;
 
         if (!s)
                 return -EINVAL;
-        if (!object_id)
+        if (!chunk_id)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
@@ -1434,9 +1434,9 @@ int ca_sync_get_local(CaSync *s, const CaObjectID *object_id, const void **ret, 
                 return -EINVAL;
 
         for (i = 0; i < s->n_seeds; i++) {
-                r = ca_seed_get(s->seeds[i], object_id, ret, ret_size);
+                r = ca_seed_get(s->seeds[i], chunk_id, ret, ret_size);
                 if (r == -ESTALE) {
-                        fprintf(stderr, "Object cache is not up-to-date, ignoring.\n");
+                        fprintf(stderr, "Chunk cache is not up-to-date, ignoring.\n");
                         continue;
                 }
 
@@ -1445,19 +1445,19 @@ int ca_sync_get_local(CaSync *s, const CaObjectID *object_id, const void **ret, 
         }
 
         if (s->wstore) {
-                r = ca_store_get(s->wstore, object_id, ret, ret_size);
+                r = ca_store_get(s->wstore, chunk_id, ret, ret_size);
                 if (r != -ENOENT)
                         return r;
         }
 
         if (s->cache_store) {
-                r = ca_store_get(s->cache_store, object_id, ret, ret_size);
+                r = ca_store_get(s->cache_store, chunk_id, ret, ret_size);
                 if (r != -ENOENT)
                         return r;
         }
 
         for (i = 0; i < s->n_rstores; i++) {
-                r = ca_store_get(s->rstores[i], object_id, ret, ret_size);
+                r = ca_store_get(s->rstores[i], chunk_id, ret, ret_size);
                 if (r != -ENOENT)
                         return r;
         }
@@ -1465,31 +1465,31 @@ int ca_sync_get_local(CaSync *s, const CaObjectID *object_id, const void **ret, 
         return -ENOENT;
 }
 
-int ca_sync_get(CaSync *s, const CaObjectID *object_id, const void **ret, size_t *ret_size) {
+int ca_sync_get(CaSync *s, const CaChunkID *chunk_id, const void **ret, size_t *ret_size) {
         size_t i;
         int r;
 
         if (!s)
                 return -EINVAL;
-        if (!object_id)
+        if (!chunk_id)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
         if (!ret_size)
                 return -EINVAL;
 
-        r = ca_sync_get_local(s, object_id, ret, ret_size);
+        r = ca_sync_get_local(s, chunk_id, ret, ret_size);
         if (r != -ENOENT)
                 return r;
 
         if (s->remote_wstore) {
-                r = ca_remote_request(s->remote_wstore, object_id, false, ret, ret_size);
+                r = ca_remote_request(s->remote_wstore, chunk_id, false, ret, ret_size);
                 if (r != -ENOENT)
                         return r;
         }
 
         for (i = 0; i < s->n_remote_rstores; i++) {
-                r = ca_remote_request(s->remote_rstores[i], object_id, false, ret, ret_size);
+                r = ca_remote_request(s->remote_rstores[i], chunk_id, false, ret, ret_size);
                 if (r != -ENOENT)
                         return r;
         }
@@ -1497,7 +1497,7 @@ int ca_sync_get(CaSync *s, const CaObjectID *object_id, const void **ret, size_t
         return -ENOENT;
 }
 
-int ca_sync_make_object_id(CaSync *s, const void *p, size_t l, CaObjectID *ret) {
+int ca_sync_make_chunk_id(CaSync *s, const void *p, size_t l, CaChunkID *ret) {
         if (!s)
                 return -EINVAL;
         if (!p && l > 0)
@@ -1505,10 +1505,10 @@ int ca_sync_make_object_id(CaSync *s, const void *p, size_t l, CaObjectID *ret) 
         if (!ret)
                 return -EINVAL;
 
-        return ca_object_id_make(&s->object_digest, p, l, ret);
+        return ca_chunk_id_make(&s->chunk_digest, p, l, ret);
 }
 
-int ca_sync_get_digest(CaSync *s, CaObjectID *ret) {
+int ca_sync_get_digest(CaSync *s, CaChunkID *ret) {
         unsigned char *q;
         int r;
 
@@ -1528,7 +1528,7 @@ int ca_sync_get_digest(CaSync *s, CaObjectID *ret) {
         if (!q)
                 return -EIO;
 
-        memcpy(ret, q, sizeof(CaObjectID));
+        memcpy(ret, q, sizeof(CaChunkID));
 
         return 0;
 }

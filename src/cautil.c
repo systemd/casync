@@ -10,17 +10,17 @@
 #include "util.h"
 
 #define CHUNK_PATH_SIZE(prefix, suffix)                                 \
-        (strlen_null(prefix) + 4 + 1 + CA_OBJECT_ID_FORMAT_MAX + strlen_null(suffix))
+        (strlen_null(prefix) + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX + strlen_null(suffix))
 
 static char* ca_format_chunk_path(
                 const char *prefix,
-                const CaObjectID *objectid,
+                const CaChunkID *chunkid,
                 const char *suffix,
                 char buffer[]) {
 
         size_t n;
 
-        assert(objectid);
+        assert(chunkid);
         assert(buffer);
 
         if (prefix) {
@@ -29,17 +29,17 @@ static char* ca_format_chunk_path(
         } else
                 n = 0;
 
-        ca_object_id_format(objectid, buffer + n + 4 + 1);
+        ca_chunk_id_format(chunkid, buffer + n + 4 + 1);
         memcpy(buffer + n, buffer + n + 4 + 1, 4);
         buffer[n + 4] = '/';
 
         if (suffix)
-                strcpy(buffer + n + 4 + 1 + CA_OBJECT_ID_FORMAT_MAX - 1, suffix);
+                strcpy(buffer + n + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX - 1, suffix);
 
         return buffer;
 }
 
-int ca_open_chunk_file(int chunk_fd, const char *prefix, const CaObjectID *objectid, const char *suffix, int flags) {
+int ca_open_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix, int flags) {
 
         char path[CHUNK_PATH_SIZE(prefix, suffix)];
         bool made = false;
@@ -49,10 +49,10 @@ int ca_open_chunk_file(int chunk_fd, const char *prefix, const CaObjectID *objec
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
-        if (!objectid)
+        if (!chunkid)
                 return -EINVAL;
 
-        ca_format_chunk_path(prefix, objectid, suffix, path);
+        ca_format_chunk_path(prefix, chunkid, suffix, path);
 
         if ((flags & O_CREAT) == O_CREAT) {
                 path[4] = 0;
@@ -81,15 +81,15 @@ int ca_open_chunk_file(int chunk_fd, const char *prefix, const CaObjectID *objec
         return fd;
 }
 
-static int ca_access_chunk_file(int chunk_fd, const char *prefix, const CaObjectID *objectid, const char *suffix) {
+static int ca_access_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix) {
         char path[CHUNK_PATH_SIZE(prefix, suffix)];
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
-        if (!objectid)
+        if (!chunkid)
                 return -EINVAL;
 
-        ca_format_chunk_path(prefix, objectid, suffix, path);
+        ca_format_chunk_path(prefix, chunkid, suffix, path);
 
         if (faccessat(chunk_fd, path, F_OK, AT_SYMLINK_NOFOLLOW) < 0)
                 return errno == ENOENT ? 0 : -errno;
@@ -97,15 +97,15 @@ static int ca_access_chunk_file(int chunk_fd, const char *prefix, const CaObject
         return 1;
 }
 
-static int ca_remove_chunk_file(int chunk_fd, const char *prefix, const CaObjectID *objectid, const char *suffix) {
+static int ca_remove_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix) {
         char path[CHUNK_PATH_SIZE(prefix, suffix)];
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
-        if (!objectid)
+        if (!chunkid)
                 return -EINVAL;
 
-        ca_format_chunk_path(prefix, objectid, suffix, path);
+        ca_format_chunk_path(prefix, chunkid, suffix, path);
 
         if (unlinkat(chunk_fd, path, 0) < 0)
                 return -errno;
@@ -116,16 +116,16 @@ static int ca_remove_chunk_file(int chunk_fd, const char *prefix, const CaObject
         return 0;
 }
 
-static int ca_rename_chunk_file(int chunk_fd, const char *prefix, const CaObjectID *objectid, const char *old_suffix, const char *new_suffix) {
+static int ca_rename_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *old_suffix, const char *new_suffix) {
         char old_path[CHUNK_PATH_SIZE(prefix, old_suffix)], new_path[CHUNK_PATH_SIZE(prefix, new_suffix)];
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
-        if (!objectid)
+        if (!chunkid)
                 return -EINVAL;
 
-        ca_format_chunk_path(prefix, objectid, old_suffix, old_path);
-        ca_format_chunk_path(prefix, objectid, new_suffix, new_path);
+        ca_format_chunk_path(prefix, chunkid, old_suffix, old_path);
+        ca_format_chunk_path(prefix, chunkid, new_suffix, new_path);
 
         if (renameat2(chunk_fd, old_path, chunk_fd, new_path, RENAME_NOREPLACE) < 0)
         /* if (renameat(chunk_fd, old_path, chunk_fd, new_path) < 0) */
@@ -235,24 +235,24 @@ finish:
         return r;
 }
 
-int ca_load_chunk_file(int chunk_fd, const char *prefix, const CaObjectID *objectid, ReallocBuffer *buffer) {
+int ca_load_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, ReallocBuffer *buffer) {
         int fd, r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
-        if (!objectid)
+        if (!chunkid)
                 return -EINVAL;
         if (!buffer)
                 return -EINVAL;
 
-        fd = ca_open_chunk_file(chunk_fd, prefix, objectid, NULL, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+        fd = ca_open_chunk_file(chunk_fd, prefix, chunkid, NULL, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
         if (fd < 0) {
                 if (fd == -ELOOP) /* If it's a symlink, then it's marked as "missing" */
                         return -EADDRNOTAVAIL;
                 if (fd != -ENOENT)
                         return fd;
 
-                fd = ca_open_chunk_file(chunk_fd, prefix, objectid, ".xz", O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+                fd = ca_open_chunk_file(chunk_fd, prefix, chunkid, ".xz", O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
                 if (fd == -ELOOP)
                         return -EADDRNOTAVAIL;
                 if (fd < 0)
@@ -266,57 +266,57 @@ int ca_load_chunk_file(int chunk_fd, const char *prefix, const CaObjectID *objec
         return r;
 }
 
-int ca_save_chunk_file(int chunk_fd, const char *prefix, const CaObjectID *objectid, bool compressed, const void *p, size_t l) {
+int ca_save_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, bool compressed, const void *p, size_t l) {
         int fd, r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
-        if (!objectid)
+        if (!chunkid)
                 return -EINVAL;
         if (!p)
                 return -EINVAL;
         if (l <= 0)
                 return -EINVAL;
 
-        r = ca_test_chunk_file(chunk_fd, prefix, objectid);
+        r = ca_test_chunk_file(chunk_fd, prefix, chunkid);
         if (r < 0)
                 return r;
         if (r > 0)
                 return -EEXIST;
 
-        fd = ca_open_chunk_file(chunk_fd, prefix, objectid, ".tmp", O_WRONLY|O_CREAT|O_EXCL|O_NOCTTY|O_CLOEXEC);
+        fd = ca_open_chunk_file(chunk_fd, prefix, chunkid, ".tmp", O_WRONLY|O_CREAT|O_EXCL|O_NOCTTY|O_CLOEXEC);
         r = loop_write(fd, p, l);
         safe_close(fd);
         if (r < 0)
                 goto fail;
 
-        r = ca_rename_chunk_file(chunk_fd, prefix, objectid, ".tmp", compressed ? ".xz" : NULL);
+        r = ca_rename_chunk_file(chunk_fd, prefix, chunkid, ".tmp", compressed ? ".xz" : NULL);
         if (r < 0)
                 goto fail;
 
         return 0;
 
 fail:
-        (void) ca_remove_chunk_file(chunk_fd, prefix, objectid, ".tmp");
+        (void) ca_remove_chunk_file(chunk_fd, prefix, chunkid, ".tmp");
         return r;
 }
 
-int ca_save_chunk_missing(int chunk_fd, const char *prefix, const CaObjectID *objectid) {
+int ca_save_chunk_missing(int chunk_fd, const char *prefix, const CaChunkID *chunkid) {
         char path[CHUNK_PATH_SIZE(prefix, NULL)];
         int r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
-        if (!objectid)
+        if (!chunkid)
                 return -EINVAL;
 
-        r = ca_test_chunk_file(chunk_fd, prefix, objectid);
+        r = ca_test_chunk_file(chunk_fd, prefix, chunkid);
         if (r < 0)
                 return r;
         if (r > 0)
                 return -EEXIST;
 
-        ca_format_chunk_path(prefix, objectid, NULL, path);
+        ca_format_chunk_path(prefix, chunkid, NULL, path);
 
         if (symlinkat("/dev/null", chunk_fd, path) < 0)
                 return -errno;
@@ -324,19 +324,19 @@ int ca_save_chunk_missing(int chunk_fd, const char *prefix, const CaObjectID *ob
         return 0;
 }
 
-int ca_test_chunk_file(int chunk_fd, const char *prefix, const CaObjectID *objectid) {
+int ca_test_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid) {
         int r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
-        if (!objectid)
+        if (!chunkid)
                 return -EINVAL;
 
-        r = ca_access_chunk_file(chunk_fd, prefix, objectid, NULL);
+        r = ca_access_chunk_file(chunk_fd, prefix, chunkid, NULL);
         if (r != 0)
                 return r;
 
-        return ca_access_chunk_file(chunk_fd, prefix, objectid, ".xz");
+        return ca_access_chunk_file(chunk_fd, prefix, chunkid, ".xz");
 }
 
 static bool ca_is_definitely_path(const char *s) {

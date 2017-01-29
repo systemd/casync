@@ -57,7 +57,7 @@ struct CaRemote {
         uint64_t local_feature_flags;
         uint64_t remote_feature_flags;
 
-        CaObjectID last_chunk;
+        CaChunkID last_chunk;
         bool last_chunk_valid;
 
         pid_t pid;
@@ -563,14 +563,14 @@ int ca_remote_open_index_fd(CaRemote *rr) {
         return fd;
 }
 
-static int ca_remote_remove_queue_item(CaRemote *rr, const char *queue_name, const CaObjectID *id) {
-        char ids[CA_OBJECT_ID_FORMAT_MAX], *target;
+static int ca_remote_remove_queue_item(CaRemote *rr, const char *queue_name, const CaChunkID *id) {
+        char ids[CA_CHUNK_ID_FORMAT_MAX], *target;
         const char *f;
 
         assert(rr);
         assert(id);
 
-        if (!ca_object_id_format(id, ids))
+        if (!ca_chunk_id_format(id, ids))
                 return -EINVAL;
 
         f = strjoina(queue_name, ids, NULL);
@@ -595,8 +595,8 @@ static int ca_remote_remove_queue_item(CaRemote *rr, const char *queue_name, con
         return 0;
 }
 
-static int ca_remote_enqueue_request(CaRemote *rr, const CaObjectID *id, bool high_priority) {
-        char ids[CA_OBJECT_ID_FORMAT_MAX];
+static int ca_remote_enqueue_request(CaRemote *rr, const CaChunkID *id, bool high_priority) {
+        char ids[CA_CHUNK_ID_FORMAT_MAX];
         uint64_t position;
         const char *f, *queue_name;
         char *b;
@@ -609,10 +609,10 @@ static int ca_remote_enqueue_request(CaRemote *rr, const CaObjectID *id, bool hi
         /* Enqueues a GET request. We maintain a 2-level priority queue on disk for this, in two directories
          * "low-priority" and "high-priority". This could be much easier if we could maintain this entirely in memory,
          * but given that the list might be quite large we use a symlink farm instead. For each queued GET request we
-         * create two symlinks: one pointing from the queue position to the object hash, and one the other way. That
-         * way we can easily enqueue, dequeue and check whether a specific object is already queued. */
+         * create two symlinks: one pointing from the queue position to the chunk hash, and one the other way. That
+         * way we can easily enqueue, dequeue and check whether a specific chunk is already queued. */
 
-        if (!ca_object_id_format(id, ids))
+        if (!ca_chunk_id_format(id, ids))
                 return -EINVAL;
 
         if (high_priority) {
@@ -665,11 +665,11 @@ static int ca_remote_enqueue_request(CaRemote *rr, const CaObjectID *id, bool hi
         return 1;
 }
 
-static int ca_remote_dequeue_request(CaRemote *rr, int only_high_priority, CaObjectID *ret, bool *ret_high_priority) {
+static int ca_remote_dequeue_request(CaRemote *rr, int only_high_priority, CaChunkID *ret, bool *ret_high_priority) {
         const char *queue_name;
         uint64_t position;
         char *target, *b;
-        CaObjectID id;
+        CaChunkID id;
         bool hp;
         int r;
 
@@ -696,7 +696,7 @@ static int ca_remote_dequeue_request(CaRemote *rr, int only_high_priority, CaObj
         if (r < 0)
                 return r;
 
-        if (!ca_object_id_parse(target, &id)) {
+        if (!ca_chunk_id_parse(target, &id)) {
                 free(target);
                 return -EINVAL;
         }
@@ -718,7 +718,7 @@ static int ca_remote_dequeue_request(CaRemote *rr, int only_high_priority, CaObj
         return 0;
 }
 
-static int ca_remote_drop_request(CaRemote *rr, const CaObjectID *id) {
+static int ca_remote_drop_request(CaRemote *rr, const CaChunkID *id) {
         int r, q;
 
         assert(rr);
@@ -1043,10 +1043,10 @@ static int ca_remote_process_request(CaRemote *rr, const CaProtocolRequest *req)
         assert(rr);
         assert(req);
 
-        ms = le64toh(req->header.size) - offsetof(CaProtocolRequest, objects);
+        ms = le64toh(req->header.size) - offsetof(CaProtocolRequest, chunks);
 
-        for (p = req->objects; p < req->objects + ms; p += CA_OBJECT_ID_SIZE) {
-                r = ca_remote_enqueue_request(rr, (const CaObjectID*) p, le64toh(req->flags) & CA_PROTOCOL_REQUEST_HIGH_PRIORITY);
+        for (p = req->chunks; p < req->chunks + ms; p += CA_CHUNK_ID_SIZE) {
+                r = ca_remote_enqueue_request(rr, (const CaChunkID*) p, le64toh(req->flags) & CA_PROTOCOL_REQUEST_HIGH_PRIORITY);
                 if (r < 0)
                         return r;
         }
@@ -1064,7 +1064,7 @@ static int ca_remote_process_chunk(CaRemote *rr, const CaProtocolChunk *chunk) {
         if (rr->cache_fd < 0)
                 return -ENOTTY;
 
-        memcpy(&rr->last_chunk, chunk->object, CA_OBJECT_ID_SIZE);
+        memcpy(&rr->last_chunk, chunk->chunk, CA_CHUNK_ID_SIZE);
         rr->last_chunk_valid = true;
 
         (void) ca_remote_drop_request(rr, &rr->last_chunk);
@@ -1094,7 +1094,7 @@ static int ca_remote_process_missing(CaRemote *rr, const CaProtocolMissing *miss
         if (rr->cache_fd < 0)
                 return -ENOTTY;
 
-        r = ca_save_chunk_missing(rr->cache_fd, NULL, (const CaObjectID*) missing->object);
+        r = ca_save_chunk_missing(rr->cache_fd, NULL, (const CaChunkID*) missing->chunk);
         if (r == -EEXIST)
                 return CA_REMOTE_STEP;
         if (r < 0)
@@ -1192,9 +1192,9 @@ static const CaProtocolRequest* validate_request(CaRemote *rr, const CaProtocolH
         assert(rr);
         assert(h);
 
-        if (read_le64(&h->size) < offsetof(CaProtocolRequest, objects) + CA_OBJECT_ID_SIZE)
+        if (read_le64(&h->size) < offsetof(CaProtocolRequest, chunks) + CA_CHUNK_ID_SIZE)
                 return NULL;
-        if ((read_le64(&h->size) - offsetof(CaProtocolRequest, objects)) % CA_OBJECT_ID_SIZE != 0)
+        if ((read_le64(&h->size) - offsetof(CaProtocolRequest, chunks)) % CA_CHUNK_ID_SIZE != 0)
                 return NULL;
         if (read_le64(&h->type) != CA_PROTOCOL_REQUEST)
                 return NULL;
@@ -1544,7 +1544,7 @@ static int ca_remote_send_request(CaRemote *rr) {
 
         for (;;) {
                 bool high_priority;
-                CaObjectID id;
+                CaChunkID id;
                 void *p;
 
                 r = ca_remote_dequeue_request(rr, only_high_priority, &id, &high_priority);
@@ -1554,30 +1554,30 @@ static int ca_remote_send_request(CaRemote *rr) {
                         return r;
 
                 if (!req) {
-                        req = realloc_buffer_extend0(&rr->output_buffer, offsetof(CaProtocolRequest, objects) + CA_OBJECT_ID_SIZE);
+                        req = realloc_buffer_extend0(&rr->output_buffer, offsetof(CaProtocolRequest, chunks) + CA_CHUNK_ID_SIZE);
                         if (!req)
                                 return -ENOMEM;
 
                         write_le64(&req->header.type, CA_PROTOCOL_REQUEST);
-                        write_le64(&req->header.size, offsetof(CaProtocolRequest, objects) + CA_OBJECT_ID_SIZE);
+                        write_le64(&req->header.size, offsetof(CaProtocolRequest, chunks) + CA_CHUNK_ID_SIZE);
                         write_le64(&req->flags, high_priority ? CA_PROTOCOL_REQUEST_HIGH_PRIORITY : 0);
 
-                        p = req->objects;
+                        p = req->chunks;
                 } else {
                         uint64_t new_size;
 
-                        new_size = read_le64(&req->header.size) + CA_OBJECT_ID_SIZE;
-                        if (new_size > offsetof(CaProtocolRequest, objects) + BUFFER_SIZE)
+                        new_size = read_le64(&req->header.size) + CA_CHUNK_ID_SIZE;
+                        if (new_size > offsetof(CaProtocolRequest, chunks) + BUFFER_SIZE)
                                 break;
 
                         write_le64(&req->header.size, new_size);
 
-                        p = realloc_buffer_extend(&rr->output_buffer, CA_OBJECT_ID_SIZE);
+                        p = realloc_buffer_extend(&rr->output_buffer, CA_CHUNK_ID_SIZE);
                         if (!p)
                                 return -ENOMEM;
                 }
 
-                memcpy(p, &id, CA_OBJECT_ID_SIZE);
+                memcpy(p, &id, CA_CHUNK_ID_SIZE);
 
                 only_high_priority = high_priority;
         }
@@ -1658,12 +1658,12 @@ int ca_remote_poll(CaRemote *rr, uint64_t timeout) {
         return 1;
 }
 
-int ca_remote_request(CaRemote *rr, const CaObjectID *object_id, bool high_priority, const void **ret, size_t *ret_size) {
+int ca_remote_request(CaRemote *rr, const CaChunkID *chunk_id, bool high_priority, const void **ret, size_t *ret_size) {
         int r;
 
         if (!rr)
                 return -EINVAL;
-        if (!object_id)
+        if (!chunk_id)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
@@ -1679,10 +1679,10 @@ int ca_remote_request(CaRemote *rr, const CaObjectID *object_id, bool high_prior
 
         realloc_buffer_empty(&rr->chunk_buffer);
 
-        r = ca_load_chunk_file(rr->cache_fd, NULL, object_id, &rr->chunk_buffer);
+        r = ca_load_chunk_file(rr->cache_fd, NULL, chunk_id, &rr->chunk_buffer);
         if (r == -ENOENT) {
                 /* We don't have it right now. Enqueue it */
-                r = ca_remote_enqueue_request(rr, object_id, high_priority);
+                r = ca_remote_enqueue_request(rr, chunk_id, high_priority);
                 if (r < 0)
                         return r;
                 if (r > 0)
@@ -1700,10 +1700,10 @@ int ca_remote_request(CaRemote *rr, const CaObjectID *object_id, bool high_prior
         return 1;
 }
 
-int ca_remote_request_async(CaRemote *rr, const CaObjectID *object_id, bool high_priority) {
+int ca_remote_request_async(CaRemote *rr, const CaChunkID *chunk_id, bool high_priority) {
         if (!rr)
                 return -EINVAL;
-        if (!object_id)
+        if (!chunk_id)
                 return -EINVAL;
 
         if (!(rr->local_feature_flags & CA_PROTOCOL_PULL_CHUNKS) &&
@@ -1712,10 +1712,10 @@ int ca_remote_request_async(CaRemote *rr, const CaObjectID *object_id, bool high
         if (rr->state == CA_REMOTE_EOF)
                 return -EPIPE;
 
-        return ca_remote_enqueue_request(rr, object_id, high_priority);
+        return ca_remote_enqueue_request(rr, chunk_id, high_priority);
 }
 
-int ca_remote_next_request(CaRemote *rr, CaObjectID *ret) {
+int ca_remote_next_request(CaRemote *rr, CaChunkID *ret) {
         if (!rr)
                 return -EINVAL;
         if (!ret)
@@ -1750,13 +1750,13 @@ int ca_remote_can_put_chunk(CaRemote *rr) {
         return 1;
 }
 
-int ca_remote_put_chunk(CaRemote *rr, const CaObjectID *object_id, bool compressed, const void *data, size_t size) {
+int ca_remote_put_chunk(CaRemote *rr, const CaChunkID *chunk_id, bool compressed, const void *data, size_t size) {
         CaProtocolChunk *chunk;
         uint64_t msz;
 
         if (!rr)
                 return -EINVAL;
-        if (!object_id)
+        if (!chunk_id)
                 return -EINVAL;
         if (!data)
                 return -EINVAL;
@@ -1788,20 +1788,20 @@ int ca_remote_put_chunk(CaRemote *rr, const CaObjectID *object_id, bool compress
         write_le64(&chunk->header.size, msz);
         write_le64(&chunk->flags, compressed ? CA_PROTOCOL_CHUNK_COMPRESSED : 0);
 
-        memcpy(chunk->object, object_id, CA_OBJECT_ID_SIZE);
+        memcpy(chunk->chunk, chunk_id, CA_CHUNK_ID_SIZE);
         memcpy(chunk->data, data, size);
 
-        (void) ca_remote_drop_request(rr, object_id);
+        (void) ca_remote_drop_request(rr, chunk_id);
 
         return 0;
 }
 
-int ca_remote_put_missing(CaRemote *rr, const CaObjectID *object_id) {
+int ca_remote_put_missing(CaRemote *rr, const CaChunkID *chunk_id) {
         CaProtocolMissing *missing;
 
         if (!rr)
                 return -EINVAL;
-        if (!object_id)
+        if (!chunk_id)
                 return -EINVAL;
 
         if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_CHUNKS) &&
@@ -1822,9 +1822,9 @@ int ca_remote_put_missing(CaRemote *rr, const CaObjectID *object_id) {
         write_le64(&missing->header.type, CA_PROTOCOL_MISSING);
         write_le64(&missing->header.size, sizeof(CaProtocolMissing));
 
-        memcpy(missing->object, object_id, CA_OBJECT_ID_SIZE);
+        memcpy(missing->chunk, chunk_id, CA_CHUNK_ID_SIZE);
 
-        (void) ca_remote_drop_request(rr, object_id);
+        (void) ca_remote_drop_request(rr, chunk_id);
 
         return 0;
 }
@@ -2026,7 +2026,7 @@ int ca_remote_has_pending_requests(CaRemote *rr) {
         return 0;
 }
 
-int ca_remote_next_chunk(CaRemote *rr, CaObjectID *ret_id, const void **ret_data, size_t *ret_size) {
+int ca_remote_next_chunk(CaRemote *rr, CaChunkID *ret_id, const void **ret_data, size_t *ret_size) {
         int r;
 
         if (!rr)

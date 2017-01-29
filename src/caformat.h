@@ -4,7 +4,7 @@
 #include <inttypes.h>
 
 #include "util.h"
-#include "caobjectid.h"
+#include "cachunkid.h"
 
 enum {
         /* The archive file format */
@@ -205,7 +205,7 @@ typedef struct CaFormatIndex {
 
 typedef struct CaFormatTableItem {
         le64_t offset;
-        uint8_t object[CA_OBJECT_ID_SIZE];
+        uint8_t chunk[CA_CHUNK_ID_SIZE];
 } CaFormatTableItem;
 
 typedef struct CaFormatTable {

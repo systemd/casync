@@ -198,14 +198,14 @@ fail:
         return r;
 }
 
-int ca_store_get(CaStore *store, const CaObjectID *object_id, const void **ret, size_t *ret_size) {
+int ca_store_get(CaStore *store, const CaChunkID *chunk_id, const void **ret, size_t *ret_size) {
         char *fn, *sid;
         int fd, r;
         size_t n;
 
         if (!store)
                 return -EINVAL;
-        if (!object_id)
+        if (!chunk_id)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
@@ -216,9 +216,9 @@ int ca_store_get(CaStore *store, const CaObjectID *object_id, const void **ret, 
                 return -ENOTTY;
 
         n = strlen(store->root);
-        fn = newa(char, n + 1 + 4 + 1 + CA_OBJECT_ID_FORMAT_MAX + 3);
+        fn = newa(char, n + 1 + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX + 3);
         sid = fn + n + 1 + 4 + 1;
-        ca_object_id_format(object_id, sid);
+        ca_chunk_id_format(chunk_id, sid);
         memcpy(mempcpy(mempcpy(mempcpy(fn, store->root, n), "/", 1), sid, 4), "/", 1);
 
         fd = open(fn, O_CLOEXEC|O_NOCTTY|O_RDONLY);
@@ -226,7 +226,7 @@ int ca_store_get(CaStore *store, const CaObjectID *object_id, const void **ret, 
                 if (errno != ENOENT)
                         return -errno;
 
-                strcpy(sid + CA_OBJECT_ID_FORMAT_MAX-1, ".xz");
+                strcpy(sid + CA_CHUNK_ID_FORMAT_MAX-1, ".xz");
 
                 fd = open(fn, O_CLOEXEC|O_NOCTTY|O_RDONLY);
                 if (fd < 0)
@@ -241,23 +241,23 @@ int ca_store_get(CaStore *store, const CaObjectID *object_id, const void **ret, 
         /*         hexdump(stderr, *ret, MIN(1024, *ret_size)); */
         /* } */
 
-        /* fprintf(stderr, "Retrieved object %s.\n", sid); */
+        /* fprintf(stderr, "Retrieved chunk %s.\n", sid); */
 
         safe_close(fd);
         return r;
 }
 
-int ca_store_has(CaStore *store, const CaObjectID *object_id) {
+int ca_store_has(CaStore *store, const CaChunkID *chunk_id) {
 
         if (!store)
                 return -EINVAL;
-        if (!object_id)
+        if (!chunk_id)
                 return -EINVAL;
 
         if (!store->root)
                 return -ENOTTY;
 
-        return ca_test_chunk_file(AT_FDCWD, store->root, object_id);
+        return ca_test_chunk_file(AT_FDCWD, store->root, chunk_id);
 }
 
 static int save_compressed(int fd, const void *data, size_t size) {
@@ -303,7 +303,7 @@ fail:
         return r;
 }
 
-int ca_store_put(CaStore *store, const CaObjectID *object_id, const void *data, size_t size) {
+int ca_store_put(CaStore *store, const CaChunkID *chunk_id, const void *data, size_t size) {
         char *fn, *sid, *d, *t;
         uint64_t u;
         int r, fd;
@@ -311,7 +311,7 @@ int ca_store_put(CaStore *store, const CaObjectID *object_id, const void *data, 
 
         if (!store)
                 return -EINVAL;
-        if (!object_id)
+        if (!chunk_id)
                 return -EINVAL;
         if (!data && size != 0)
                 return -EINVAL;
@@ -320,24 +320,24 @@ int ca_store_put(CaStore *store, const CaObjectID *object_id, const void *data, 
                 return -ENOTTY;
 
         n = strlen(store->root);
-        fn = newa(char, n + 1 + 4 + 1 + CA_OBJECT_ID_FORMAT_MAX + 3);
+        fn = newa(char, n + 1 + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX + 3);
         sid = fn + n + 1 + 4 + 1;
-        ca_object_id_format(object_id, sid);
+        ca_chunk_id_format(chunk_id, sid);
         memcpy(mempcpy(mempcpy(mempcpy(fn, store->root, n), "/", 1), sid, 4), "/", 1);
 
         if (access(fn, F_OK) >= 0) {
-                /* fprintf(stderr, "Object %s exists already.\n", sid); */
+                /* fprintf(stderr, "Chunk %s exists already.\n", sid); */
                 return 0;
         }
 
-        strcpy(sid + CA_OBJECT_ID_FORMAT_MAX - 1, ".xz");
+        strcpy(sid + CA_CHUNK_ID_FORMAT_MAX - 1, ".xz");
         if (access(fn, F_OK) >= 0) {
-                /* fprintf(stderr, "Object %s exists already.\n", sid); */
+                /* fprintf(stderr, "Chunk %s exists already.\n", sid); */
                 return 0;
         }
 
         if (!store->compress)
-                sid[CA_OBJECT_ID_FORMAT_MAX-1] = 0;
+                sid[CA_CHUNK_ID_FORMAT_MAX-1] = 0;
 
         r = dev_urandom(&u, sizeof(u));
         if (r < 0)
@@ -348,7 +348,7 @@ int ca_store_put(CaStore *store, const CaObjectID *object_id, const void *data, 
         d = strndupa(fn, n + 1 + 4);
         (void) mkdir(d, 0777);
 
-        t = newa(char, n + 1 + 4 + 1 + 2 + CA_OBJECT_ID_FORMAT_MAX-1 + 1 + 16 + 4 + 3 + 1);
+        t = newa(char, n + 1 + 4 + 1 + 2 + CA_CHUNK_ID_FORMAT_MAX-1 + 1 + 16 + 4 + 3 + 1);
         sprintf(mempcpy(t, fn, n + 1 + 4 + 1), ".#%s.%016" PRIx64 ".tmp", sid, u);
 
         fd = open(t, O_CLOEXEC|O_NOCTTY|O_WRONLY|O_CREAT|O_EXCL, 0666);
@@ -373,7 +373,7 @@ int ca_store_put(CaStore *store, const CaObjectID *object_id, const void *data, 
                 return r;
         }
 
-        /* fprintf(stderr, "Installed object %s.\n", sid); */
+        /* fprintf(stderr, "Installed chunk %s.\n", sid); */
 
         return 1;
 }

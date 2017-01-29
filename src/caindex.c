@@ -29,9 +29,9 @@ struct CaIndex {
 
         uint64_t start_offset, cooked_offset, raw_offset;
         uint64_t n_items;
-        uint64_t previous_object;
+        uint64_t previous_chunk;
 
-        CaObjectID digest;
+        CaChunkID digest;
         bool digest_valid;
 };
 
@@ -327,7 +327,7 @@ int ca_index_install(CaIndex *i) {
         return 1;
 }
 
-int ca_index_write_object(CaIndex *i, const CaObjectID *id, uint64_t size) {
+int ca_index_write_chunk(CaIndex *i, const CaChunkID *id, uint64_t size) {
         CaFormatTableItem item = {};
         uint64_t end;
         int r;
@@ -347,23 +347,23 @@ int ca_index_write_object(CaIndex *i, const CaObjectID *id, uint64_t size) {
         if (r < 0)
                 return r;
 
-        end = i->previous_object + size;
-        if (end < i->previous_object)
+        end = i->previous_chunk + size;
+        if (end < i->previous_chunk)
                 return -E2BIG;
 
         /* { */
-        /*         char ids[CA_OBJECT_ID_FORMAT_MAX]; */
-        /*         fprintf(stderr, "WRITING INDEX CHUNK: %s\n", ca_object_id_format(id, ids)); */
+        /*         char ids[CA_CHUNK_ID_FORMAT_MAX]; */
+        /*         fprintf(stderr, "WRITING INDEX CHUNK: %s\n", ca_chunk_id_format(id, ids)); */
         /* } */
 
         item.offset = htole64(end);
-        memcpy(&item.object, id, sizeof(CaObjectID));
+        memcpy(&item.chunk, id, sizeof(CaChunkID));
 
         r = loop_write(i->fd, &item, sizeof(item));
         if (r < 0)
                 return r;
 
-        i->previous_object = end;
+        i->previous_chunk = end;
         i->cooked_offset += sizeof(item);
         i->n_items++;
 
@@ -391,7 +391,7 @@ int ca_index_write_eof(CaIndex *i) {
                 return r;
 
         write_le64(&tail.marker_item.offset, UINT64_MAX);
-        memcpy(&tail.marker_item.object, &i->digest, CA_OBJECT_ID_SIZE);
+        memcpy(&tail.marker_item.chunk, &i->digest, CA_CHUNK_ID_SIZE);
         write_le64(&tail.size,
                    offsetof(CaFormatTable, items) +
                    (i->n_items * sizeof(CaFormatTableItem)) +
@@ -408,7 +408,7 @@ int ca_index_write_eof(CaIndex *i) {
         return 0;
 }
 
-int ca_index_read_object(CaIndex *i, CaObjectID *ret_id, uint64_t *ret_size) {
+int ca_index_read_chunk(CaIndex *i, CaChunkID *ret_id, uint64_t *ret_size) {
         CaFormatTableItem item;
         ssize_t n;
         int r;
@@ -438,8 +438,8 @@ int ca_index_read_object(CaIndex *i, CaObjectID *ret_id, uint64_t *ret_size) {
                 return -EPIPE;
 
         /* { */
-        /*         char ids[CA_OBJECT_ID_FORMAT_MAX]; */
-        /*         fprintf(stderr, "READING INDEX CHUNK: %s\n", ca_object_id_format((const CaObjectID*) item.object, ids)); */
+        /*         char ids[CA_CHUNK_ID_FORMAT_MAX]; */
+        /*         fprintf(stderr, "READING INDEX CHUNK: %s\n", ca_chunk_id_format((const CaChunkID*) item.chunk, ids)); */
         /* } */
 
         if (le64toh(item.offset) == UINT64_MAX) {
@@ -460,10 +460,10 @@ int ca_index_read_object(CaIndex *i, CaObjectID *ret_id, uint64_t *ret_size) {
                 if (le64toh(tail.final_size) != (i->cooked_offset - i->start_offset + offsetof(CaFormatTable, items)))
                         return -EBADMSG;
 
-                memcpy(&i->digest, item.object, sizeof(CaObjectID));
+                memcpy(&i->digest, item.chunk, sizeof(CaChunkID));
                 i->digest_valid = true;
 
-                memset(ret_id, 0, sizeof(CaObjectID));
+                memset(ret_id, 0, sizeof(CaChunkID));
 
                 if (ret_size)
                         *ret_size = 0;
@@ -471,15 +471,15 @@ int ca_index_read_object(CaIndex *i, CaObjectID *ret_id, uint64_t *ret_size) {
                 return 0; /* EOF */
         }
 
-        if (i->previous_object >= le64toh(item.offset))
+        if (i->previous_chunk >= le64toh(item.offset))
                 return -EBADMSG;
 
-        memcpy(ret_id, item.object, sizeof(CaObjectID));
+        memcpy(ret_id, item.chunk, sizeof(CaChunkID));
 
         if (ret_size)
-                *ret_size = le64toh(item.offset) - i->previous_object;
+                *ret_size = le64toh(item.offset) - i->previous_chunk;
 
-        i->previous_object = le64toh(item.offset);
+        i->previous_chunk = le64toh(item.offset);
         i->n_items++;
         i->cooked_offset += sizeof(item);
 
@@ -585,7 +585,7 @@ int ca_index_incremental_read(CaIndex *i, ReallocBuffer *buffer) {
         return 1;
 }
 
-int ca_index_get_digest(CaIndex *i, CaObjectID *ret) {
+int ca_index_get_digest(CaIndex *i, CaChunkID *ret) {
         if (!i)
                 return -EINVAL;
         if (!ret)
@@ -598,7 +598,7 @@ int ca_index_get_digest(CaIndex *i, CaObjectID *ret) {
         return 0;
 }
 
-int ca_index_set_digest(CaIndex *i, const CaObjectID *id) {
+int ca_index_set_digest(CaIndex *i, const CaChunkID *id) {
         if (!i)
                 return -EINVAL;
         if (!id)
