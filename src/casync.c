@@ -15,6 +15,7 @@
 #include "casync.h"
 #include "cautil.h"
 #include "chunker.h"
+#include "def.h"
 #include "gcrypt-util.h"
 #include "realloc-buffer.h"
 #include "util.h"
@@ -67,6 +68,7 @@ typedef struct CaSync {
 
         ReallocBuffer buffer;
         ReallocBuffer index_buffer;
+        ReallocBuffer archive_buffer;
 
         gcry_md_hd_t chunk_digest;
         gcry_md_hd_t archive_digest;
@@ -159,6 +161,7 @@ CaSync *ca_sync_unref(CaSync *s) {
 
         realloc_buffer_free(&s->buffer);
         realloc_buffer_free(&s->index_buffer);
+        realloc_buffer_free(&s->archive_buffer);
 
         gcry_md_close(s->chunk_digest);
         gcry_md_close(s->archive_digest);
@@ -1110,9 +1113,36 @@ static int ca_sync_process_decoder_request(CaSync *s) {
         }
 
         if (s->archive_fd >= 0) {
-                r = ca_decoder_put_data_fd(s->decoder, s->archive_fd, UINT64_MAX, UINT64_MAX);
-                if (r < 0)
-                        return r;
+                void *p;
+                ssize_t n;
+
+                p = realloc_buffer_acquire(&s->archive_buffer, BUFFER_SIZE);
+                if (!p)
+                        return -ENOMEM;
+
+                n = read(s->archive_fd, p, BUFFER_SIZE);
+                if (n < 0)
+                        return -errno;
+
+                assert((size_t) n <= BUFFER_SIZE);
+
+                if (n == 0) {
+
+                        r = ca_decoder_put_eof(s->decoder);
+                        if (r < 0)
+                                return r;
+
+                } else {
+                        r = ca_decoder_put_data(s->decoder, p, n);
+                        if (r < 0)
+                                return r;
+
+                        r = ca_sync_write_archive_digest(s, p, n);
+                        if (r < 0)
+                                return r;
+                }
+
+                realloc_buffer_empty(&s->archive_buffer);
 
                 return CA_SYNC_STEP;
         }
