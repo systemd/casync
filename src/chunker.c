@@ -8,12 +8,69 @@
  * optimization. See RFC1950 for details. */
 #define BYTES_PUSH_MAX 5552U
 
+/* Unless otherwise specified, take this as the default average chunk size */
+#define DEFAULT_CHUNK_SIZE_AVG (16 * 1024ULL)
+
+static bool number_is_prime(size_t n) {
+        size_t i;
+
+        for (i = 2; i < n/2; i++)
+                if (n % i == 0)
+                        return false;
+
+        return true;
+}
+
+int ca_chunker_set_avg_size(CaChunker *c, size_t avg) {
+        size_t delta, closest;
+
+        assert(c);
+
+        /* Find an average block size that is close to the requested number but is prime,
+         * because this number is used in the modulo operation that determines the chunk
+         * break points and we don't want to waste any bits there. */
+
+        if (c->window_size != 0)
+                return -EBUSY;
+
+        for (delta = 0; ; delta++) {
+                if (delta > SIZE_MAX / 2)
+                        return -EINVAL;
+
+                closest = avg - delta;
+                if (closest < 3)
+                        return -EINVAL;
+
+                if (number_is_prime(closest))
+                        break;
+
+                closest = avg + delta;
+                if (number_is_prime(closest))
+                        break;
+        }
+
+        c->chunk_size_avg = closest;
+        c->chunk_size_min = (c->chunk_size_avg >> 1) & ~0xff;
+        c->chunk_size_max = ((c->chunk_size_avg << 1) - c->chunk_size_min + 0xff) & ~0xff;
+
+        if (c->chunk_size_min == 0)
+                return -EINVAL;
+
+        /* fprintf(stderr, "Setting min/avg/max chunk size: %lu/%lu/%lu (requested: %lu)\n",
+                c->chunk_size_min, c->chunk_size_avg, c->chunk_size_max, avg); */
+
+        return 0;
+}
+
 uint32_t ca_chunker_start(CaChunker *c, const void *p, size_t n) {
         const uint8_t *q = p;
         uint32_t a, b;
 
         assert(c);
         assert(c->window_size + n <= UINT32_MAX);
+
+        if (!c->chunk_size_min)
+                assert(ca_chunker_set_avg_size(c, DEFAULT_CHUNK_SIZE_AVG) == 0);
 
         a = (uint32_t) c->a, b = (uint32_t) c->b;
 
@@ -58,10 +115,10 @@ uint32_t ca_chunker_roll(CaChunker *c, uint8_t leave, uint8_t enter) {
 static bool shall_break(CaChunker *c, uint32_t v) {
         assert(c);
 
-        if (c->chunk_size >= CHUNK_MAX)
+        if (c->chunk_size >= c->chunk_size_max)
                 return true;
 
-        if ((c->chunk_size > CHUNK_MIN) && ((v % 16381) == 8191))
+        if ((c->chunk_size > c->chunk_size_min) && ((v % c->chunk_size_avg) == 8191))
                 return true;
 
         return false;

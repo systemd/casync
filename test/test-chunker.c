@@ -92,8 +92,8 @@ static void test_chunk(void) {
                         acc += k;
                         printf("%zu\n", acc);
 
-                        assert_se(acc >= CHUNK_MIN);
-                        assert_se(acc <= CHUNK_MAX);
+                        assert_se(acc >= x.chunk_size_min);
+                        assert_se(acc <= x.chunk_size_max);
                         acc = 0;
 
                         p += k, n -= k;

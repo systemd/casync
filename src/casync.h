@@ -67,4 +67,6 @@ int ca_sync_has(CaSync *s, const CaChunkID *chunk_id);
 
 int ca_sync_make_chunk_id(CaSync *s, const void *p, size_t l, CaChunkID *ret);
 
+int ca_sync_set_chunk_size_avg(CaSync *s, size_t avg);
+
 #endif

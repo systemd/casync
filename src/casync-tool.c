@@ -15,6 +15,7 @@
 #include "castore.h"
 #include "casync.h"
 #include "cautil.h"
+#include "parse-util.h"
 #include "util.h"
 
 static enum {
@@ -29,6 +30,7 @@ static bool arg_verbose = false;
 static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
+static size_t arg_chunk_size_avg = 0;
 static uint64_t arg_with = 0;
 static uint64_t arg_without = 0;
 
@@ -42,6 +44,7 @@ static void help(void) {
                "  -v --verbose               Show terse status information during runtime\n"
                "     --store=PATH            The primary chunk store to use\n"
                "     --extra-store=PATH      Additional chunk store to look for chunks in\n"
+               "     --chunk-size-avg=SIZE   The average number of bytes for a chunk file\n"
                "     --seed=PATH             Additional file or directory to use as seed\n\n"
                "Input/output selector:\n"
                "     --what=archive          Operate on archive file\n"
@@ -87,6 +90,7 @@ static int parse_argv(int argc, char *argv[]) {
         enum {
                 ARG_STORE = 0x100,
                 ARG_EXTRA_STORE,
+                ARG_CHUNK_SIZE_AVG,
                 ARG_SEED,
                 ARG_WITH,
                 ARG_WITHOUT,
@@ -94,13 +98,14 @@ static int parse_argv(int argc, char *argv[]) {
         };
 
         static const struct option options[] = {
-                { "help",         no_argument,       NULL, 'h'             },
-                { "verbose",      no_argument,       NULL, 'v'             },
-                { "store",        required_argument, NULL, ARG_STORE       },
-                { "extra-store",  required_argument, NULL, ARG_EXTRA_STORE },
-                { "seed",         required_argument, NULL, ARG_SEED        },
-                { "with",         required_argument, NULL, ARG_WITH        },
-                { "without",      required_argument, NULL, ARG_WITHOUT     },
+                { "help",           no_argument,       NULL, 'h'                },
+                { "verbose",        no_argument,       NULL, 'v'                },
+                { "store",          required_argument, NULL, ARG_STORE          },
+                { "extra-store",    required_argument, NULL, ARG_EXTRA_STORE    },
+                { "chunk-size-avg", required_argument, NULL, ARG_CHUNK_SIZE_AVG },
+                { "seed",           required_argument, NULL, ARG_SEED           },
+                { "with",           required_argument, NULL, ARG_WITH           },
+                { "without",        required_argument, NULL, ARG_WITHOUT        },
                 {}
         };
 
@@ -138,6 +143,15 @@ static int parse_argv(int argc, char *argv[]) {
                         r = strv_extend(&arg_extra_stores, optarg);
                         if (r < 0)
                                 return log_oom();
+
+                        break;
+
+                case ARG_CHUNK_SIZE_AVG:
+                        r = parse_size(optarg, &arg_chunk_size_avg);
+                        if (r < 0) {
+                                fprintf(stderr, "Unable to parse size %s: %s\n", optarg, strerror(-r));
+                                return r;
+                        }
 
                         break;
 
@@ -508,6 +522,14 @@ static int make(int argc, char *argv[]) {
         if (!s) {
                 r = log_oom();
                 goto finish;
+        }
+
+        if (arg_chunk_size_avg) {
+                r = ca_sync_set_chunk_size_avg(s, arg_chunk_size_avg);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set average chunk size to %lu: %s\n", arg_chunk_size_avg, strerror(-r));
+                        goto finish;
+                }
         }
 
         r = ca_sync_set_base_fd(s, input_fd);
@@ -1023,6 +1045,14 @@ static int list(int argc, char *argv[]) {
                 goto finish;
         }
 
+        if (arg_chunk_size_avg) {
+                r = ca_sync_set_chunk_size_avg(s, arg_chunk_size_avg);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set average chunk size to %lu: %s\n", arg_chunk_size_avg, strerror(-r));
+                        goto finish;
+                }
+        }
+
         if (operation == LIST_ARCHIVE)
                 r = ca_sync_set_archive_fd(s, input_fd);
         else if (operation == LIST_ARCHIVE_INDEX) {
@@ -1275,6 +1305,14 @@ static int digest(int argc, char *argv[]) {
         if (!s) {
                 r = log_oom();
                 goto finish;
+        }
+
+        if (arg_chunk_size_avg) {
+                r = ca_sync_set_chunk_size_avg(s, arg_chunk_size_avg);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set average chunk size to %lu: %s\n", arg_chunk_size_avg, strerror(-r));
+                        goto finish;
+                }
         }
 
         if (operation == DIGEST_DIRECTORY)

@@ -110,6 +110,8 @@ lib_SOURCES = \
 	src/def.h \
 	src/gcrypt-util.c \
 	src/gcrypt-util.h \
+	src/parse-util.c \
+	src/parse-util.h \
 	src/realloc-buffer.c \
 	src/realloc-buffer.h \
 	src/util.c \
