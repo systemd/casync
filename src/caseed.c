@@ -415,7 +415,7 @@ int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *
         if (r < 0)
                 return r;
 
-        if (l->size == UINT64_MAX || l->size > CHUNK_MAX) {
+        if (l->size == UINT64_MAX || l->size > s->chunker.chunk_size_max) {
                 ca_location_unref(l);
                 return -EINVAL;
         }

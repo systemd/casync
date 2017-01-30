@@ -117,6 +117,12 @@ CaSync *ca_sync_new_decode(void) {
         return s;
 }
 
+int ca_sync_set_chunk_size_avg(CaSync *s, size_t avg) {
+        assert(s);
+
+        return ca_chunker_set_avg_size(&s->chunker, avg);
+}
+
 CaSync *ca_sync_unref(CaSync *s) {
         size_t i;
 
