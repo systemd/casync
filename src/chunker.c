@@ -134,10 +134,10 @@ static bool shall_break(CaChunker *c, uint32_t v) {
         if (c->chunk_size >= c->chunk_size_max)
                 return true;
 
-        if ((c->chunk_size > c->chunk_size_min) && ((v % c->chunk_size_avg) == 8191))
-                return true;
+        if (c->chunk_size < c->chunk_size_min)
+                return false;
 
-        return false;
+        return (v % c->chunk_size_avg) == (c->chunk_size_avg - 1);
 }
 
 size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
