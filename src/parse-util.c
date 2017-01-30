@@ -102,3 +102,44 @@ int parse_size(const char *t, uint64_t *size) {
 
         return 0;
 }
+
+char *format_bytes(char *buf, size_t l, uint64_t t) {
+        unsigned i;
+
+        /* This only does IEC units so far */
+
+        static const struct {
+                const char *suffix;
+                uint64_t factor;
+        } table[] = {
+                { "E", UINT64_C(1024)*UINT64_C(1024)*UINT64_C(1024)*UINT64_C(1024)*UINT64_C(1024)*UINT64_C(1024) },
+                { "P", UINT64_C(1024)*UINT64_C(1024)*UINT64_C(1024)*UINT64_C(1024)*UINT64_C(1024) },
+                { "T", UINT64_C(1024)*UINT64_C(1024)*UINT64_C(1024)*UINT64_C(1024) },
+                { "G", UINT64_C(1024)*UINT64_C(1024)*UINT64_C(1024) },
+                { "M", UINT64_C(1024)*UINT64_C(1024) },
+                { "K", UINT64_C(1024) },
+        };
+
+        if (t == (uint64_t) -1)
+                return NULL;
+
+        for (i = 0; i < ELEMENTSOF(table); i++) {
+
+                if (t >= table[i].factor) {
+                        snprintf(buf, l,
+                                 "%" PRIu64 ".%" PRIu64 "%s",
+                                 t / table[i].factor,
+                                 ((t*UINT64_C(10)) / table[i].factor) % UINT64_C(10),
+                                 table[i].suffix);
+
+                        goto finish;
+                }
+        }
+
+        snprintf(buf, l, "%" PRIu64 "B", t);
+
+finish:
+        buf[l-1] = 0;
+        return buf;
+
+}
