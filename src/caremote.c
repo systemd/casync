@@ -12,8 +12,8 @@
 #include "realloc-buffer.h"
 #include "util.h"
 
-#define REMOTE_BUFFER_SIZE (1024*1024)
-#define REMOTE_BUFFER_LOW (1024*4)
+#define REMOTE_BUFFER_SIZE (1024U*1024U)
+#define REMOTE_BUFFER_LOW (1024U*4U)
 
 typedef enum CaRemoteState {
         CA_REMOTE_HELLO,
@@ -65,6 +65,8 @@ struct CaRemote {
         bool index_complete;
         bool sent_hello;
         bool sent_goodbye;
+
+        size_t frame_size;
 };
 
 CaRemote* ca_remote_new(void) {
@@ -241,6 +243,16 @@ int ca_remote_get_io_fds(CaRemote *rr, int *ret_input_fd, int *ret_output_fd) {
         return 0;
 }
 
+static size_t ca_remote_get_read_size(CaRemote *rr) {
+        assert(rr);
+
+        /* Return how many bytes we need in the input buffer, so that we can proceed processing frames. We always try
+         * to keep a minimum number of bytes in the buffer, and if the current frame wants to be larger we are happy
+         * with that too. */
+
+        return MAX(rr->frame_size, REMOTE_BUFFER_SIZE);
+}
+
 int ca_remote_get_io_events(CaRemote *rr, short *ret_input_events, short *ret_output_events) {
 
         if (!rr)
@@ -250,7 +262,7 @@ int ca_remote_get_io_events(CaRemote *rr, short *ret_input_events, short *ret_ou
         if (!ret_output_events)
                 return -EINVAL;
 
-        if (realloc_buffer_size(&rr->input_buffer) < REMOTE_BUFFER_SIZE)
+        if (realloc_buffer_size(&rr->input_buffer) < ca_remote_get_read_size(rr))
                 *ret_input_events = POLLIN;
         else
                 *ret_input_events = 0;
@@ -913,16 +925,18 @@ static int ca_remote_start(CaRemote *rr) {
 }
 
 static int ca_remote_read(CaRemote *rr) {
-        size_t left;
+        size_t left, rsize;
         ssize_t n;
         void *p;
 
         assert(rr);
 
-        if (realloc_buffer_size(&rr->input_buffer) >= REMOTE_BUFFER_SIZE)
+        rsize = ca_remote_get_read_size(rr);
+
+        if (realloc_buffer_size(&rr->input_buffer) >= rsize)
                 return CA_REMOTE_POLL;
 
-        left = REMOTE_BUFFER_SIZE - realloc_buffer_size(&rr->input_buffer);
+        left = rsize - realloc_buffer_size(&rr->input_buffer);
 
         p = realloc_buffer_extend(&rr->input_buffer, left);
         if (!p)
@@ -1299,8 +1313,10 @@ static int ca_remote_process_message(CaRemote *rr) {
         if (size > CA_PROTOCOL_SIZE_MAX)
                 return -EBADMSG;
 
-        if (realloc_buffer_size(&rr->input_buffer) < size)
+        if (realloc_buffer_size(&rr->input_buffer) < size) {
+                rr->frame_size = (size_t) size; /* Tell the read logic, that we can't proceed without this much in the buffer */
                 return CA_REMOTE_POLL;
+        }
 
         /* fprintf(stderr, PID_FMT " Got message: %s\n", getpid(), strna(ca_protocol_type_name(read_le64(&h->type)))); */
 
@@ -1440,6 +1456,8 @@ static int ca_remote_process_message(CaRemote *rr) {
         r = realloc_buffer_advance(&rr->input_buffer, size);
         if (r < 0)
                 return r;
+
+        rr->frame_size = 0;
 
         return step;
 }
@@ -1637,7 +1655,7 @@ int ca_remote_poll(CaRemote *rr, uint64_t timeout) {
         if (rr->input_fd < 0 || rr->output_fd < 0)
                 return -EUNATCH;
 
-        if (realloc_buffer_size(&rr->input_buffer) < REMOTE_BUFFER_SIZE) {
+        if (realloc_buffer_size(&rr->input_buffer) < ca_remote_get_read_size(rr)) {
                 pollfd[n].fd = rr->input_fd;
                 pollfd[n].events = POLLIN;
                 n++;
