@@ -33,6 +33,9 @@ CaSeed *ca_seed_new(void) {
 
         s->cache_fd = -1;
         s->base_fd = -1;
+
+        s->chunker = (CaChunker) CA_CHUNKER_INIT;
+
         return s;
 }
 

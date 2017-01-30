@@ -93,6 +93,8 @@ static CaSync *ca_sync_new(void) {
         s->base_mode = (mode_t) -1;
         s->make_perm_mode = (mode_t) -1;
 
+        s->chunker = (CaChunker) CA_CHUNKER_INIT;
+
         return s;
 }
 
