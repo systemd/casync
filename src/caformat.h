@@ -198,6 +198,9 @@ typedef struct CaFormatIndex {
         CaFormatHeader header;
         le64_t uuid_part2; /* always CA_FORMAT_INDEX_UUID_PART2, see below */
         le64_t feature_flags;
+        le64_t chunk_size_min;
+        le64_t chunk_size_avg;
+        le64_t chunk_size_max;
 } CaFormatIndex;
 
 /* The header's type field together with the uuid_part2 field shall be considered a 128bit UUID */

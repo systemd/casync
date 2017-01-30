@@ -30,6 +30,7 @@ typedef enum CaDirection {
 
 typedef struct CaSync {
         CaDirection direction;
+        bool started;
 
         CaEncoder *encoder;
         CaDecoder *decoder;
@@ -77,6 +78,8 @@ typedef struct CaSync {
         bool remote_index_eof;
 
         uint64_t feature_flags;
+
+        uint64_t n_chunks;
 } CaSync;
 
 static CaSync *ca_sync_new(void) {
@@ -130,9 +133,6 @@ int ca_sync_get_chunk_size_avg(CaSync *s, size_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        if (s->chunker.chunk_size_avg == 0)
-                return -ENODATA;
-
         *ret = s->chunker.chunk_size_avg;
         return 0;
 }
@@ -143,9 +143,6 @@ int ca_sync_get_chunk_size_min(CaSync *s, size_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        if (s->chunker.chunk_size_min == 0)
-                return -ENODATA;
-
         *ret = s->chunker.chunk_size_min;
         return 0;
 }
@@ -155,9 +152,6 @@ int ca_sync_get_chunk_size_max(CaSync *s, size_t *ret) {
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
-
-        if (s->chunker.chunk_size_max == 0)
-                return -ENODATA;
 
         *ret = s->chunker.chunk_size_max;
         return 0;
@@ -743,6 +737,9 @@ static int ca_sync_start(CaSync *s) {
 
         assert(s);
 
+        if (s->started)
+                return 0;
+
         if (s->direction == CA_SYNC_ENCODE && s->archive_path && s->archive_fd < 0) {
                 if (!s->temporary_archive_path) {
                         r = tempfn_random(s->archive_path, &s->temporary_archive_path);
@@ -871,13 +868,31 @@ static int ca_sync_start(CaSync *s) {
                         return r;
         }
 
+        if (s->direction == CA_SYNC_ENCODE && s->index) {
+                /* Propagate the chunk size to the index we generate */
+
+                r = ca_index_set_chunk_size_min(s->index, s->chunker.chunk_size_min);
+                if (r < 0)
+                        return r;
+
+                r = ca_index_set_chunk_size_avg(s->index, s->chunker.chunk_size_avg);
+                if (r < 0)
+                        return r;
+
+                r = ca_index_set_chunk_size_max(s->index, s->chunker.chunk_size_max);
+                if (r < 0)
+                        return r;
+        }
+
         if (s->index) {
                 r = ca_index_open(s->index);
                 if (r < 0)
                         return r;
         }
 
-        return 0;
+        s->started = true;
+
+        return 1;
 }
 
 static int ca_sync_write_archive(CaSync *s, const void *p, size_t l) {
@@ -930,6 +945,8 @@ static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l) {
         r = ca_sync_make_chunk_id(s, p, l, &id);
         if (r < 0)
                 return r;
+
+        s->n_chunks++;
 
         if (s->wstore) {
                 r = ca_store_put(s->wstore, &id, p, l);
@@ -1708,4 +1725,29 @@ int ca_sync_poll(CaSync *s, uint64_t timeout_usec) {
                 return -errno;
 
         return n;
+}
+
+int ca_sync_current_archive_chunks(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_ENCODE)
+                return -ENODATA;
+
+        *ret = s->n_chunks;
+        return 0;
+}
+
+int ca_sync_current_archive_offset(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!s->encoder)
+                return -ENODATA;
+
+        return ca_encoder_current_archive_offset(s->encoder, ret);
 }

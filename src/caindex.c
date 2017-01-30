@@ -3,6 +3,7 @@
 
 #include "caformat.h"
 #include "caindex.h"
+#include "chunker.h"
 #include "def.h"
 #include "util.h"
 
@@ -33,6 +34,10 @@ struct CaIndex {
 
         CaChunkID digest;
         bool digest_valid;
+
+        uint64_t chunk_size_min;
+        uint64_t chunk_size_max;
+        uint64_t chunk_size_avg;
 };
 
 static CaIndex* ca_index_new(void) {
@@ -207,6 +212,19 @@ static int ca_index_write_head(CaIndex *i) {
         if (i->start_offset != 0)
                 return 0;
 
+        if (i->chunk_size_min == 0 ||
+            i->chunk_size_avg == 0 ||
+            i->chunk_size_max == 0)
+                return -EUNATCH;
+
+        if (!(i->chunk_size_min <= i->chunk_size_avg &&
+              i->chunk_size_avg <= i->chunk_size_max))
+                return -EINVAL;
+
+        head.index.chunk_size_min = htole64(i->chunk_size_min);
+        head.index.chunk_size_avg = htole64(i->chunk_size_avg);
+        head.index.chunk_size_max = htole64(i->chunk_size_max);
+
         assert(i->cooked_offset == 0);
 
         r = loop_write(i->fd, &head, sizeof(head));
@@ -277,11 +295,31 @@ static int ca_index_read_head(CaIndex *i) {
         if (head.index.feature_flags != 0)
                 return -EOPNOTSUPP;
 
+        if (le64toh(head.index.chunk_size_min) <= 0 ||
+            le64toh(head.index.chunk_size_min) > CHUNK_SIZE_LIMIT)
+                return -EBADMSG;
+
+        if (le64toh(head.index.chunk_size_avg) <= 0 ||
+            le64toh(head.index.chunk_size_avg) > CHUNK_SIZE_LIMIT)
+                return -EBADMSG;
+
+        if (le64toh(head.index.chunk_size_max) <= 0 ||
+            le64toh(head.index.chunk_size_max) > CHUNK_SIZE_LIMIT)
+                return -EBADMSG;
+
+        if (!(le64toh(head.index.chunk_size_min) <= le64toh(head.index.chunk_size_avg) &&
+              le64toh(head.index.chunk_size_avg) <= le64toh(head.index.chunk_size_max)))
+                return -EBADMSG;
+
         if (head.table.size != htole64(UINT64_MAX) ||
             head.table.type != htole64(CA_FORMAT_TABLE))
                 return -EBADMSG;
 
         i->start_offset = i->cooked_offset = sizeof(head);
+
+        i->chunk_size_min = le64toh(head.index.chunk_size_min);
+        i->chunk_size_avg = le64toh(head.index.chunk_size_avg);
+        i->chunk_size_max = le64toh(head.index.chunk_size_max);
 
         return 0;
 }
@@ -346,6 +384,9 @@ int ca_index_write_chunk(CaIndex *i, const CaChunkID *id, uint64_t size) {
         r = ca_index_open(i);
         if (r < 0)
                 return r;
+
+        if (size > i->chunk_size_max)
+                return -EINVAL;
 
         end = i->previous_chunk + size;
         if (end < i->previous_chunk)
@@ -472,6 +513,9 @@ int ca_index_read_chunk(CaIndex *i, CaChunkID *ret_id, uint64_t *ret_size) {
         }
 
         if (i->previous_chunk >= le64toh(item.offset))
+                return -EBADMSG;
+
+        if ((le64toh(item.offset) - i->previous_chunk) > i->chunk_size_max)
                 return -EBADMSG;
 
         memcpy(ret_id, item.chunk, sizeof(CaChunkID));
@@ -610,5 +654,83 @@ int ca_index_set_digest(CaIndex *i, const CaChunkID *id) {
         i->digest = *id;
         i->digest_valid = true;
 
+        return 0;
+}
+
+int ca_index_set_chunk_size_min(CaIndex *i, size_t cmin) {
+        if (!i)
+                return -EINVAL;
+        if (cmin < 1)
+                return -EINVAL;
+        if (cmin > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+        if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
+                return -EROFS;
+
+        i->chunk_size_min = cmin;
+        return 0;
+}
+
+int ca_index_set_chunk_size_avg(CaIndex *i, size_t cavg) {
+        if (!i)
+                return -EINVAL;
+        if (cavg < 1)
+                return -EINVAL;
+        if (cavg > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+        if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
+                return -EROFS;
+
+        i->chunk_size_avg = cavg;
+        return 0;
+}
+
+int ca_index_set_chunk_size_max(CaIndex *i, size_t cmax) {
+        if (!i)
+                return -EINVAL;
+        if (cmax < 1)
+                return -EINVAL;
+        if (cmax > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+        if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
+                return -EROFS;
+
+        i->chunk_size_max = cmax;
+        return 0;
+}
+
+int ca_index_get_chunk_size_min(CaIndex *i, size_t *ret) {
+        if (!i)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+        if (i->chunk_size_min == 0)
+                return -ENODATA;
+
+        *ret = i->chunk_size_min;
+        return 0;
+}
+
+int ca_index_get_chunk_size_avg(CaIndex *i, size_t *ret) {
+        if (!i)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+        if (i->chunk_size_avg == 0)
+                return -ENODATA;
+
+        *ret = i->chunk_size_avg;
+        return 0;
+}
+
+int ca_index_get_chunk_size_max(CaIndex *i, size_t *ret) {
+        if (!i)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+        if (i->chunk_size_max == 0)
+                return -ENODATA;
+
+        *ret = i->chunk_size_max;
         return 0;
 }

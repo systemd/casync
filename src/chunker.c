@@ -8,9 +8,6 @@
  * optimization. See RFC1950 for details. */
 #define BYTES_PUSH_MAX 5552U
 
-/* Unless otherwise specified, take this as the default average chunk size */
-#define DEFAULT_CHUNK_SIZE_AVG (16 * 1024ULL)
-
 bool ca_size_is_prime(size_t n) {
         size_t i;
 
@@ -41,6 +38,11 @@ int ca_chunker_set_avg_size(CaChunker *c, size_t avg) {
          * because this number is used in the modulo operation that determines the chunk
          * break points and we don't want to waste any bits there. */
 
+        if (avg < 1)
+                return -EINVAL;
+        if (avg > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+
         if (c->window_size != 0)
                 return -EBUSY;
 
@@ -55,7 +57,7 @@ int ca_chunker_set_avg_size(CaChunker *c, size_t avg) {
                 if (delta == 0)
                         continue;
 
-                if (delta > SIZE_MAX - avg)
+                if (delta > CHUNK_SIZE_LIMIT - avg)
                         return -EINVAL;
 
                 closest = avg + delta;
@@ -66,13 +68,12 @@ int ca_chunker_set_avg_size(CaChunker *c, size_t avg) {
         c->chunk_size_avg = closest;
 
         c->chunk_size_min = (c->chunk_size_avg / 4) & ~0xff;
-        if (c->chunk_size_min == 0)
+        if (c->chunk_size_min < 1)
                 c->chunk_size_min = 1;
 
         c->chunk_size_max = (2*c->chunk_size_avg - c->chunk_size_min + 0xffU) & ~0xffU;
-
-        if (c->chunk_size_min == 0)
-                return -EINVAL;
+        if (c->chunk_size_max > CHUNK_SIZE_LIMIT)
+                c->chunk_size_max = CHUNK_SIZE_LIMIT;
 
         /* fprintf(stderr, "Setting min/avg/max chunk size: %zu/%zu/%zu (requested: %zu)\n", */
         /*         c->chunk_size_min, c->chunk_size_avg, c->chunk_size_max, avg); */
@@ -86,9 +87,6 @@ uint32_t ca_chunker_start(CaChunker *c, const void *p, size_t n) {
 
         assert(c);
         assert(c->window_size + n <= UINT32_MAX);
-
-        if (c->chunk_size_avg == 0)
-                assert(ca_chunker_set_avg_size(c, DEFAULT_CHUNK_SIZE_AVG) == 0);
 
         a = (uint32_t) c->a, b = (uint32_t) c->b;
 
