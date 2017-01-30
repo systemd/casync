@@ -71,7 +71,8 @@ protocol_PROGRAMS = \
 	casync-http
 
 noinst_PROGRAMS = \
-	$(tests)
+	$(tests) \
+	test-caindex
 
 TESTS = \
 	$(tests) \
@@ -198,6 +199,21 @@ test_cautil_CFLAGS = \
 	$(LIBGCRYPT_CFLAGS)
 
 test_cautil_LDADD = \
+	$(LIBLZMA_LIBS) \
+	$(LIBGCRYPT_LIBS)
+
+## test-caindex
+
+test_caindex_SOURCES = \
+	test/test-caindex.c \
+	$(lib_SOURCES)
+
+test_caindex_CFLAGS = \
+	$(AM_CFLAGS) \
+	$(LIBLZMA_CFLAGS) \
+	$(LIBGCRYPT_CFLAGS)
+
+test_caindex_LDADD = \
 	$(LIBLZMA_LIBS) \
 	$(LIBGCRYPT_LIBS)
 
