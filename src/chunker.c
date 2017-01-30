@@ -88,6 +88,11 @@ uint32_t ca_chunker_start(CaChunker *c, const void *p, size_t n) {
         assert(c);
         assert(c->window_size + n <= UINT32_MAX);
 
+        assert(0 < c->chunk_size_min);
+        assert(c->chunk_size_min <= c->chunk_size_avg);
+        assert(c->chunk_size_avg <= c->chunk_size_max);
+        assert(c->chunk_size_max <= CHUNK_SIZE_LIMIT);
+
         a = (uint32_t) c->a, b = (uint32_t) c->b;
 
         c->window_size += n;
