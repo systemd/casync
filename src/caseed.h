@@ -29,4 +29,8 @@ int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *
 int ca_seed_current_path(CaSeed *seed, char **ret);
 int ca_seed_current_mode(CaSeed *seed, mode_t *ret);
 
+int ca_seed_set_chunk_size_min(CaSeed *s, size_t cmin);
+int ca_seed_set_chunk_size_avg(CaSeed *s, size_t cavg);
+int ca_seed_set_chunk_size_max(CaSeed *s, size_t cmax);
+
 #endif

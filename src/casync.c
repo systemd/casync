@@ -57,6 +57,7 @@ typedef struct CaSync {
         CaSeed **seeds;
         size_t n_seeds;
         size_t current_seed; /* The seed we are currently indexing */
+        bool chunk_size_propagated;
 
         int base_fd;
         int archive_fd;
@@ -1127,6 +1128,12 @@ static int ca_sync_step_encode(CaSync *s) {
         return 0;
 }
 
+static bool ca_sync_seed_ready(CaSync *s) {
+        assert(s);
+
+        return s->current_seed >= s->n_seeds;
+}
+
 static int ca_sync_process_decoder_request(CaSync *s) {
         int r;
 
@@ -1153,6 +1160,12 @@ static int ca_sync_process_decoder_request(CaSync *s) {
 
                         s->next_chunk_valid = true;
                 }
+
+                /* If we haven't indexed all seeds yet, then let's not start decoding yet. If we came this far, we know
+                 * that the index header has been read at least, hence the seeders can be initialized with the index'
+                 * chunk size, hence let's wait for them to complete. */
+                if (!ca_sync_seed_ready(s))
+                        return CA_SYNC_POLL;
 
                 r = ca_sync_get(s, &s->next_chunk, &p, &chunk_size);
                 if (r == -EAGAIN) /* Don't have this right now, but requested it now */
@@ -1447,6 +1460,60 @@ static int ca_sync_remote_step(CaSync *s) {
         return CA_REMOTE_POLL;
 }
 
+static int ca_sync_propagate_chunk_size(CaSync *s) {
+        uint64_t cmin, cavg, cmax;
+        size_t i;
+        int r;
+
+        assert(s);
+
+        /* If we read the header of the index file, make sure to propagate the chunk size stored in it to the
+         * seed. Return > 0 if we successfully propagated the chunk size, and thus can start running the seeds. */
+
+        if (s->direction != CA_SYNC_DECODE)
+                return 1;
+        if (!s->index)
+                return 1;
+        if (s->n_seeds == 0)
+                return 1;
+        if (s->chunk_size_propagated)
+                return 1;
+
+        r = ca_index_get_chunk_size_min(s->index, &cmin);
+        if (r == -ENODATA)
+                return 0; /* haven't read enough from the index header yet */
+        if (r < 0)
+                return r;
+
+        r = ca_index_get_chunk_size_avg(s->index, &cavg);
+        if (r < 0)
+                return r;
+
+        r = ca_index_get_chunk_size_max(s->index, &cmax);
+        if (r < 0)
+                return r;
+
+        fprintf(stderr, "Propagating chunk size! %zu/%zu/%zu\n", cmin, cavg, cmax);
+
+        for (i = 0; i < s->n_seeds; i++) {
+
+                r = ca_seed_set_chunk_size_min(s->seeds[i], cmin);
+                if (r < 0)
+                        return r;
+
+                r = ca_seed_set_chunk_size_avg(s->seeds[i], cavg);
+                if (r < 0)
+                        return r;
+
+                r = ca_seed_set_chunk_size_max(s->seeds[i], cmax);
+                if (r < 0)
+                        return r;
+        }
+
+        s->chunk_size_propagated = true;
+        return 1;
+}
+
 int ca_sync_step(CaSync *s) {
         int r;
 
@@ -1457,22 +1524,27 @@ int ca_sync_step(CaSync *s) {
         if (r < 0)
                 return r;
 
-        r = ca_sync_seed_step(s);
+        r = ca_sync_propagate_chunk_size(s);
         if (r < 0)
                 return r;
-        switch (r) {
+        if (r > 0) {
+                r = ca_sync_seed_step(s);
+                if (r < 0)
+                        return r;
+                switch (r) {
 
-        case CA_SEED_READY:
-                break;
+                case CA_SEED_READY:
+                        break;
 
-        case CA_SEED_STEP:
-                return CA_SYNC_STEP;
+                case CA_SEED_STEP:
+                        return CA_SYNC_STEP;
 
-        case CA_SEED_NEXT_FILE:
-                return CA_SYNC_SEED_NEXT_FILE;
+                case CA_SEED_NEXT_FILE:
+                        return CA_SYNC_SEED_NEXT_FILE;
 
-        default:
-                assert(false);
+                default:
+                        assert(false);
+                }
         }
 
         r = ca_sync_remote_push_index(s);

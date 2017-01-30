@@ -509,3 +509,39 @@ int ca_seed_current_mode(CaSeed *seed, mode_t *ret) {
 
         return ca_encoder_current_mode(seed->encoder, ret);
 }
+
+int ca_seed_set_chunk_size_min(CaSeed *s, size_t cmin) {
+        if (!s)
+                return -EINVAL;
+        if (cmin < 1)
+                return -EINVAL;
+        if (cmin > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+
+        s->chunker.chunk_size_min = cmin;
+        return 0;
+}
+
+int ca_seed_set_chunk_size_avg(CaSeed *s, size_t cavg) {
+        if (!s)
+                return -EINVAL;
+        if (cavg < 1)
+                return -EINVAL;
+        if (cavg > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+
+        s->chunker.chunk_size_avg = cavg;
+        return 0;
+}
+
+int ca_seed_set_chunk_size_max(CaSeed *s, size_t cmax) {
+        if (!s)
+                return -EINVAL;
+        if (cmax < 1)
+                return -EINVAL;
+        if (cmax > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+
+        s->chunker.chunk_size_max = cmax;
+        return 0;
+}
