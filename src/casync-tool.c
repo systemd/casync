@@ -152,6 +152,10 @@ static int parse_argv(int argc, char *argv[]) {
                                 fprintf(stderr, "Unable to parse size %s: %s\n", optarg, strerror(-r));
                                 return r;
                         }
+                        if (arg_chunk_size_avg == 0) {
+                                fprintf(stderr, "Chunk size cannot be zero.\n");
+                                return -EINVAL;
+                        }
 
                         break;
 
