@@ -317,6 +317,44 @@ static int load_feature_flags(CaSync *s) {
         return 0;
 }
 
+static int load_chunk_size(CaSync *s) {
+        size_t cavg, cmin, cmax;
+        int r;
+
+        if (arg_chunk_size_avg == 0)
+                return 0;
+
+        r = ca_sync_set_chunk_size_avg(s, arg_chunk_size_avg);
+        if (r < 0) {
+                fprintf(stderr, "Failed to set average chunk size to %zu: %s\n", arg_chunk_size_avg, strerror(-r));
+                return r;
+        }
+
+        if (!arg_verbose)
+                return 1;
+
+        r = ca_sync_get_chunk_size_avg(s, &cavg);
+        if (r < 0) {
+                fprintf(stderr, "Failed to read average chunk size: %s\n", strerror(-r));
+                return r;
+        }
+
+        r = ca_sync_get_chunk_size_min(s, &cmin);
+        if (r < 0) {
+                fprintf(stderr, "Failed to read minimum chunk size: %s\n", strerror(-r));
+                return r;
+        }
+
+        r = ca_sync_get_chunk_size_max(s, &cmax);
+        if (r < 0) {
+                fprintf(stderr, "Failed to read maximum chunk size: %s\n", strerror(-r));
+                return r;
+        }
+
+        fprintf(stderr, "Selected chunk sizes: min=%zu..avg=%zu..max=%zu\n", cmin, cavg, cmax);
+        return 1;
+}
+
 static int verbose_print_feature_flags(CaSync *s) {
         static bool printed = false;
         uint64_t flags;
@@ -528,13 +566,9 @@ static int make(int argc, char *argv[]) {
                 goto finish;
         }
 
-        if (arg_chunk_size_avg != 0) {
-                r = ca_sync_set_chunk_size_avg(s, arg_chunk_size_avg);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set average chunk size to %zu: %s\n", arg_chunk_size_avg, strerror(-r));
-                        goto finish;
-                }
-        }
+        r = load_chunk_size(s);
+        if (r < 0)
+                goto finish;
 
         r = ca_sync_set_base_fd(s, input_fd);
         if (r < 0) {
@@ -1049,13 +1083,9 @@ static int list(int argc, char *argv[]) {
                 goto finish;
         }
 
-        if (arg_chunk_size_avg != 0) {
-                r = ca_sync_set_chunk_size_avg(s, arg_chunk_size_avg);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set average chunk size to %zu: %s\n", arg_chunk_size_avg, strerror(-r));
-                        goto finish;
-                }
-        }
+        r = load_chunk_size(s);
+        if (r < 0)
+                goto finish;
 
         if (operation == LIST_ARCHIVE)
                 r = ca_sync_set_archive_fd(s, input_fd);
@@ -1311,13 +1341,9 @@ static int digest(int argc, char *argv[]) {
                 goto finish;
         }
 
-        if (arg_chunk_size_avg != 0) {
-                r = ca_sync_set_chunk_size_avg(s, arg_chunk_size_avg);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set average chunk size to %zu: %s\n", arg_chunk_size_avg, strerror(-r));
-                        goto finish;
-                }
-        }
+        r = load_chunk_size(s);
+        if (r < 0)
+                goto finish;
 
         if (operation == DIGEST_DIRECTORY)
                 r = ca_sync_set_base_fd(s, input_fd);

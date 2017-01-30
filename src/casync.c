@@ -118,9 +118,49 @@ CaSync *ca_sync_new_decode(void) {
 }
 
 int ca_sync_set_chunk_size_avg(CaSync *s, size_t avg) {
-        assert(s);
+        if (!s)
+                return -EINVAL;
 
         return ca_chunker_set_avg_size(&s->chunker, avg);
+}
+
+int ca_sync_get_chunk_size_avg(CaSync *s, size_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->chunker.chunk_size_avg == 0)
+                return -ENODATA;
+
+        *ret = s->chunker.chunk_size_avg;
+        return 0;
+}
+
+int ca_sync_get_chunk_size_min(CaSync *s, size_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->chunker.chunk_size_min == 0)
+                return -ENODATA;
+
+        *ret = s->chunker.chunk_size_min;
+        return 0;
+}
+
+int ca_sync_get_chunk_size_max(CaSync *s, size_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->chunker.chunk_size_max == 0)
+                return -ENODATA;
+
+        *ret = s->chunker.chunk_size_max;
+        return 0;
 }
 
 CaSync *ca_sync_unref(CaSync *s) {
