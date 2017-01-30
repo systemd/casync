@@ -3,6 +3,7 @@
 
 #include <inttypes.h>
 #include <sys/types.h>
+#include <stdbool.h>
 
 /* Our checksum window size */
 #define WINDOW_SIZE 48
@@ -30,5 +31,7 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n);
 /* Low-level Adler-32 functions. Only exported for testing purposes. */
 uint32_t ca_chunker_start(CaChunker *c, const void *p, size_t n);
 uint32_t ca_chunker_roll(CaChunker *c, uint8_t pop_byte, uint8_t push_byte);
+
+bool ca_size_is_prime(size_t n);
 
 #endif

@@ -11,12 +11,23 @@
 /* Unless otherwise specified, take this as the default average chunk size */
 #define DEFAULT_CHUNK_SIZE_AVG (16 * 1024ULL)
 
-static bool number_is_prime(size_t n) {
+bool ca_size_is_prime(size_t n) {
         size_t i;
 
-        for (i = 2; i < n/2; i++)
-                if (n % i == 0)
+        if (n <= 1)
+                return false;
+        if (n <= 3)
+                return true;
+        if (n % 2 == 0 || n % 3 == 0)
+                return false;
+
+        i = 5;
+        while (i*i <= n) {
+                if ((n % i == 0) || (n % (i + 2) == 0))
                         return false;
+
+                i += 6;
+        }
 
         return true;
 }
@@ -41,11 +52,11 @@ int ca_chunker_set_avg_size(CaChunker *c, size_t avg) {
                 if (closest < 3)
                         return -EINVAL;
 
-                if (number_is_prime(closest))
+                if (ca_size_is_prime(closest))
                         break;
 
                 closest = avg + delta;
-                if (number_is_prime(closest))
+                if (ca_size_is_prime(closest))
                         break;
         }
 
