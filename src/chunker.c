@@ -44,16 +44,19 @@ int ca_chunker_set_avg_size(CaChunker *c, size_t avg) {
         if (c->window_size != 0)
                 return -EBUSY;
 
-        for (delta = 0; ; delta++) {
-                if (delta > SIZE_MAX / 2)
+        for (delta = 0;; delta++) {
+                if (delta >= avg)
                         return -EINVAL;
 
                 closest = avg - delta;
-                if (closest < 3)
-                        return -EINVAL;
-
                 if (ca_size_is_prime(closest))
                         break;
+
+                if (delta == 0)
+                        continue;
+
+                if (delta > SIZE_MAX - avg)
+                        return -EINVAL;
 
                 closest = avg + delta;
                 if (ca_size_is_prime(closest))
@@ -61,14 +64,18 @@ int ca_chunker_set_avg_size(CaChunker *c, size_t avg) {
         }
 
         c->chunk_size_avg = closest;
-        c->chunk_size_min = (c->chunk_size_avg >> 1) & ~0xff;
-        c->chunk_size_max = ((c->chunk_size_avg << 1) - c->chunk_size_min + 0xff) & ~0xff;
+
+        c->chunk_size_min = (c->chunk_size_avg / 4) & ~0xff;
+        if (c->chunk_size_min == 0)
+                c->chunk_size_min = 1;
+
+        c->chunk_size_max = (2*c->chunk_size_avg - c->chunk_size_min + 0xffU) & ~0xffU;
 
         if (c->chunk_size_min == 0)
                 return -EINVAL;
 
-        /* fprintf(stderr, "Setting min/avg/max chunk size: %lu/%lu/%lu (requested: %lu)\n",
-                c->chunk_size_min, c->chunk_size_avg, c->chunk_size_max, avg); */
+        /* fprintf(stderr, "Setting min/avg/max chunk size: %zu/%zu/%zu (requested: %zu)\n", */
+        /*         c->chunk_size_min, c->chunk_size_avg, c->chunk_size_max, avg); */
 
         return 0;
 }
@@ -80,7 +87,7 @@ uint32_t ca_chunker_start(CaChunker *c, const void *p, size_t n) {
         assert(c);
         assert(c->window_size + n <= UINT32_MAX);
 
-        if (!c->chunk_size_min)
+        if (c->chunk_size_avg == 0)
                 assert(ca_chunker_set_avg_size(c, DEFAULT_CHUNK_SIZE_AVG) == 0);
 
         a = (uint32_t) c->a, b = (uint32_t) c->b;
