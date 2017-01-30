@@ -1,13 +1,12 @@
 #!/bin/bash -ex
 
-SCRATCH_DIR=/var/tmp/test-casync.$RANDOM
-
-cd @top_srcdir@
-
 CASYNC_PROTOCOL_PATH=@top_builddir@
 export CASYNC_PROTOCOL_PATH
 
-mkdir -p $SCRATCH_DIR
+SCRATCH_DIR=/var/tmp/test-casync.$RANDOM
+mkdir -p $SCRATCH_DIR/src
+cp -a @top_srcdir@ $SCRATCH_DIR/src
+cd $SCRATCH_DIR/src
 
 @top_builddir@/casync list > $SCRATCH_DIR/test.list
 @top_builddir@/casync digest > $SCRATCH_DIR/test.digest

@@ -204,8 +204,8 @@ test_cautil_LDADD = \
 ## test-script.sh
 
 test-script.sh: test/test-script.sh.in
-	sed -e "s,@top_srcdir\@,$(top_srcdir)," \
-	-e "s,@top_builddir\@,$(top_builddir)," $^ > $@
+	sed -e "s,@top_srcdir\@,$(abs_top_srcdir)," \
+	-e "s,@top_builddir\@,$(abs_top_builddir)," $^ > $@
 	chmod +x $@
 
 noinst_SCRIPTS = \
