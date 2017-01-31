@@ -537,6 +537,7 @@ int ca_chunk_file_open(int chunk_fd, const char *prefix, const CaChunkID *chunki
 
         char path[CHUNK_PATH_SIZE(prefix, suffix)];
         bool made = false;
+        char *slash = NULL;
         int r, fd;
 
         /* Opens a file below the directory identified by 'chunk_fd', built as <prefix><4ch id prefix>/<id><suffix>. */
@@ -549,8 +550,6 @@ int ca_chunk_file_open(int chunk_fd, const char *prefix, const CaChunkID *chunki
         ca_format_chunk_path(prefix, chunkid, suffix, path);
 
         if ((flags & O_CREAT) == O_CREAT) {
-                char *slash;
-
                 assert_se(slash = strrchr(path, '/'));
                 *slash = 0;
 
@@ -568,9 +567,7 @@ int ca_chunk_file_open(int chunk_fd, const char *prefix, const CaChunkID *chunki
                 r = -errno;
 
                 if (made) {
-                        char *slash;
-
-                        assert_se(slash = strrchr(path, '/'));
+                        assert(slash);
                         *slash = 0;
 
                         (void) unlinkat(chunk_fd, path, AT_REMOVEDIR);
@@ -767,6 +764,8 @@ fail:
 
 int ca_chunk_file_mark_missing(int chunk_fd, const char *prefix, const CaChunkID *chunkid) {
         char path[CHUNK_PATH_SIZE(prefix, NULL)];
+        bool made = false;
+        char *slash;
         int r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
@@ -782,8 +781,28 @@ int ca_chunk_file_mark_missing(int chunk_fd, const char *prefix, const CaChunkID
 
         ca_format_chunk_path(prefix, chunkid, NULL, path);
 
-        if (symlinkat("/dev/null", chunk_fd, path) < 0)
-                return -errno;
+        assert_se(slash = strrchr(path, '/'));
+        *slash = 0;
+
+        if (mkdirat(chunk_fd, path, 0777) < 0) {
+                if (errno != EEXIST)
+                        return -errno;
+        } else
+                made = true;
+
+        *slash = '/';
+
+        if (symlinkat("/dev/null", chunk_fd, path) < 0) {
+                r = -errno;
+
+                if (made) {
+                        *slash = 0;
+
+                        (void) unlinkat(chunk_fd, path, AT_REMOVEDIR);
+                }
+
+                return r;
+        }
 
         return 0;
 }
