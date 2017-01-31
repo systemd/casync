@@ -43,15 +43,15 @@ static void test_rolling(void) {
         const char *p = buffer;
         CaChunker x = CA_CHUNKER_INIT;
 
-        assert(sizeof(buffer) > WINDOW_SIZE);
-        ca_chunker_start(&x, buffer, WINDOW_SIZE);
+        assert(sizeof(buffer) > CA_CHUNKER_WINDOW_SIZE);
+        ca_chunker_start(&x, buffer, CA_CHUNKER_WINDOW_SIZE);
 
-        while (p < buffer + sizeof(buffer) - WINDOW_SIZE) {
+        while (p < buffer + sizeof(buffer) - CA_CHUNKER_WINDOW_SIZE) {
                 CaChunker y = CA_CHUNKER_INIT;
                 uint32_t k, v;
 
-                k = ca_chunker_roll(&x, p[0], p[WINDOW_SIZE]);
-                v = ca_chunker_start(&y, p+1, WINDOW_SIZE);
+                k = ca_chunker_roll(&x, p[0], p[CA_CHUNKER_WINDOW_SIZE]);
+                v = ca_chunker_start(&y, p+1, CA_CHUNKER_WINDOW_SIZE);
 
                 /* printf("%08x vs. %08x\n", k, v); */
 

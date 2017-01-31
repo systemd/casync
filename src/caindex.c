@@ -296,15 +296,15 @@ static int ca_index_read_head(CaIndex *i) {
                 return -EOPNOTSUPP;
 
         if (le64toh(head.index.chunk_size_min) <= 0 ||
-            le64toh(head.index.chunk_size_min) > CHUNK_SIZE_LIMIT)
+            le64toh(head.index.chunk_size_min) > CA_CHUNK_SIZE_LIMIT)
                 return -EBADMSG;
 
         if (le64toh(head.index.chunk_size_avg) <= 0 ||
-            le64toh(head.index.chunk_size_avg) > CHUNK_SIZE_LIMIT)
+            le64toh(head.index.chunk_size_avg) > CA_CHUNK_SIZE_LIMIT)
                 return -EBADMSG;
 
         if (le64toh(head.index.chunk_size_max) <= 0 ||
-            le64toh(head.index.chunk_size_max) > CHUNK_SIZE_LIMIT)
+            le64toh(head.index.chunk_size_max) > CA_CHUNK_SIZE_LIMIT)
                 return -EBADMSG;
 
         if (!(le64toh(head.index.chunk_size_min) <= le64toh(head.index.chunk_size_avg) &&
@@ -662,7 +662,7 @@ int ca_index_set_chunk_size_min(CaIndex *i, size_t cmin) {
                 return -EINVAL;
         if (cmin < 1)
                 return -EINVAL;
-        if (cmin > CHUNK_SIZE_LIMIT)
+        if (cmin > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
         if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
                 return -EROFS;
@@ -676,7 +676,7 @@ int ca_index_set_chunk_size_avg(CaIndex *i, size_t cavg) {
                 return -EINVAL;
         if (cavg < 1)
                 return -EINVAL;
-        if (cavg > CHUNK_SIZE_LIMIT)
+        if (cavg > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
         if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
                 return -EROFS;
@@ -690,7 +690,7 @@ int ca_index_set_chunk_size_max(CaIndex *i, size_t cmax) {
                 return -EINVAL;
         if (cmax < 1)
                 return -EINVAL;
-        if (cmax > CHUNK_SIZE_LIMIT)
+        if (cmax > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
         if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
                 return -EROFS;

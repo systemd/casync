@@ -53,7 +53,7 @@ int ca_load_fd(int fd, ReallocBuffer *buffer) {
                 void *p;
 
                 /* Don't permit loading chunks larger than the chunk limit */
-                if (count >= CHUNK_SIZE_LIMIT)
+                if (count >= CA_CHUNK_SIZE_LIMIT)
                         return -EBADMSG;
 
                 p = realloc_buffer_extend(buffer, BUFFER_SIZE);
@@ -98,7 +98,7 @@ int ca_load_and_decompress_fd(int fd, ReallocBuffer *buffer) {
                 uint8_t fd_buffer[BUFFER_SIZE];
                 ssize_t l;
 
-                if (ccount >= CHUNK_SIZE_LIMIT) {
+                if (ccount >= CA_CHUNK_SIZE_LIMIT) {
                         r = -EBADMSG;
                         goto finish;
                 }
@@ -126,7 +126,7 @@ int ca_load_and_decompress_fd(int fd, ReallocBuffer *buffer) {
                 do {
                         void *p;
 
-                        if (dcount >= CHUNK_SIZE_LIMIT) {
+                        if (dcount >= CA_CHUNK_SIZE_LIMIT) {
                                 r = -EBADMSG;
                                 goto finish;
                         }
@@ -193,7 +193,7 @@ int ca_load_and_compress_fd(int fd, ReallocBuffer *buffer) {
                 uint8_t fd_buffer[BUFFER_SIZE];
                 ssize_t l;
 
-                if (dcount >= CHUNK_SIZE_LIMIT) {
+                if (dcount >= CA_CHUNK_SIZE_LIMIT) {
                         r = -EBADMSG;
                         goto finish;
                 }
@@ -212,7 +212,7 @@ int ca_load_and_compress_fd(int fd, ReallocBuffer *buffer) {
                 do {
                         uint8_t *p;
 
-                        if (ccount >= CHUNK_SIZE_LIMIT) {
+                        if (ccount >= CA_CHUNK_SIZE_LIMIT) {
                                 r = -EBADMSG;
                                 goto finish;
                         }
@@ -261,7 +261,7 @@ int ca_save_fd(int fd, const void *data, size_t size) {
                 return -EINVAL;
         if (size == 0)
                 return -EINVAL;
-        if (size > CHUNK_SIZE_LIMIT)
+        if (size > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
         if (!data)
                 return -EINVAL;
@@ -279,7 +279,7 @@ int ca_save_and_compress_fd(int fd, const void *data, size_t size) {
                 return -EINVAL;
         if (size == 0)
                 return -EINVAL;
-        if (size > CHUNK_SIZE_LIMIT)
+        if (size > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
         if (!data)
                 return -EINVAL;
@@ -294,7 +294,7 @@ int ca_save_and_compress_fd(int fd, const void *data, size_t size) {
         for (;;) {
                 uint8_t buffer[BUFFER_SIZE];
 
-                if (ccount >= CHUNK_SIZE_LIMIT) {
+                if (ccount >= CA_CHUNK_SIZE_LIMIT) {
                         r = -EINVAL;
                         goto finish;
                 }
@@ -340,7 +340,7 @@ int ca_save_and_decompress_fd(int fd, const void *data, size_t size) {
                 return -EINVAL;
         if (size == 0)
                 return -EINVAL;
-        if (size > CHUNK_SIZE_LIMIT)
+        if (size > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
         if (!data)
                 return -EINVAL;
@@ -355,7 +355,7 @@ int ca_save_and_decompress_fd(int fd, const void *data, size_t size) {
         for (;;) {
                 uint8_t buffer[BUFFER_SIZE];
 
-                if (dcount >= CHUNK_SIZE_LIMIT) {
+                if (dcount >= CA_CHUNK_SIZE_LIMIT) {
                         r = -EINVAL;
                         goto finish;
                 }
@@ -408,7 +408,7 @@ int ca_compress(const void *data, size_t size, ReallocBuffer *buffer) {
                 return -EINVAL;
         if (size == 0)
                 return -EINVAL;
-        if (size > CHUNK_SIZE_LIMIT)
+        if (size > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
         if (!data)
                 return -EINVAL;
@@ -423,7 +423,7 @@ int ca_compress(const void *data, size_t size, ReallocBuffer *buffer) {
         for (;;) {
                 uint8_t *p;
 
-                if (ccount >= CHUNK_SIZE_LIMIT) {
+                if (ccount >= CA_CHUNK_SIZE_LIMIT) {
                         r = -EINVAL;
                         goto finish;
                 }
@@ -472,7 +472,7 @@ int ca_decompress(const void *data, size_t size, ReallocBuffer *buffer) {
                 return -EINVAL;
         if (size == 0)
                 return -EINVAL;
-        if (size > CHUNK_SIZE_LIMIT)
+        if (size > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
         if (!data)
                 return -EINVAL;
@@ -487,7 +487,7 @@ int ca_decompress(const void *data, size_t size, ReallocBuffer *buffer) {
         for (;;) {
                 uint8_t *p;
 
-                if (dcount >= CHUNK_SIZE_LIMIT) {
+                if (dcount >= CA_CHUNK_SIZE_LIMIT) {
                         r = -EINVAL;
                         goto finish;
                 }

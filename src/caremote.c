@@ -1800,7 +1800,7 @@ int ca_remote_put_chunk(
                 return -EINVAL;
         if (size == 0)
                 return -EINVAL;
-        if (size > CHUNK_SIZE_LIMIT)
+        if (size > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
         if (!IN_SET(compression, CA_CHUNK_COMPRESSED, CA_CHUNK_UNCOMPRESSED))
                 return -EINVAL;

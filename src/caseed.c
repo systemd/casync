@@ -515,7 +515,7 @@ int ca_seed_set_chunk_size_min(CaSeed *s, size_t cmin) {
                 return -EINVAL;
         if (cmin < 1)
                 return -EINVAL;
-        if (cmin > CHUNK_SIZE_LIMIT)
+        if (cmin > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
 
         s->chunker.chunk_size_min = cmin;
@@ -527,7 +527,7 @@ int ca_seed_set_chunk_size_avg(CaSeed *s, size_t cavg) {
                 return -EINVAL;
         if (cavg < 1)
                 return -EINVAL;
-        if (cavg > CHUNK_SIZE_LIMIT)
+        if (cavg > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
 
         s->chunker.chunk_size_avg = cavg;
@@ -539,7 +539,7 @@ int ca_seed_set_chunk_size_max(CaSeed *s, size_t cmax) {
                 return -EINVAL;
         if (cmax < 1)
                 return -EINVAL;
-        if (cmax > CHUNK_SIZE_LIMIT)
+        if (cmax > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
 
         s->chunker.chunk_size_max = cmax;

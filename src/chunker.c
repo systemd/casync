@@ -40,7 +40,7 @@ int ca_chunker_set_avg_size(CaChunker *c, size_t avg) {
 
         if (avg < 1)
                 return -EINVAL;
-        if (avg > CHUNK_SIZE_LIMIT)
+        if (avg > CA_CHUNK_SIZE_LIMIT)
                 return -EINVAL;
 
         if (c->window_size != 0)
@@ -57,7 +57,7 @@ int ca_chunker_set_avg_size(CaChunker *c, size_t avg) {
                 if (delta == 0)
                         continue;
 
-                if (delta > CHUNK_SIZE_LIMIT - avg)
+                if (delta > CA_CHUNK_SIZE_LIMIT - avg)
                         return -EINVAL;
 
                 closest = avg + delta;
@@ -72,8 +72,8 @@ int ca_chunker_set_avg_size(CaChunker *c, size_t avg) {
                 c->chunk_size_min = 1;
 
         c->chunk_size_max = (2*c->chunk_size_avg - c->chunk_size_min + 0xffU) & ~0xffU;
-        if (c->chunk_size_max > CHUNK_SIZE_LIMIT)
-                c->chunk_size_max = CHUNK_SIZE_LIMIT;
+        if (c->chunk_size_max > CA_CHUNK_SIZE_LIMIT)
+                c->chunk_size_max = CA_CHUNK_SIZE_LIMIT;
 
         /* fprintf(stderr, "Setting min/avg/max chunk size: %zu/%zu/%zu (requested: %zu)\n", */
         /*         c->chunk_size_min, c->chunk_size_avg, c->chunk_size_max, avg); */
@@ -91,7 +91,7 @@ uint32_t ca_chunker_start(CaChunker *c, const void *p, size_t n) {
         assert(0 < c->chunk_size_min);
         assert(c->chunk_size_min <= c->chunk_size_avg);
         assert(c->chunk_size_avg <= c->chunk_size_max);
-        assert(c->chunk_size_max <= CHUNK_SIZE_LIMIT);
+        assert(c->chunk_size_max <= CA_CHUNK_SIZE_LIMIT);
 
         a = (uint32_t) c->a, b = (uint32_t) c->b;
 
@@ -156,10 +156,10 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
         /* Scans the specified bytes for chunk borders. Returns (size_t) -1 if no border was discovered, otherwise the
          * chunk size. */
 
-        if (c->window_size < WINDOW_SIZE) {
+        if (c->window_size < CA_CHUNKER_WINDOW_SIZE) {
                 size_t m;
 
-                m = MIN(WINDOW_SIZE - c->window_size, n);
+                m = MIN(CA_CHUNKER_WINDOW_SIZE - c->window_size, n);
                 memcpy(c->window + c->window_size, q, m);
 
                 v = ca_chunker_start(c, q, m);
@@ -172,7 +172,7 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
                 q += m, n -= m;
         }
 
-        idx = c->chunk_size % WINDOW_SIZE;
+        idx = c->chunk_size % CA_CHUNKER_WINDOW_SIZE;
 
         while (n > 0) {
                 v = ca_chunker_roll(c, c->window[idx], *q);
@@ -183,7 +183,7 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
                         goto now;
 
                 c->window[idx++] = *q;
-                if (idx == WINDOW_SIZE)
+                if (idx == CA_CHUNKER_WINDOW_SIZE)
                         idx = 0;
 
                 q++, n--;

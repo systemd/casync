@@ -6,10 +6,10 @@
 #include <stdbool.h>
 
 /* Our checksum window size */
-#define WINDOW_SIZE 48
+#define CA_CHUNKER_WINDOW_SIZE 48
 
 /* The hardcoded, maximum chunk size, after which we refuse operation */
-#define CHUNK_SIZE_LIMIT (128U*1024U*1024U)
+#define CA_CHUNK_SIZE_LIMIT (128U*1024U*1024U)
 
 typedef struct CaChunker {
         uint16_t a, b;
@@ -20,7 +20,7 @@ typedef struct CaChunker {
         size_t chunk_size_max;
         size_t chunk_size_avg;
 
-        uint8_t window[WINDOW_SIZE];
+        uint8_t window[CA_CHUNKER_WINDOW_SIZE];
 } CaChunker;
 
 /* The default initializer for the chunker. We pick an average chunk size equivalent to 16K */
