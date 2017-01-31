@@ -24,4 +24,6 @@
 * pass compressed blocks through native protocol
 * acquire gpg signature along with caidx/caibx/catar
 * permit passing catar through native protocol
-* increase index frame size
+* coalesce index frames sent over protocol
+* add per-file sha256 sum to serialization
+* validate chunk id of downloaded blocks
