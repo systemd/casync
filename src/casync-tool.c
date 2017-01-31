@@ -1640,10 +1640,11 @@ static int pull(int argc, char *argv[]) {
 
                 put_count = 0;
                 for (;;) {
+                        CaChunkCompression compression;
+                        bool found = false;
                         const void *p;
                         CaChunkID id;
                         size_t l;
-                        bool found = false;
 
                         r = ca_remote_can_put_chunk(rr);
                         if (r < 0) {
@@ -1662,7 +1663,7 @@ static int pull(int argc, char *argv[]) {
                         }
 
                         for (i = 0; i < n_stores; i++) {
-                                r = ca_store_get(stores[i], &id, &p, &l);
+                                r = ca_store_get(stores[i], &id, CA_CHUNK_COMPRESSED, &p, &l, &compression);
                                 if (r >= 0) {
                                         found = true;
                                         break;
@@ -1674,7 +1675,7 @@ static int pull(int argc, char *argv[]) {
                         }
 
                         if (found)
-                                r = ca_remote_put_chunk(rr, &id, false, p, l);
+                                r = ca_remote_put_chunk(rr, &id, compression, p, l);
                         else
                                 r = ca_remote_put_missing(rr, &id);
                         if (r < 0) {
@@ -1840,18 +1841,19 @@ static int push(int argc, char *argv[]) {
                         break;
 
                 case CA_REMOTE_CHUNK: {
-                        CaChunkID id;
+                        CaChunkCompression compression;
                         const void *p;
+                        CaChunkID id;
                         size_t n;
 
-                        r = ca_remote_next_chunk(rr, &id, &p, &n);
+                        r = ca_remote_next_chunk(rr, CA_CHUNK_AS_IS, &id, &p, &n, &compression);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to determine most recent chunk: %s\n", strerror(-r));
                                 goto finish;
                         }
 
-                        r = ca_store_put(stores[0], &id, p, n); /* Write to wstore */
-                        if (r < 0) {
+                        r = ca_store_put(stores[0], &id, compression, p, n); /* Write to wstore */
+                        if (r < 0 && r != -EEXIST) {
                                 fprintf(stderr, "Failed to write chunk to store: %s\n", strerror(-r));
                                 goto finish;
                         }

@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #include "cautil.h"
+#include "chunker.h"
 #include "def.h"
 #include "util.h"
 
@@ -39,7 +40,500 @@ static char* ca_format_chunk_path(
         return buffer;
 }
 
-int ca_open_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix, int flags) {
+int ca_load_fd(int fd, ReallocBuffer *buffer) {
+        uint64_t count = 0;
+
+        if (fd < 0)
+                return -EINVAL;
+        if (!buffer)
+                return -EINVAL;
+
+        for (;;) {
+                ssize_t l;
+                void *p;
+
+                /* Don't permit loading chunks larger than the chunk limit */
+                if (count >= CHUNK_SIZE_LIMIT)
+                        return -EBADMSG;
+
+                p = realloc_buffer_extend(buffer, BUFFER_SIZE);
+                if (!p)
+                        return -ENOMEM;
+
+                l = read(fd, p, BUFFER_SIZE);
+                if (l < 0)
+                        return -errno;
+
+                realloc_buffer_shorten(buffer, BUFFER_SIZE - l);
+                count += l;
+
+                if (l == 0)
+                        break;
+        }
+
+        /* Don't permit empty chunks */
+        if (count == 0)
+                return -EBADMSG;
+
+        return 0;
+}
+
+int ca_load_and_decompress_fd(int fd, ReallocBuffer *buffer) {
+        uint64_t ccount = 0, dcount = 0;
+        bool got_xz_eof = false;
+        lzma_stream xz = {};
+        lzma_ret xzr;
+        int r;
+
+        if (fd < 0)
+                return -EINVAL;
+        if (!buffer)
+                return -EINVAL;
+
+        xzr = lzma_stream_decoder(&xz, UINT64_MAX, LZMA_TELL_UNSUPPORTED_CHECK);
+        if (xzr != LZMA_OK)
+                return -EIO;
+
+        for (;;) {
+                uint8_t fd_buffer[BUFFER_SIZE];
+                ssize_t l;
+
+                if (ccount >= CHUNK_SIZE_LIMIT) {
+                        r = -EBADMSG;
+                        goto finish;
+                }
+
+                l = read(fd, fd_buffer, sizeof(fd_buffer));
+                if (l < 0) {
+                        r = -errno;
+                        goto finish;
+                }
+
+                ccount += l;
+
+                if (l == 0) {
+                        if (!got_xz_eof) {
+                                r = -EPIPE;
+                                goto finish;
+                        }
+
+                        break;
+                }
+
+                xz.next_in = fd_buffer;
+                xz.avail_in = l;
+
+                do {
+                        void *p;
+
+                        if (dcount >= CHUNK_SIZE_LIMIT) {
+                                r = -EBADMSG;
+                                goto finish;
+                        }
+
+                        p = realloc_buffer_extend(buffer, BUFFER_SIZE);
+                        if (!p) {
+                                r = -ENOMEM;
+                                goto finish;
+                        }
+
+                        xz.next_out = p;
+                        xz.avail_out = BUFFER_SIZE;
+
+                        xzr = lzma_code(&xz, LZMA_RUN);
+                        if (xzr != LZMA_OK && xzr != LZMA_STREAM_END) {
+                                r = -EIO;
+                                goto finish;
+                        }
+
+                        realloc_buffer_shorten(buffer, xz.avail_out);
+                        dcount += BUFFER_SIZE - xz.avail_out;
+
+                        if (xzr == LZMA_STREAM_END) {
+
+                                if (xz.avail_in > 0) {
+                                        r = -EBADMSG;
+                                        goto finish;
+                                }
+
+                                got_xz_eof = true;
+                        }
+
+                } while (xz.avail_in > 0);
+        }
+
+        if (ccount == 0 || dcount == 0) {
+                r = -EBADMSG;
+                goto finish;
+        }
+
+        r = 0;
+
+finish:
+        lzma_end(&xz);
+        return r;
+}
+
+int ca_load_and_compress_fd(int fd, ReallocBuffer *buffer) {
+        uint64_t ccount = 0, dcount = 0;
+        lzma_stream xz = {};
+        lzma_ret xzr;
+        int r;
+
+        if (fd < 0)
+                return -EINVAL;
+        if (!buffer)
+                return -EINVAL;
+
+        xzr = lzma_easy_encoder(&xz, LZMA_PRESET_DEFAULT, LZMA_CHECK_CRC64);
+        if (xzr != LZMA_OK)
+                return -EIO;
+
+        for (;;) {
+                uint8_t fd_buffer[BUFFER_SIZE];
+                ssize_t l;
+
+                if (dcount >= CHUNK_SIZE_LIMIT) {
+                        r = -EBADMSG;
+                        goto finish;
+                }
+
+                l = read(fd, fd_buffer, sizeof(fd_buffer));
+                if (l < 0) {
+                        r = -errno;
+                        goto finish;
+                }
+
+                dcount += l;
+
+                xz.next_in = fd_buffer;
+                xz.avail_in = l;
+
+                do {
+                        uint8_t *p;
+
+                        if (ccount >= CHUNK_SIZE_LIMIT) {
+                                r = -EBADMSG;
+                                goto finish;
+                        }
+
+                        p = realloc_buffer_extend(buffer, BUFFER_SIZE);
+                        if (!p) {
+                                r = -ENOMEM;
+                                goto finish;
+                        }
+
+                        xz.next_out = p;
+                        xz.avail_out = BUFFER_SIZE;
+
+                        xzr = lzma_code(&xz, (size_t) l < sizeof(fd_buffer) ? LZMA_FINISH : LZMA_RUN);
+                        if (xzr != LZMA_OK && xzr != LZMA_STREAM_END) {
+                                r = -EIO;
+                                goto finish;
+                        }
+
+                        realloc_buffer_shorten(buffer, xz.avail_out);
+                        ccount += BUFFER_SIZE - xz.avail_out;
+
+                        if (xzr == LZMA_STREAM_END) {
+                                assert(xz.avail_in == 0);
+                                goto done;
+                        }
+
+                } while (xz.avail_in > 0);
+        }
+
+done:
+        if (ccount == 0 || dcount == 0) {
+                r = -EBADMSG;
+                goto finish;
+        }
+
+        r = 0;
+
+finish:
+        lzma_end(&xz);
+        return r;
+}
+
+int ca_save_fd(int fd, const void *data, size_t size) {
+        if (fd < 0)
+                return -EINVAL;
+        if (size == 0)
+                return -EINVAL;
+        if (size > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+        if (!data)
+                return -EINVAL;
+
+        return loop_write(fd, data, size);
+}
+
+int ca_save_and_compress_fd(int fd, const void *data, size_t size) {
+        uint64_t ccount = 0;
+        lzma_stream xz = {};
+        lzma_ret xzr;
+        int r;
+
+        if (fd < 0)
+                return -EINVAL;
+        if (size == 0)
+                return -EINVAL;
+        if (size > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+        if (!data)
+                return -EINVAL;
+
+        xzr = lzma_easy_encoder(&xz, LZMA_PRESET_DEFAULT, LZMA_CHECK_CRC64);
+        if (xzr != LZMA_OK)
+                return -EIO;
+
+        xz.next_in = data;
+        xz.avail_in = size;
+
+        for (;;) {
+                uint8_t buffer[BUFFER_SIZE];
+
+                if (ccount >= CHUNK_SIZE_LIMIT) {
+                        r = -EINVAL;
+                        goto finish;
+                }
+
+                xz.next_out = buffer;
+                xz.avail_out = sizeof(buffer);
+
+                xzr = lzma_code(&xz, LZMA_FINISH);
+                if (xzr != LZMA_OK && xzr != LZMA_STREAM_END) {
+                        r = -EIO;
+                        goto finish;
+                }
+
+                r = loop_write(fd, buffer, sizeof(buffer) - xz.avail_out);
+                if (r < 0)
+                        goto finish;
+
+                ccount += sizeof(buffer) - xz.avail_out;
+
+                if (xzr == LZMA_STREAM_END)
+                        break;
+        }
+
+        if (ccount == 0) {
+                r = -EINVAL;
+                goto finish;
+        }
+
+        r = 0;
+
+finish:
+        lzma_end(&xz);
+        return r;
+}
+
+int ca_save_and_decompress_fd(int fd, const void *data, size_t size) {
+        uint64_t dcount = 0;
+        lzma_stream xz = {};
+        lzma_ret xzr;
+        int r;
+
+        if (fd < 0)
+                return -EINVAL;
+        if (size == 0)
+                return -EINVAL;
+        if (size > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+        if (!data)
+                return -EINVAL;
+
+        xzr = lzma_stream_decoder(&xz, UINT64_MAX, LZMA_TELL_UNSUPPORTED_CHECK);
+        if (xzr != LZMA_OK)
+                return -EIO;
+
+        xz.next_in = data;
+        xz.avail_in = size;
+
+        for (;;) {
+                uint8_t buffer[BUFFER_SIZE];
+
+                if (dcount >= CHUNK_SIZE_LIMIT) {
+                        r = -EINVAL;
+                        goto finish;
+                }
+
+                xz.next_out = buffer;
+                xz.avail_out = sizeof(buffer);
+
+                xzr = lzma_code(&xz, LZMA_FINISH);
+                if (xzr != LZMA_OK && xzr != LZMA_STREAM_END) {
+                        r = -EIO;
+                        goto finish;
+                }
+
+                r = loop_write(fd, buffer, sizeof(buffer) - xz.avail_out);
+                if (r < 0)
+                        goto finish;
+
+                dcount += sizeof(buffer) - xz.avail_out;
+
+                if (xzr == LZMA_STREAM_END) {
+
+                        if (xz.avail_in > 0) {
+                                r = -EBADMSG;
+                                goto finish;
+                        }
+
+                        break;
+                }
+        }
+
+        if (dcount == 0) {
+                r = -EINVAL;
+                goto finish;
+        }
+
+        r = 0;
+
+finish:
+        lzma_end(&xz);
+        return r;
+}
+
+int ca_compress(const void *data, size_t size, ReallocBuffer *buffer) {
+        uint64_t ccount = 0;
+        lzma_stream xz = {};
+        lzma_ret xzr;
+        int r;
+
+        if (!buffer)
+                return -EINVAL;
+        if (size == 0)
+                return -EINVAL;
+        if (size > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+        if (!data)
+                return -EINVAL;
+
+        xzr = lzma_easy_encoder(&xz, LZMA_PRESET_DEFAULT, LZMA_CHECK_CRC64);
+        if (xzr != LZMA_OK)
+                return -EIO;
+
+        xz.next_in = data;
+        xz.avail_in = size;
+
+        for (;;) {
+                uint8_t *p;
+
+                if (ccount >= CHUNK_SIZE_LIMIT) {
+                        r = -EINVAL;
+                        goto finish;
+                }
+
+                p = realloc_buffer_extend(buffer, BUFFER_SIZE);
+                if (!p) {
+                        r = -ENOMEM;
+                        goto finish;
+                }
+
+                xz.next_out = p;
+                xz.avail_out = BUFFER_SIZE;
+
+                xzr = lzma_code(&xz, LZMA_FINISH);
+                if (xzr != LZMA_OK && xzr != LZMA_STREAM_END) {
+                        r = -EIO;
+                        goto finish;
+                }
+
+                realloc_buffer_shorten(buffer, xz.avail_out);
+                ccount += BUFFER_SIZE - xz.avail_out;
+
+                if (xzr == LZMA_STREAM_END)
+                        break;
+        }
+
+        if (ccount == 0) {
+                r = -EINVAL;
+                goto finish;
+        }
+
+        r = 0;
+
+finish:
+        lzma_end(&xz);
+        return r;
+}
+
+int ca_decompress(const void *data, size_t size, ReallocBuffer *buffer) {
+        uint64_t dcount = 0;
+        lzma_stream xz = {};
+        lzma_ret xzr;
+        int r;
+
+        if (!buffer)
+                return -EINVAL;
+        if (size == 0)
+                return -EINVAL;
+        if (size > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+        if (!data)
+                return -EINVAL;
+
+        xzr = lzma_stream_decoder(&xz, UINT64_MAX, LZMA_TELL_UNSUPPORTED_CHECK);
+        if (xzr != LZMA_OK)
+                return -EIO;
+
+        xz.next_in = data;
+        xz.avail_in = size;
+
+        for (;;) {
+                uint8_t *p;
+
+                if (dcount >= CHUNK_SIZE_LIMIT) {
+                        r = -EINVAL;
+                        goto finish;
+                }
+
+                p = realloc_buffer_extend(buffer, BUFFER_SIZE);
+                if (!p) {
+                        r = -ENOMEM;
+                        goto finish;
+                }
+
+                xz.next_out = p;
+                xz.avail_out = BUFFER_SIZE;
+
+                xzr = lzma_code(&xz, LZMA_FINISH);
+                if (xzr != LZMA_OK && xzr != LZMA_STREAM_END) {
+                        r = -EIO;
+                        goto finish;
+                }
+
+                realloc_buffer_shorten(buffer, xz.avail_out);
+                dcount += BUFFER_SIZE - xz.avail_out;
+
+                if (xzr == LZMA_STREAM_END) {
+
+                        if (xz.avail_in > 0) {
+                                r = -EBADMSG;
+                                goto finish;
+                        }
+
+                        break;
+                }
+        }
+
+        if (dcount == 0) {
+                r = -EINVAL;
+                goto finish;
+        }
+
+        r = 0;
+
+finish:
+        lzma_end(&xz);
+        return r;
+}
+
+int ca_chunk_file_open(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix, int flags) {
 
         char path[CHUNK_PATH_SIZE(prefix, suffix)];
         bool made = false;
@@ -55,7 +549,10 @@ int ca_open_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunki
         ca_format_chunk_path(prefix, chunkid, suffix, path);
 
         if ((flags & O_CREAT) == O_CREAT) {
-                path[4] = 0;
+                char *slash;
+
+                assert_se(slash = strrchr(path, '/'));
+                *slash = 0;
 
                 if (mkdirat(chunk_fd, path, 0777) < 0) {
                         if (errno != EEXIST)
@@ -63,7 +560,7 @@ int ca_open_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunki
                 } else
                         made = true;
 
-                path[4] = '/';
+                *slash = '/';
         }
 
         fd = openat(chunk_fd, path, flags, 0777);
@@ -71,7 +568,11 @@ int ca_open_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunki
                 r = -errno;
 
                 if (made) {
-                        path[4] = 0;
+                        char *slash;
+
+                        assert_se(slash = strrchr(path, '/'));
+                        *slash = 0;
+
                         (void) unlinkat(chunk_fd, path, AT_REMOVEDIR);
                 }
 
@@ -81,7 +582,7 @@ int ca_open_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunki
         return fd;
 }
 
-static int ca_access_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix) {
+static int ca_chunk_file_access(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix) {
         char path[CHUNK_PATH_SIZE(prefix, suffix)];
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
@@ -97,7 +598,7 @@ static int ca_access_chunk_file(int chunk_fd, const char *prefix, const CaChunkI
         return 1;
 }
 
-static int ca_remove_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix) {
+static int ca_chunk_file_remove(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix) {
         char path[CHUNK_PATH_SIZE(prefix, suffix)];
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
@@ -116,7 +617,7 @@ static int ca_remove_chunk_file(int chunk_fd, const char *prefix, const CaChunkI
         return 0;
 }
 
-static int ca_rename_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *old_suffix, const char *new_suffix) {
+static int ca_chunk_file_rename(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *old_suffix, const char *new_suffix) {
         char old_path[CHUNK_PATH_SIZE(prefix, old_suffix)], new_path[CHUNK_PATH_SIZE(prefix, new_suffix)];
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
@@ -134,174 +635,137 @@ static int ca_rename_chunk_file(int chunk_fd, const char *prefix, const CaChunkI
         return 0;
 }
 
-int ca_load_fd(int fd, ReallocBuffer *buffer) {
-        if (fd < 0)
-                return -EINVAL;
-        if (!buffer)
-                return -EINVAL;
+int ca_chunk_file_load(
+                int chunk_fd,
+                const char *prefix,
+                const CaChunkID *chunkid,
+                CaChunkCompression desired_compression,
+                ReallocBuffer *buffer,
+                CaChunkCompression *ret_effective_compression) {
 
-        for (;;) {
-                ssize_t l;
-                void *p;
-
-                p = realloc_buffer_extend(buffer, BUFFER_SIZE);
-                if (!p)
-                        return -ENOMEM;
-
-                l = read(fd, p, BUFFER_SIZE);
-                if (l < 0)
-                        return -errno;
-
-                realloc_buffer_shorten(buffer, BUFFER_SIZE - l);
-                if (l == 0)
-                        break;
-        }
-
-        return 0;
-}
-
-int ca_load_compressed_fd(int fd, ReallocBuffer *buffer) {
-        lzma_stream xz = {};
-        lzma_ret xzr;
-        bool got_xz_eof = false;
-        int r;
-
-        if (fd < 0)
-                return -EINVAL;
-        if (!buffer)
-                return -EINVAL;
-
-        xzr = lzma_stream_decoder(&xz, UINT64_MAX, LZMA_TELL_UNSUPPORTED_CHECK);
-        if (xzr != LZMA_OK)
-                return -EIO;
-
-        for (;;) {
-                uint8_t fd_buffer[BUFFER_SIZE];
-                ssize_t l;
-
-                l = read(fd, fd_buffer, sizeof(fd_buffer));
-                if (l < 0) {
-                        r = -errno;
-                        goto finish;
-                }
-                if (l == 0) {
-                        if (!got_xz_eof) {
-                                r = -EPIPE;
-                                goto finish;
-                        }
-
-                        break;
-                }
-
-                xz.next_in = fd_buffer;
-                xz.avail_in = l;
-
-                while (xz.avail_in > 0) {
-                        void *p;
-
-                        p = realloc_buffer_extend(buffer, BUFFER_SIZE);
-                        if (!p) {
-                                r = -ENOMEM;
-                                goto finish;
-                        }
-
-                        xz.next_out = p;
-                        xz.avail_out = BUFFER_SIZE;
-
-                        xzr = lzma_code(&xz, LZMA_RUN);
-                        if (xzr != LZMA_OK && xzr != LZMA_STREAM_END) {
-                                r = -EIO;
-                                goto finish;
-                        }
-
-                        realloc_buffer_shorten(buffer, xz.avail_out);
-
-                        if (xzr == LZMA_STREAM_END) {
-
-                                if (xz.avail_in > 0) {
-                                        r = -EBADMSG;
-                                        goto finish;
-                                }
-
-                                got_xz_eof = true;
-                        }
-                }
-        }
-
-        r = 0;
-
-finish:
-        lzma_end(&xz);
-        return r;
-}
-
-int ca_load_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, ReallocBuffer *buffer) {
         int fd, r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
         if (!chunkid)
                 return -EINVAL;
+        if (desired_compression < 0)
+                return -EINVAL;
+        if (desired_compression >= _CA_CHUNK_COMPRESSION_MAX)
+                return -EINVAL;
         if (!buffer)
                 return -EINVAL;
 
-        fd = ca_open_chunk_file(chunk_fd, prefix, chunkid, NULL, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+        fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, NULL, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
         if (fd < 0) {
                 if (fd == -ELOOP) /* If it's a symlink, then it's marked as "missing" */
                         return -EADDRNOTAVAIL;
                 if (fd != -ENOENT)
                         return fd;
 
-                fd = ca_open_chunk_file(chunk_fd, prefix, chunkid, ".xz", O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+                fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, ".xz", O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
                 if (fd == -ELOOP)
                         return -EADDRNOTAVAIL;
                 if (fd < 0)
                         return fd;
 
-                r = ca_load_compressed_fd(fd, buffer);
-        } else
-                r = ca_load_fd(fd, buffer);
+                if (desired_compression == CA_CHUNK_UNCOMPRESSED)
+                        r = ca_load_and_decompress_fd(fd, buffer);
+                else
+                        r = ca_load_fd(fd, buffer);
+
+                if (r >= 0 && ret_effective_compression)
+                        *ret_effective_compression = desired_compression == CA_CHUNK_AS_IS ? CA_CHUNK_COMPRESSED : desired_compression;
+
+        } else {
+                if (desired_compression == CA_CHUNK_COMPRESSED)
+                        r = ca_load_and_compress_fd(fd, buffer);
+                else
+                        r = ca_load_fd(fd, buffer);
+
+                if (r >= 0 && ret_effective_compression)
+                        *ret_effective_compression = desired_compression == CA_CHUNK_AS_IS ? CA_CHUNK_UNCOMPRESSED : desired_compression;
+        }
 
         safe_close(fd);
         return r;
 }
 
-int ca_save_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid, bool compressed, const void *p, size_t l) {
+int ca_chunk_file_save(
+                int chunk_fd,
+                const char *prefix,
+                const CaChunkID *chunkid,
+                CaChunkCompression effective_compression,
+                CaChunkCompression desired_compression,
+                const void *p,
+                size_t l) {
+
+        char *suffix;
         int fd, r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
         if (!chunkid)
                 return -EINVAL;
+        if (desired_compression < 0)
+                return -EINVAL;
+        if (desired_compression >= _CA_CHUNK_COMPRESSION_MAX)
+                return -EINVAL;
+        if (effective_compression < 0)
+                return -EINVAL;
+        if (effective_compression >= _CA_CHUNK_COMPRESSION_MAX)
+                return -EINVAL;
+        if (effective_compression == CA_CHUNK_AS_IS)
+                return -EINVAL;
         if (!p)
                 return -EINVAL;
         if (l <= 0)
                 return -EINVAL;
 
-        r = ca_test_chunk_file(chunk_fd, prefix, chunkid);
+        r = ca_chunk_file_test(chunk_fd, prefix, chunkid);
         if (r < 0)
                 return r;
         if (r > 0)
                 return -EEXIST;
 
-        fd = ca_open_chunk_file(chunk_fd, prefix, chunkid, ".tmp", O_WRONLY|O_CREAT|O_EXCL|O_NOCTTY|O_CLOEXEC);
-        r = loop_write(fd, p, l);
+        if (asprintf(&suffix, ".%" PRIx64 ".tmp", random_u64()) < 0)
+                return -ENOMEM;
+
+        fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, suffix, O_WRONLY|O_CREAT|O_EXCL|O_NOCTTY|O_CLOEXEC);
+        if (fd < 0) {
+                free(suffix);
+                return fd;
+        }
+
+        if (desired_compression == CA_CHUNK_AS_IS)
+                desired_compression = effective_compression;
+
+        if (desired_compression == effective_compression)
+                r = loop_write(fd, p, l);
+        else if (desired_compression == CA_CHUNK_COMPRESSED)
+                r = ca_save_and_compress_fd(fd, p, l);
+        else {
+                assert(desired_compression == CA_CHUNK_UNCOMPRESSED);
+                r = ca_save_and_decompress_fd(fd, p, l);
+        }
         safe_close(fd);
         if (r < 0)
                 goto fail;
 
-        r = ca_rename_chunk_file(chunk_fd, prefix, chunkid, ".tmp", compressed ? ".xz" : NULL);
+        r = ca_chunk_file_rename(chunk_fd, prefix, chunkid, suffix, desired_compression == CA_CHUNK_COMPRESSED ? ".xz" : NULL);
         if (r < 0)
                 goto fail;
 
+        free(suffix);
         return 0;
 
 fail:
-        (void) ca_remove_chunk_file(chunk_fd, prefix, chunkid, ".tmp");
+        (void) ca_chunk_file_remove(chunk_fd, prefix, chunkid, suffix);
+        free(suffix);
         return r;
 }
 
-int ca_save_chunk_missing(int chunk_fd, const char *prefix, const CaChunkID *chunkid) {
+int ca_chunk_file_mark_missing(int chunk_fd, const char *prefix, const CaChunkID *chunkid) {
         char path[CHUNK_PATH_SIZE(prefix, NULL)];
         int r;
 
@@ -310,7 +774,7 @@ int ca_save_chunk_missing(int chunk_fd, const char *prefix, const CaChunkID *chu
         if (!chunkid)
                 return -EINVAL;
 
-        r = ca_test_chunk_file(chunk_fd, prefix, chunkid);
+        r = ca_chunk_file_test(chunk_fd, prefix, chunkid);
         if (r < 0)
                 return r;
         if (r > 0)
@@ -324,7 +788,7 @@ int ca_save_chunk_missing(int chunk_fd, const char *prefix, const CaChunkID *chu
         return 0;
 }
 
-int ca_test_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunkid) {
+int ca_chunk_file_test(int chunk_fd, const char *prefix, const CaChunkID *chunkid) {
         int r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
@@ -332,11 +796,11 @@ int ca_test_chunk_file(int chunk_fd, const char *prefix, const CaChunkID *chunki
         if (!chunkid)
                 return -EINVAL;
 
-        r = ca_access_chunk_file(chunk_fd, prefix, chunkid, NULL);
+        r = ca_chunk_file_access(chunk_fd, prefix, chunkid, NULL);
         if (r != 0)
                 return r;
 
-        return ca_access_chunk_file(chunk_fd, prefix, chunkid, ".xz");
+        return ca_chunk_file_access(chunk_fd, prefix, chunkid, ".xz");
 }
 
 static bool ca_is_definitely_path(const char *s) {

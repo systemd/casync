@@ -71,6 +71,7 @@ typedef struct CaSync {
         ReallocBuffer buffer;
         ReallocBuffer index_buffer;
         ReallocBuffer archive_buffer;
+        ReallocBuffer compress_buffer;
 
         gcry_md_hd_t chunk_digest;
         gcry_md_hd_t archive_digest;
@@ -205,6 +206,7 @@ CaSync *ca_sync_unref(CaSync *s) {
         realloc_buffer_free(&s->buffer);
         realloc_buffer_free(&s->index_buffer);
         realloc_buffer_free(&s->archive_buffer);
+        realloc_buffer_free(&s->compress_buffer);
 
         gcry_md_close(s->chunk_digest);
         gcry_md_close(s->archive_digest);
@@ -952,14 +954,14 @@ static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l) {
         s->n_chunks++;
 
         if (s->wstore) {
-                r = ca_store_put(s->wstore, &id, p, l);
-                if (r < 0)
+                r = ca_store_put(s->wstore, &id, CA_CHUNK_UNCOMPRESSED, p, l);
+                if (r < 0 && r != -EEXIST)
                         return r;
         }
 
         if (s->cache_store) {
-                r = ca_store_put(s->cache_store, &id, p, l);
-                if (r < 0)
+                r = ca_store_put(s->cache_store, &id, CA_CHUNK_UNCOMPRESSED, p, l);
+                if (r < 0 && r != -EEXIST)
                         return r;
         }
 
@@ -1167,7 +1169,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                 if (!ca_sync_seed_ready(s))
                         return CA_SYNC_POLL;
 
-                r = ca_sync_get(s, &s->next_chunk, &p, &chunk_size);
+                r = ca_sync_get(s, &s->next_chunk, CA_CHUNK_UNCOMPRESSED, &p, &chunk_size, NULL);
                 if (r == -EAGAIN) /* Don't have this right now, but requested it now */
                         return CA_SYNC_STEP;
                 if (r == -EALREADY) /* Don't have this right now, but it was already enqueued. */
@@ -1384,7 +1386,7 @@ static int ca_sync_remote_push_chunk(CaSync *s) {
         if (r < 0)
                 return r;
 
-        r = ca_sync_get_local(s, &id, &p, &l);
+        r = ca_sync_get_local(s, &id, CA_CHUNK_COMPRESSED, &p, &l, NULL);
         if (r == -ENOENT) {
                 r = ca_remote_put_missing(s->remote_wstore, &id);
                 if (r < 0)
@@ -1395,7 +1397,7 @@ static int ca_sync_remote_push_chunk(CaSync *s) {
         if (r < 0)
                 return r;
 
-        r = ca_remote_put_chunk(s->remote_wstore, &id, false, p, l);
+        r = ca_remote_put_chunk(s->remote_wstore, &id, CA_CHUNK_COMPRESSED, p, l);
         if (r < 0)
                 return r;
 
@@ -1590,7 +1592,14 @@ int ca_sync_step(CaSync *s) {
         }
 }
 
-int ca_sync_get_local(CaSync *s, const CaChunkID *chunk_id, const void **ret, size_t *ret_size) {
+int ca_sync_get_local(
+                CaSync *s,
+                const CaChunkID *chunk_id,
+                CaChunkCompression desired_compression,
+                const void **ret,
+                size_t *ret_size,
+                CaChunkCompression *ret_effective_compression) {
+
         size_t i;
         int r;
 
@@ -1604,30 +1613,56 @@ int ca_sync_get_local(CaSync *s, const CaChunkID *chunk_id, const void **ret, si
                 return -EINVAL;
 
         for (i = 0; i < s->n_seeds; i++) {
-                r = ca_seed_get(s->seeds[i], chunk_id, ret, ret_size);
+                const void *p;
+                size_t l;
+
+                r = ca_seed_get(s->seeds[i], chunk_id, &p, &l);
                 if (r == -ESTALE) {
                         fprintf(stderr, "Chunk cache is not up-to-date, ignoring.\n");
                         continue;
                 }
-
-                if (r != -ENOENT)
+                if (r == -ENOENT)
+                        continue;
+                if (r < 0)
                         return r;
+
+                if (desired_compression == CA_CHUNK_COMPRESSED) {
+                        realloc_buffer_empty(&s->compress_buffer);
+
+                        r = ca_compress(p, l, &s->compress_buffer);
+                        if (r < 0)
+                                return r;
+
+                        *ret = realloc_buffer_data(&s->compress_buffer);
+                        *ret_size = realloc_buffer_size(&s->compress_buffer);
+
+                        if (ret_effective_compression)
+                                *ret_effective_compression = CA_CHUNK_COMPRESSED;
+                } else {
+                        *ret = p;
+                        *ret_size = l;
+
+                        if (ret_effective_compression)
+                                *ret_effective_compression = CA_CHUNK_UNCOMPRESSED;
+                }
+
+                return r;
         }
 
         if (s->wstore) {
-                r = ca_store_get(s->wstore, chunk_id, ret, ret_size);
+                r = ca_store_get(s->wstore, chunk_id, desired_compression, ret, ret_size, ret_effective_compression);
                 if (r != -ENOENT)
                         return r;
         }
 
         if (s->cache_store) {
-                r = ca_store_get(s->cache_store, chunk_id, ret, ret_size);
+                r = ca_store_get(s->cache_store, chunk_id, desired_compression, ret, ret_size, ret_effective_compression);
                 if (r != -ENOENT)
                         return r;
         }
 
         for (i = 0; i < s->n_rstores; i++) {
-                r = ca_store_get(s->rstores[i], chunk_id, ret, ret_size);
+                r = ca_store_get(s->rstores[i], chunk_id, desired_compression, ret, ret_size, ret_effective_compression);
                 if (r != -ENOENT)
                         return r;
         }
@@ -1635,7 +1670,13 @@ int ca_sync_get_local(CaSync *s, const CaChunkID *chunk_id, const void **ret, si
         return -ENOENT;
 }
 
-int ca_sync_get(CaSync *s, const CaChunkID *chunk_id, const void **ret, size_t *ret_size) {
+int ca_sync_get(CaSync *s,
+                const CaChunkID *chunk_id,
+                CaChunkCompression desired_compression,
+                const void **ret,
+                size_t *ret_size,
+                CaChunkCompression *ret_effective_compression) {
+
         size_t i;
         int r;
 
@@ -1648,18 +1689,18 @@ int ca_sync_get(CaSync *s, const CaChunkID *chunk_id, const void **ret, size_t *
         if (!ret_size)
                 return -EINVAL;
 
-        r = ca_sync_get_local(s, chunk_id, ret, ret_size);
+        r = ca_sync_get_local(s, chunk_id, desired_compression, ret, ret_size, ret_effective_compression);
         if (r != -ENOENT)
                 return r;
 
         if (s->remote_wstore) {
-                r = ca_remote_request(s->remote_wstore, chunk_id, false, ret, ret_size);
+                r = ca_remote_request(s->remote_wstore, chunk_id, false, desired_compression, ret, ret_size, ret_effective_compression);
                 if (r != -ENOENT)
                         return r;
         }
 
         for (i = 0; i < s->n_remote_rstores; i++) {
-                r = ca_remote_request(s->remote_rstores[i], chunk_id, false, ret, ret_size);
+                r = ca_remote_request(s->remote_rstores[i], chunk_id, false, desired_compression, ret, ret_size, ret_effective_compression);
                 if (r != -ENOENT)
                         return r;
         }

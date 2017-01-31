@@ -8,9 +8,13 @@
 #include "caprotocol.h"
 #include "caremote.h"
 #include "cautil.h"
+#include "chunker.h"
 #include "def.h"
 #include "realloc-buffer.h"
 #include "util.h"
+
+/* #undef EBADMSG */
+/* #define EBADMSG __LINE__ */
 
 #define REMOTE_BUFFER_SIZE (1024U*1024U)
 #define REMOTE_BUFFER_LOW (1024U*4U)
@@ -1085,10 +1089,11 @@ static int ca_remote_process_chunk(CaRemote *rr, const CaProtocolChunk *chunk) {
 
         ms = le64toh(chunk->header.size) - offsetof(CaProtocolChunk, data);
 
-        r = ca_save_chunk_file(rr->cache_fd,
+        r = ca_chunk_file_save(rr->cache_fd,
                                NULL,
                                &rr->last_chunk,
-                               le64toh(chunk->flags) & CA_PROTOCOL_CHUNK_COMPRESSED,
+                               (le64toh(chunk->flags) & CA_PROTOCOL_CHUNK_COMPRESSED) ? CA_CHUNK_COMPRESSED : CA_CHUNK_UNCOMPRESSED,
+                               CA_CHUNK_AS_IS,
                                chunk->data,
                                ms);
         if (r == -EEXIST)
@@ -1108,7 +1113,7 @@ static int ca_remote_process_missing(CaRemote *rr, const CaProtocolMissing *miss
         if (rr->cache_fd < 0)
                 return -ENOTTY;
 
-        r = ca_save_chunk_missing(rr->cache_fd, NULL, (const CaChunkID*) missing->chunk);
+        r = ca_chunk_file_mark_missing(rr->cache_fd, NULL, (const CaChunkID*) missing->chunk);
         if (r == -EEXIST)
                 return CA_REMOTE_STEP;
         if (r < 0)
@@ -1676,7 +1681,15 @@ int ca_remote_poll(CaRemote *rr, uint64_t timeout) {
         return 1;
 }
 
-int ca_remote_request(CaRemote *rr, const CaChunkID *chunk_id, bool high_priority, const void **ret, size_t *ret_size) {
+int ca_remote_request(
+                CaRemote *rr,
+                const CaChunkID *chunk_id,
+                bool high_priority,
+                CaChunkCompression desired_compression,
+                const void **ret,
+                size_t *ret_size,
+                CaChunkCompression *ret_effective_compression) {
+
         int r;
 
         if (!rr)
@@ -1697,7 +1710,7 @@ int ca_remote_request(CaRemote *rr, const CaChunkID *chunk_id, bool high_priorit
 
         realloc_buffer_empty(&rr->chunk_buffer);
 
-        r = ca_load_chunk_file(rr->cache_fd, NULL, chunk_id, &rr->chunk_buffer);
+        r = ca_chunk_file_load(rr->cache_fd, NULL, chunk_id, desired_compression, &rr->chunk_buffer, ret_effective_compression);
         if (r == -ENOENT) {
                 /* We don't have it right now. Enqueue it */
                 r = ca_remote_enqueue_request(rr, chunk_id, high_priority);
@@ -1715,6 +1728,7 @@ int ca_remote_request(CaRemote *rr, const CaChunkID *chunk_id, bool high_priorit
 
         *ret = realloc_buffer_data(&rr->chunk_buffer);
         *ret_size = realloc_buffer_size(&rr->chunk_buffer);
+
         return 1;
 }
 
@@ -1768,7 +1782,13 @@ int ca_remote_can_put_chunk(CaRemote *rr) {
         return 1;
 }
 
-int ca_remote_put_chunk(CaRemote *rr, const CaChunkID *chunk_id, bool compressed, const void *data, size_t size) {
+int ca_remote_put_chunk(
+                CaRemote *rr,
+                const CaChunkID *chunk_id,
+                CaChunkCompression compression,
+                const void *data,
+                size_t size) {
+
         CaProtocolChunk *chunk;
         uint64_t msz;
 
@@ -1779,6 +1799,10 @@ int ca_remote_put_chunk(CaRemote *rr, const CaChunkID *chunk_id, bool compressed
         if (!data)
                 return -EINVAL;
         if (size == 0)
+                return -EINVAL;
+        if (size > CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+        if (!IN_SET(compression, CA_CHUNK_COMPRESSED, CA_CHUNK_UNCOMPRESSED))
                 return -EINVAL;
 
         if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_CHUNKS) &&
@@ -1804,7 +1828,7 @@ int ca_remote_put_chunk(CaRemote *rr, const CaChunkID *chunk_id, bool compressed
 
         write_le64(&chunk->header.type, CA_PROTOCOL_CHUNK);
         write_le64(&chunk->header.size, msz);
-        write_le64(&chunk->flags, compressed ? CA_PROTOCOL_CHUNK_COMPRESSED : 0);
+        write_le64(&chunk->flags, compression == CA_CHUNK_COMPRESSED ? CA_PROTOCOL_CHUNK_COMPRESSED : 0);
 
         memcpy(chunk->chunk, chunk_id, CA_CHUNK_ID_SIZE);
         memcpy(chunk->data, data, size);
@@ -2044,7 +2068,13 @@ int ca_remote_has_pending_requests(CaRemote *rr) {
         return 0;
 }
 
-int ca_remote_next_chunk(CaRemote *rr, CaChunkID *ret_id, const void **ret_data, size_t *ret_size) {
+int ca_remote_next_chunk(
+                CaRemote *rr,
+                CaChunkCompression desired_compression,
+                CaChunkID *ret_id,
+                const void **ret_data,
+                size_t *ret_size,
+                CaChunkCompression *ret_effective_compression) {
         int r;
 
         if (!rr)
@@ -2060,12 +2090,15 @@ int ca_remote_next_chunk(CaRemote *rr, CaChunkID *ret_id, const void **ret_data,
         if (ret_data) {
                 realloc_buffer_empty(&rr->chunk_buffer);
 
-                r = ca_load_chunk_file(rr->cache_fd, NULL, &rr->last_chunk, &rr->chunk_buffer);
+                r = ca_chunk_file_load(rr->cache_fd, NULL, &rr->last_chunk, desired_compression, &rr->chunk_buffer, ret_effective_compression);
                 if (r < 0)
                         return r;
 
                 *ret_data = realloc_buffer_data(&rr->chunk_buffer);
                 *ret_size = realloc_buffer_size(&rr->chunk_buffer);
+        } else {
+                if (ret_effective_compression)
+                        *ret_effective_compression = desired_compression;
         }
 
         *ret_id = rr->last_chunk;

@@ -4,6 +4,7 @@
 #include <inttypes.h>
 
 #include "cachunkid.h"
+#include "cautil.h"
 
 typedef struct CaSync CaSync;
 
@@ -61,8 +62,8 @@ int ca_sync_current_mode(CaSync *sync, mode_t *ret);
 int ca_sync_get_digest(CaSync *s, CaChunkID *ret);
 
 /* Low level chunk access */
-int ca_sync_get_local(CaSync *s, const CaChunkID *chunk_id, const void **ret, size_t *ret_size);
-int ca_sync_get(CaSync *s, const CaChunkID *chunk_id, const void **ret, size_t *ret_size);
+int ca_sync_get_local(CaSync *s, const CaChunkID *chunk_id, CaChunkCompression desired_compression, const void **ret, size_t *ret_size, CaChunkCompression *ret_effective_compression);
+int ca_sync_get(CaSync *s, const CaChunkID *chunk_id, CaChunkCompression desired_compression, const void **ret, size_t *ret_size, CaChunkCompression *ret_effective_compression);
 int ca_sync_has(CaSync *s, const CaChunkID *chunk_id);
 
 int ca_sync_make_chunk_id(CaSync *s, const void *p, size_t l, CaChunkID *ret);

@@ -333,7 +333,7 @@ static int run(int argc, char *argv[]) {
                 if (r < 0)
                         goto finish;
 
-                r = ca_remote_put_chunk(rr, &id, true, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
+                r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
                 if (r < 0) {
                         fprintf(stderr, "Failed to write chunk: %s\n", strerror(-r));
                         goto finish;
