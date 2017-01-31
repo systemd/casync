@@ -39,6 +39,7 @@
 /configure
 /libtool
 /stamp-*
+/test-cachunk
 /test-cachunker
 /test-caencoder
 /test-caindex

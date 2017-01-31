@@ -59,6 +59,7 @@ AM_CPPFLAGS = \
 	-I $(top_srcdir)/src
 
 tests = \
+	test-cachunk \
 	test-cachunker \
 	test-caencoder \
 	test-casync \
@@ -79,6 +80,8 @@ TESTS = \
 	test-script.sh
 
 lib_SOURCES = \
+	src/cachunk.c \
+	src/cachunk.h \
 	src/cachunker.c \
 	src/cachunker.h \
 	src/cachunkid.c \
@@ -201,6 +204,21 @@ test_cautil_CFLAGS = \
 	$(LIBGCRYPT_CFLAGS)
 
 test_cautil_LDADD = \
+	$(LIBLZMA_LIBS) \
+	$(LIBGCRYPT_LIBS)
+
+## test-cachunk
+
+test_cachunk_SOURCES = \
+	test/test-cachunk.c \
+	$(lib_SOURCES)
+
+test_cachunk_CFLAGS = \
+	$(AM_CFLAGS) \
+	$(LIBLZMA_CFLAGS) \
+	$(LIBGCRYPT_CFLAGS)
+
+test_cachunk_LDADD = \
 	$(LIBLZMA_LIBS) \
 	$(LIBGCRYPT_LIBS)
 

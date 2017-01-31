@@ -4,8 +4,8 @@
 #include <inttypes.h>
 #include <stdbool.h>
 
+#include "cachunk.h"
 #include "cachunkid.h"
-#include "cautil.h"
 
 typedef struct CaRemote CaRemote;
 

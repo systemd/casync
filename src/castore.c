@@ -3,8 +3,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "cachunk.h"
 #include "castore.h"
-#include "cautil.h"
 #include "def.h"
 #include "realloc-buffer.h"
 #include "util.h"

@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
+#include "cachunk.h"
 #include "caformat-util.h"
 #include "caformat.h"
 #include "caindex.h"
@@ -14,7 +15,6 @@
 #include "caremote.h"
 #include "castore.h"
 #include "casync.h"
-#include "cautil.h"
 #include "parse-util.h"
 #include "util.h"
 

@@ -3,6 +3,7 @@
 #include <sys/poll.h>
 #include <sys/stat.h>
 
+#include "cachunk.h"
 #include "cachunker.h"
 #include "cadecoder.h"
 #include "caencoder.h"
@@ -14,7 +15,6 @@
 #include "caseed.h"
 #include "castore.h"
 #include "casync.h"
-#include "cautil.h"
 #include "def.h"
 #include "gcrypt-util.h"
 #include "realloc-buffer.h"
