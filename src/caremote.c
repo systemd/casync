@@ -2099,6 +2099,8 @@ int ca_remote_next_chunk(
         } else {
                 if (ret_effective_compression)
                         *ret_effective_compression = desired_compression;
+
+                r = 0;
         }
 
         *ret_id = rr->last_chunk;
