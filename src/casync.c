@@ -66,7 +66,7 @@ typedef struct CaSync {
         char *archive_path, *temporary_archive_path;
 
         mode_t base_mode;
-        mode_t make_perm_mode;
+        mode_t make_mode;
 
         ReallocBuffer buffer;
         ReallocBuffer index_buffer;
@@ -93,7 +93,7 @@ static CaSync *ca_sync_new(void) {
 
         s->base_fd = s->archive_fd = -1;
         s->base_mode = (mode_t) -1;
-        s->make_perm_mode = (mode_t) -1;
+        s->make_mode = (mode_t) -1;
 
         s->chunker = (CaChunker) CA_CHUNKER_INIT;
 
@@ -421,18 +421,18 @@ int ca_sync_set_base_path(CaSync *s, const char *path) {
         return 0;
 }
 
-int ca_sync_set_make_perm_mode(CaSync *s, mode_t m) {
+int ca_sync_set_make_mode(CaSync *s, mode_t m) {
         if (!s)
                 return -EINVAL;
-        if (m & ~(S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH))
+        if (m & ~0666)
                 return -EINVAL;
         if (s->direction != CA_SYNC_ENCODE)
                 return -ENOTTY;
 
-        if (s->make_perm_mode != (mode_t) -1)
+        if (s->make_mode != (mode_t) -1)
                 return -EBUSY;
 
-        s->make_perm_mode = m;
+        s->make_mode = m;
         return 0;
 }
 
@@ -752,8 +752,7 @@ static int ca_sync_start(CaSync *s) {
                                 return r;
                 }
 
-                s->archive_fd = open(s->temporary_archive_path, O_WRONLY|O_CLOEXEC|O_NOCTTY|O_CREAT|O_EXCL,
-                                     s->make_perm_mode & 0666);
+                s->archive_fd = open(s->temporary_archive_path, O_WRONLY|O_CLOEXEC|O_NOCTTY|O_CREAT|O_EXCL, s->make_mode & 0666);
                 if (s->archive_fd < 0) {
                         s->temporary_archive_path = mfree(s->temporary_archive_path);
                         return -errno;
@@ -887,6 +886,12 @@ static int ca_sync_start(CaSync *s) {
                 r = ca_index_set_chunk_size_max(s->index, s->chunker.chunk_size_max);
                 if (r < 0)
                         return r;
+
+                if (s->make_mode != (mode_t) -1) {
+                        r = ca_index_set_make_mode(s->index, s->make_mode);
+                        if (r < 0 && r != -ENOTTY)
+                                return r;
+                }
         }
 
         if (s->index) {

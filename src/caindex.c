@@ -22,6 +22,7 @@ struct CaIndex {
 
         int open_flags;
         int fd;
+        mode_t make_mode;
 
         char *path;
         char *temporary_path;
@@ -48,6 +49,8 @@ static CaIndex* ca_index_new(void) {
                 return NULL;
 
         i->fd = -1;
+        i->make_mode = (mode_t) -1;
+
         return i;
 }
 
@@ -117,6 +120,21 @@ CaIndex *ca_index_unref(CaIndex *i) {
         return mfree(i);
 }
 
+int ca_index_set_make_mode(CaIndex *i, mode_t m) {
+        if (!i)
+                return -EINVAL;
+        if (m & ~0666)
+                return -EINVAL;
+        if (i->mode == CA_INDEX_READ)
+                return -ENOTTY;
+
+        if (i->make_mode != (mode_t) -1)
+                return -EBUSY;
+
+        i->make_mode = m;
+        return 0;
+}
+
 int ca_index_set_fd(CaIndex *i, int fd) {
         if (!i)
                 return -EINVAL;
@@ -184,7 +202,7 @@ static int ca_index_open_fd(CaIndex *i) {
                 assert(false);
         }
 
-        i->fd = open(p, i->open_flags, 0666);
+        i->fd = open(p, i->open_flags, 0666 & i->make_mode);
         if (i->fd < 0)
                 return -errno;
 

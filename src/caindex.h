@@ -15,6 +15,8 @@ CaIndex *ca_index_unref(CaIndex *i);
 int ca_index_set_fd(CaIndex *i, int fd);
 int ca_index_set_path(CaIndex *i, const char *path);
 
+int ca_index_set_make_mode(CaIndex *i, mode_t m);
+
 int ca_index_open(CaIndex *i);
 
 int ca_index_install(CaIndex *i);

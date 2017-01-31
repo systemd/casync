@@ -23,6 +23,9 @@ CaSync *ca_sync_unref(CaSync *sync);
 int ca_sync_set_feature_flags(CaSync *s, uint64_t flags);
 int ca_sync_get_feature_flags(CaSync *s, uint64_t *ret);
 
+/* Mode mask to use for created archive or index files */
+int ca_sync_set_make_mode(CaSync *sync, mode_t mode);
+
 /* The index file, that contains the hashes + offsets */
 int ca_sync_set_index_fd(CaSync *sync, int fd);
 int ca_sync_set_index_path(CaSync *sync, const char *path);
@@ -32,7 +35,6 @@ int ca_sync_set_index_auto(CaSync *s, const char *locator);
 /* The raw, unarchived ("user") tree */
 int ca_sync_set_base_fd(CaSync *sync, int fd);
 int ca_sync_set_base_path(CaSync *sync, const char *path);
-int ca_sync_set_make_perm_mode(CaSync *sync, mode_t mode);
 int ca_sync_set_base_mode(CaSync *sync, mode_t mode);
 
 /* The serialization of the user tree */
