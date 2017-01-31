@@ -27,7 +27,7 @@ CaStore* ca_store_new(void) {
         if (!store)
                 return NULL;
 
-        store->compression = CA_CHUNK_AS_IS;
+        store->compression = CA_CHUNK_COMPRESSED;
         return store;
 }
 
@@ -45,7 +45,7 @@ CaStore *ca_store_new_cache(void) {
                 return NULL;
         }
 
-        s->compression = CA_CHUNK_UNCOMPRESSED;
+        s->compression = CA_CHUNK_AS_IS;
         return s;
 }
 
