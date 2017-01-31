@@ -302,7 +302,7 @@ static int ca_remote_url_prefix_install(CaRemote *rr, const char *url) {
         if (!e)
                 return -EINVAL;
 
-        k = strspn(e, HOSTNAME_CHARSET "@");
+        k = strspn(e, HOSTNAME_CHARSET "@:");
         if (k <= 0)
                 return -EINVAL;
 
