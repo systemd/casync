@@ -53,7 +53,7 @@ bool ca_is_url(const char *s) {
         if (!e)
                 return false;
 
-        k = strspn(e, HOSTNAME_CHARSET "@:");
+        k = strspn(e, HOSTNAME_CHARSET "@:[]");
         if (k <= 0)
                 return false;
 

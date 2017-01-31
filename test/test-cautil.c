@@ -72,6 +72,8 @@ static void test_classify_locator(void) {
         assert_se(ca_classify_locator("http://foobar.com/xyz.txt?piff=paff") == CA_LOCATOR_URL);
         assert_se(ca_classify_locator("http://user@foobar.com/xyz.txt?piff=paff") == CA_LOCATOR_URL);
         assert_se(ca_classify_locator("http://user@localhost:1234/xyz.txt?piff=paff") == CA_LOCATOR_URL);
+        assert_se(ca_classify_locator("http://127.0.0.1:1234/xyz.txt?piff=paff") == CA_LOCATOR_URL);
+        assert_se(ca_classify_locator("http://[::]:1234/xyz.txt?piff=paff") == CA_LOCATOR_URL);
         assert_se(ca_classify_locator("http://user@foobar.com") == CA_LOCATOR_URL);
         assert_se(ca_classify_locator("foobar:quux.txt") == CA_LOCATOR_SSH);
         assert_se(ca_classify_locator("lennart@foobar:quux.txt") == CA_LOCATOR_SSH);
