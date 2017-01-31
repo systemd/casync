@@ -26,6 +26,8 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.catar.digest
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.catar.digest2
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.caidx.digest
 
+### Test Extraction
+
 @top_builddir@/casync extract $SCRATCH_DIR/test.catar $SCRATCH_DIR/extract-catar
 @top_builddir@/casync extract $SCRATCH_DIR/test.caidx $SCRATCH_DIR/extract-caidx
 
@@ -47,6 +49,8 @@ diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test.extract-caidx.list
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.extract-catar.digest
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.extract-caidx.digest
 
+### Test SSH Remoting
+
 CASYNC_SSH_PATH=@top_srcdir@/test/pseudo-ssh
 export CASYNC_SSH_PATH
 
@@ -67,6 +71,24 @@ rm -rf $SCRATCH_DIR/default.castr
 
 diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test2.caidx.list
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test2.caidx.digest
+
+### Test HTTP Remoting
+
+CASYNC_PROTOCOL_PATH=@top_builddir@
+export CASYNC_PROTOCOL_PATH
+
+@top_srcdir@/test/http-server.py $SCRATCH_DIR &
+HTTP_PID=$!
+
+sleep 3
+
+@top_builddir@/casync list http://localhost:4321/test2.caidx > $SCRATCH_DIR/test3.caidx.list
+@top_builddir@/casync digest http://localhost:4321/test2.caidx > $SCRATCH_DIR/test3.caidx.digest
+
+diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test3.caidx.list
+diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test3.caidx.digest
+
+kill $HTTP_PID
 
 chmod -R u+rwx $SCRATCH_DIR
 rm -rf $SCRATCH_DIR

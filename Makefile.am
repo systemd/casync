@@ -1,3 +1,5 @@
+#  -*- Mode: makefile; indent-tabs-mode: t -*-
+
 CLOCAL_AMFLAGS = -I m4 ${ACLOCAL_FLAGS}
 AM_MAKEFLAGS = --no-print-directory
 AUTOMAKE_OPTIONS = color-tests parallel-tests
@@ -253,7 +255,8 @@ noinst_SCRIPTS = \
 
 EXTRA_DIST = \
 	test/test-script.sh.in \
-	test/pseudo-ssh
+	test/pseudo-ssh \
+	test/http-server.py
 
 CLEANFILES = \
         test-script.sh
