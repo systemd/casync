@@ -106,6 +106,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "seed",           required_argument, NULL, ARG_SEED           },
                 { "with",           required_argument, NULL, ARG_WITH           },
                 { "without",        required_argument, NULL, ARG_WITHOUT        },
+                { "what",           required_argument, NULL, ARG_WHAT           },
                 {}
         };
 
