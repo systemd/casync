@@ -831,3 +831,25 @@ size_t page_size(void) {
         pgsz = (size_t) v;
         return pgsz;
 }
+
+int parse_boolean(const char *v) {
+        if (!v)
+                return -EINVAL;
+
+        if (streq(v, "1") || strcaseeq(v, "yes") || strcaseeq(v, "y") || strcaseeq(v, "true") || strcaseeq(v, "t") || strcaseeq(v, "on"))
+                return 1;
+        if (streq(v, "0") || strcaseeq(v, "no") || strcaseeq(v, "n") || strcaseeq(v, "false") || strcaseeq(v, "f") || strcaseeq(v, "off"))
+                return 0;
+
+        return -EINVAL;
+}
+
+int getenv_bool(const char *p) {
+        const char *e;
+
+        e = getenv(p);
+        if (!e)
+                return -ENXIO;
+
+        return parse_boolean(e);
+}

@@ -114,6 +114,9 @@ static int parse_argv(int argc, char *argv[]) {
         assert(argc >= 0);
         assert(argv);
 
+        if (getenv_bool("CASYNC_VERBOSE") > 0)
+                arg_verbose = true;
+
         while ((c = getopt_long(argc, argv, "hv", options, NULL)) >= 0) {
 
                 switch (c) {
@@ -217,6 +220,12 @@ static int parse_argv(int argc, char *argv[]) {
                         assert(false);
                 }
         }
+
+        /* Propagate our verbose setting to helpers we fork off */
+        if (arg_verbose)
+                (void) putenv((char*) "CASYNC_VERBOSE=1");
+        else
+                unsetenv("CASYNC_VERBOSE");
 
         return 1;
 }

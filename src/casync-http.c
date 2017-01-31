@@ -1,9 +1,12 @@
 #include <curl/curl.h>
+#include <getopt.h>
 
 #include "caprotocol.h"
 #include "caremote.h"
 #include "realloc-buffer.h"
 #include "util.h"
+
+static bool arg_verbose = false;
 
 typedef enum ProcessUntil {
         PROCESS_UNTIL_CAN_PUT_CHUNK,
@@ -354,8 +357,62 @@ finish:
         return r;
 }
 
+static void help(void) {
+        printf("%s -- casync HTTP helper. Do not execute manually.\n", program_invocation_short_name);
+}
+
+static int parse_argv(int argc, char *argv[]) {
+
+        static const struct option options[] = {
+                { "help",           no_argument,       NULL, 'h'                },
+                { "verbose",        no_argument,       NULL, 'v'                },
+                {}
+        };
+
+        int c;
+
+        assert(argc >= 0);
+        assert(argv);
+
+        if (getenv_bool("CASYNC_VERBOSE") > 0)
+                arg_verbose = true;
+
+        while ((c = getopt_long(argc, argv, "hv", options, NULL)) >= 0) {
+
+                switch (c) {
+
+                case 'h':
+                        help();
+                        return 0;
+
+                case 'v':
+                        arg_verbose = true;
+                        break;
+
+                case '?':
+                        return -EINVAL;
+
+                default:
+                        assert(false);
+                }
+        }
+
+        return 1;
+}
+
 int main(int argc, char* argv[]) {
+        static const struct sigaction sa = {
+                .sa_handler = SIG_IGN,
+                .sa_flags = SA_RESTART,
+        };
+
         int r;
+
+        assert_se(sigaction(SIGPIPE, &sa, NULL) >= 0);
+
+        r = parse_argv(argc, argv);
+        if (r <= 0)
+                goto finish;
 
         if (argc < 2) {
                 fprintf(stderr, "Verb expected.\n");

@@ -481,5 +481,10 @@ static inline size_t ALIGN_TO(size_t l, size_t ali) {
         return ((l + ali - 1) & ~(ali - 1));
 }
 
+int parse_boolean(const char *v);
+
+int getenv_bool(const char *p);
+
+#define strcaseeq(a,b) (strcasecmp((a),(b)) == 0)
 
 #endif
