@@ -230,7 +230,11 @@ noinst_SCRIPTS = \
 	test-script.sh
 
 EXTRA_DIST = \
-	test-script.sh.in
+	test/test-script.sh.in \
+	test/pseudo-ssh
+
+CLEANFILES = \
+        test-script.sh
 
 test-files:
 	test -e test-files/thisisafifo || mkfifo test-files/thisisafifo

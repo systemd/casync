@@ -1,0 +1,8 @@
+#!/bin/sh
+
+# A tool that we can use like ssh, but instead of connecting anywhere simply
+# invokes the specified command locally. To be used via $CASYNC_SSH_PATH for
+# testing the remoting protocol without actually doing anything remote.
+
+shift 1
+exec "$@"
