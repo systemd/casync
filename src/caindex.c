@@ -1,9 +1,9 @@
 #include <fcntl.h>
 #include <stddef.h>
 
+#include "cachunker.h"
 #include "caformat.h"
 #include "caindex.h"
-#include "chunker.h"
 #include "def.h"
 #include "util.h"
 

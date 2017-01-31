@@ -1,10 +1,10 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include "cachunker.h"
 #include "caencoder.h"
 #include "calocation.h"
 #include "caseed.h"
-#include "chunker.h"
 #include "realloc-buffer.h"
 #include "util.h"
 

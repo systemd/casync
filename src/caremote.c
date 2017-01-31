@@ -4,11 +4,11 @@
 #include <sys/prctl.h>
 #include <sys/stat.h>
 
+#include "cachunker.h"
 #include "caprotocol-util.h"
 #include "caprotocol.h"
 #include "caremote.h"
 #include "cautil.h"
-#include "chunker.h"
 #include "def.h"
 #include "realloc-buffer.h"
 #include "util.h"

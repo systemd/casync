@@ -2,7 +2,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include "chunker.h"
+#include "cachunker.h"
 #include "util.h"
 
 static void test_fixed(void) {

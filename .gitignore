@@ -39,10 +39,10 @@
 /configure
 /libtool
 /stamp-*
+/test-cachunker
 /test-caencoder
 /test-caindex
 /test-casync
 /test-cautil
-/test-chunker
 /test-script.sh
 Makefile.in

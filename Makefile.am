@@ -59,8 +59,8 @@ AM_CPPFLAGS = \
 	-I $(top_srcdir)/src
 
 tests = \
+	test-cachunker \
 	test-caencoder \
-	test-chunker \
 	test-casync \
 	test-cautil
 
@@ -79,6 +79,10 @@ TESTS = \
 	test-script.sh
 
 lib_SOURCES = \
+	src/cachunker.c \
+	src/cachunker.h \
+	src/cachunkid.c \
+	src/cachunkid.h \
 	src/cadecoder.c \
 	src/cadecoder.h \
 	src/caencoder.c \
@@ -90,11 +94,9 @@ lib_SOURCES = \
 	src/caindex.h \
 	src/calocation.c \
 	src/calocation.h \
-	src/cachunkid.c \
-	src/cachunkid.h \
-	src/caprotocol.h \
-	src/caprotocol-util.h \
 	src/caprotocol-util.c \
+	src/caprotocol-util.h \
+	src/caprotocol.h \
 	src/caremote.c \
 	src/caremote.h \
 	src/caseed.c \
@@ -105,8 +107,6 @@ lib_SOURCES = \
 	src/casync.h \
 	src/cautil.c \
 	src/cautil.h \
-	src/chunker.c \
-	src/chunker.h \
 	src/def.h \
 	src/gcrypt-util.c \
 	src/gcrypt-util.h \
@@ -163,16 +163,16 @@ test_caencoder_LDADD = \
 	$(LIBGCRYPT_LIBS)
 
 
-## test-chunker
+## test-cachunker
 
-test_chunker_SOURCES = test/test-chunker.c $(lib_SOURCES)
+test_cachunker_SOURCES = test/test-cachunker.c $(lib_SOURCES)
 
-test_chunker_CFLAGS = \
+test_cachunker_CFLAGS = \
 	$(AM_CFLAGS) \
 	$(LIBLZMA_CFLAGS) \
 	$(LIBGCRYPT_CFLAGS)
 
-test_chunker_LDADD = \
+test_cachunker_LDADD = \
 	$(LIBLZMA_LIBS) \
 	$(LIBGCRYPT_LIBS)
 

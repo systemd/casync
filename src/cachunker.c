@@ -1,4 +1,4 @@
-#include "chunker.h"
+#include "cachunker.h"
 #include "util.h"
 
 /* The modulo used by Adler32: the largest prime smaller than 2^16, see RFC1950 */
