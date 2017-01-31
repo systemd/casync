@@ -152,6 +152,11 @@ casync_http_LDADD = \
 	$(LIBGCRYPT_LIBS) \
 	$(LIBCURL_LIBS)
 
+install-exec-hook:
+	mkdir -p $(DESTDIR)$(protocoldir)
+	ln -s casync-http $(DESTDIR)$(protocoldir)/casync-https
+	ln -s casync-http $(DESTDIR)$(protocoldir)/casync-ftp
+
 ## test-caencoder
 
 test_caencoder_SOURCES = test/test-caencoder.c $(lib_SOURCES)
@@ -164,7 +169,6 @@ test_caencoder_CFLAGS = \
 test_caencoder_LDADD = \
 	$(LIBLZMA_LIBS) \
 	$(LIBGCRYPT_LIBS)
-
 
 ## test-cachunker
 

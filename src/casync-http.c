@@ -8,6 +8,13 @@
 
 static bool arg_verbose = false;
 
+static enum {
+        ARG_PROTOCOL_HTTP,
+        ARG_PROTOCOL_FTP,
+        ARG_PROTOCOL_HTTPS,
+        _ARG_PROTOCOL_INVALID = -1,
+} arg_protocol = _ARG_PROTOCOL_INVALID;
+
 typedef enum ProcessUntil {
         PROCESS_UNTIL_CAN_PUT_CHUNK,
         PROCESS_UNTIL_CAN_PUT_INDEX,
@@ -168,7 +175,7 @@ static int run(int argc, char *argv[]) {
         CURL *curl = NULL;
         ReallocBuffer chunk_buffer = {};
         CaRemote *rr = NULL;
-        long http_status;
+        long protocol_status;
         int r;
 
         if (argc < 5) {
@@ -227,6 +234,12 @@ static int run(int argc, char *argv[]) {
                 goto finish;
         }
 
+        if (curl_easy_setopt(curl, CURLOPT_PROTOCOLS, arg_protocol == ARG_PROTOCOL_FTP ? CURLPROTO_FTP : CURLPROTO_HTTP|CURLPROTO_HTTPS) != CURLE_OK) {
+                fprintf(stderr, "Failed to limit protocols to HTTP/HTTPS/FTP.\n");
+                r = -EIO;
+                goto finish;
+        }
+
         /* (void) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L); */
 
         if (index_url) {
@@ -257,27 +270,43 @@ static int run(int argc, char *argv[]) {
                         goto finish;
                 }
 
-                if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status) != CURLE_OK) {
+                if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK) {
                         fprintf(stderr, "Failed to query response code\n");
                         r = -EIO;
                         goto finish;
                 }
 
-                if (http_status != 200) {
+                if (IN_SET(arg_protocol, ARG_PROTOCOL_HTTP, ARG_PROTOCOL_HTTPS) && protocol_status != 200) {
                         char *m;
 
                         if (arg_verbose)
-                                fprintf(stderr, "HTTP server failure %li while requesting %s.\n", http_status, index_url);
+                                fprintf(stderr, "HTTP server failure %li while requesting %s.\n", protocol_status, index_url);
 
-                        if (asprintf(&m, "HTTP request on %s failed with status %li", index_url, http_status) < 0) {
+                        if (asprintf(&m, "HTTP request on %s failed with status %li", index_url, protocol_status) < 0) {
                                 r = log_oom();
                                 goto finish;
                         }
 
-                        (void) ca_remote_abort(rr, http_status == 404 ? ENOMEDIUM : EBADR, m);
+                        (void) ca_remote_abort(rr, protocol_status == 404 ? ENOMEDIUM : EBADR, m);
+                        free(m);
+                        goto flush;
+
+                } else if (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status < 200 || protocol_status > 299)) {
+                        char *m;
+
+                        if (arg_verbose)
+                                fprintf(stderr, "FTP server failure %li while requesting %s.n", protocol_status, index_url);
+
+                        if (asprintf(&m, "FTP request on %s failed with status %li", index_url, protocol_status) < 0) {
+                                r = log_oom();
+                                goto finish;
+                        }
+
+                        (void) ca_remote_abort(rr, EBADR, m);
                         free(m);
                         goto flush;
                 }
+
 
                 r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_INDEX);
                 if (r < 0)
@@ -352,7 +381,7 @@ static int run(int argc, char *argv[]) {
                         goto finish;
                 }
 
-                if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status) != CURLE_OK) {
+                if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK) {
                         fprintf(stderr, "Failed to query response code\n");
                         r = -EIO;
                         goto finish;
@@ -366,15 +395,18 @@ static int run(int argc, char *argv[]) {
                 if (r < 0)
                         goto finish;
 
-                if (http_status == 200) {
+                if ((IN_SET(arg_protocol, ARG_PROTOCOL_HTTP, ARG_PROTOCOL_HTTPS) && protocol_status == 200) ||
+                    (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status >= 200 && protocol_status <= 299))) {
+
                         r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
                         if (r < 0) {
                                 fprintf(stderr, "Failed to write chunk: %s\n", strerror(-r));
                                 goto finish;
                         }
+
                 } else {
                         if (arg_verbose)
-                                fprintf(stderr, "HTTP server failure %li while requesting %s.\n", http_status, url_buffer);
+                                fprintf(stderr, "HTTP/FTP server failure %li while requesting %s.\n", protocol_status, url_buffer);
 
                         r = ca_remote_put_missing(rr, &id);
                         if (r < 0) {
@@ -417,6 +449,17 @@ static int parse_argv(int argc, char *argv[]) {
 
         assert(argc >= 0);
         assert(argv);
+
+        if (strstr(argv[0], "https"))
+                arg_protocol = ARG_PROTOCOL_HTTPS;
+        else if (strstr(argv[0], "http"))
+                arg_protocol = ARG_PROTOCOL_HTTP;
+        else if (strstr(argv[0], "ftp"))
+                arg_protocol = ARG_PROTOCOL_FTP;
+        else {
+                fprintf(stderr, "Failed to determine set of protocols to use, refusing.\n");
+                return -EINVAL;
+        }
 
         if (getenv_bool("CASYNC_VERBOSE") > 0)
                 arg_verbose = true;
