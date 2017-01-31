@@ -168,6 +168,7 @@ static int run(int argc, char *argv[]) {
         CURL *curl = NULL;
         ReallocBuffer chunk_buffer = {};
         CaRemote *rr = NULL;
+        long http_status;
         int r;
 
         if (argc < 5) {
@@ -175,7 +176,7 @@ static int run(int argc, char *argv[]) {
                 return -EINVAL;
         }
 
-        fprintf(stderr, "base=%s archive=%s index=%s wstore=%s\n", argv[1], argv[2], argv[3], argv[4]);
+        /* fprintf(stderr, "base=%s archive=%s index=%s wstore=%s\n", argv[1], argv[2], argv[3], argv[4]); */
 
         base_url = empty_or_dash_to_null(argv[1]);
         archive_url = empty_or_dash_to_null(argv[2]);
@@ -247,10 +248,35 @@ static int run(int argc, char *argv[]) {
                         goto finish;
                 }
 
+                if (arg_verbose)
+                        fprintf(stderr, "Acquiring %s...\n", index_url);
+
                 if (curl_easy_perform(curl) != CURLE_OK) {
                         fprintf(stderr, "Failed to acquire %s\n", index_url);
                         r = -EIO;
                         goto finish;
+                }
+
+                if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status) != CURLE_OK) {
+                        fprintf(stderr, "Failed to query response code\n");
+                        r = -EIO;
+                        goto finish;
+                }
+
+                if (http_status != 200) {
+                        char *m;
+
+                        if (arg_verbose)
+                                fprintf(stderr, "HTTP server failure %li while requesting %s.\n", http_status, index_url);
+
+                        if (asprintf(&m, "HTTP request on %s failed with status %li", index_url, http_status) < 0) {
+                                r = log_oom();
+                                goto finish;
+                        }
+
+                        (void) ca_remote_abort(rr, http_status == 404 ? ENOMEDIUM : EBADR, m);
+                        free(m);
+                        goto flush;
                 }
 
                 r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_INDEX);
@@ -268,13 +294,8 @@ static int run(int argc, char *argv[]) {
                 const char *store_url;
                 CaChunkID id;
 
-                if (n_stores == 0) { /* No stores? Then we did all we could do */
-                        r = process_remote(rr, PROCESS_UNTIL_FINISHED);
-                        if (r < 0)
-                                goto finish;
-
+                if (n_stores == 0)  /* No stores? Then we did all we could do */
                         break;
-                }
 
                 r = process_remote(rr, PROCESS_UNTIL_HAVE_REQUEST);
                 if (r == -EPIPE) {
@@ -322,8 +343,17 @@ static int run(int argc, char *argv[]) {
                         goto finish;
                 }
 
+                if (arg_verbose)
+                        fprintf(stderr, "Acquiring %s...\n", url_buffer);
+
                 if (curl_easy_perform(curl) != CURLE_OK) {
                         fprintf(stderr, "Failed to acquire %s\n", url_buffer);
+                        r = -EIO;
+                        goto finish;
+                }
+
+                if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status) != CURLE_OK) {
+                        fprintf(stderr, "Failed to query response code\n");
                         r = -EIO;
                         goto finish;
                 }
@@ -336,14 +366,28 @@ static int run(int argc, char *argv[]) {
                 if (r < 0)
                         goto finish;
 
-                r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
-                if (r < 0) {
-                        fprintf(stderr, "Failed to write chunk: %s\n", strerror(-r));
-                        goto finish;
+                if (http_status == 200) {
+                        r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to write chunk: %s\n", strerror(-r));
+                                goto finish;
+                        }
+                } else {
+                        if (arg_verbose)
+                                fprintf(stderr, "HTTP server failure %li while requesting %s.\n", http_status, url_buffer);
+
+                        r = ca_remote_put_missing(rr, &id);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to write missing message: %s\n", strerror(-r));
+                                goto finish;
+                        }
                 }
 
                 realloc_buffer_empty(&chunk_buffer);
         }
+
+flush:
+        r = process_remote(rr, PROCESS_UNTIL_FINISHED);
 
 finish:
         if (curl)

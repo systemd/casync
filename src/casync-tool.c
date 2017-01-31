@@ -934,6 +934,10 @@ static int extract(int argc, char *argv[]) {
 
         for (;;) {
                 r = ca_sync_step(s);
+                if (r == -ENOMEDIUM) {
+                        fprintf(stderr, "File, URL or resource not found.\n");
+                        goto finish;
+                }
                 if (r < 0) {
                         fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
                         goto finish;
@@ -1174,6 +1178,10 @@ static int list(int argc, char *argv[]) {
 
         for (;;) {
                 r = ca_sync_step(s);
+                if (r == -ENOMEDIUM) {
+                        fprintf(stderr, "File, URL or resource not found.\n");
+                        goto finish;
+                }
                 if (r < 0) {
                         fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
                         goto finish;
@@ -1436,6 +1444,10 @@ static int digest(int argc, char *argv[]) {
 
         for (;;) {
                 r = ca_sync_step(s);
+                if (r == -ENOMEDIUM) {
+                        fprintf(stderr, "File, URL or resource not found.\n");
+                        goto finish;
+                }
                 if (r < 0) {
                         fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
                         goto finish;

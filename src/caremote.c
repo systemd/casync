@@ -1157,6 +1157,9 @@ static int ca_remote_process_abort(CaRemote *rr, const CaProtocolAbort *a) {
         assert(rr);
         assert(a);
 
+        if (a->error != 0)
+                return -a->error;
+
         return -ECONNABORTED;
 }
 
@@ -2016,6 +2019,37 @@ int ca_remote_goodbye(CaRemote *rr) {
 
         rr->sent_goodbye = true;
 
+        return 0;
+}
+
+int ca_remote_abort(CaRemote *rr, int error, const char *message) {
+        CaProtocolAbort *a;
+        size_t l;
+
+        if (!rr)
+                return -EINVAL;
+        if (error < 0)
+                return -EINVAL;
+        if (error >= INT32_MAX)
+                return -EINVAL;
+        if (rr->state == CA_REMOTE_EOF)
+                return -EPIPE;
+        if (rr->sent_goodbye)
+                return -EALREADY;
+
+        l = strlen(message);
+
+        a = realloc_buffer_extend(&rr->output_buffer, offsetof(CaProtocolAbort, reason) + l + 1);
+        if (!a)
+                return -ENOMEM;
+
+        write_le64(&a->header.type, CA_PROTOCOL_ABORT);
+        write_le64(&a->header.size, offsetof(CaProtocolAbort, reason) + l + 1);
+
+        write_le64(&a->error, error);
+        strcpy(a->reason, message);
+
+        rr->sent_goodbye = true;
         return 0;
 }
 

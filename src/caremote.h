@@ -71,6 +71,7 @@ int ca_remote_put_index_eof(CaRemote *rr);
 
 /* Enqueue a goodbye frame */
 int ca_remote_goodbye(CaRemote *rr);
+int ca_remote_abort(CaRemote *rr, int error, const char *message);
 
 int ca_remote_has_pending_requests(CaRemote *rr);
 
