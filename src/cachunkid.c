@@ -1,8 +1,9 @@
 #include <assert.h>
 #include <errno.h>
 
-#include "gcrypt-util.h"
+#include "cachunker.h"
 #include "cachunkid.h"
+#include "gcrypt-util.h"
 
 static char encode_char(uint8_t x) {
         x &= 0xF;
@@ -63,8 +64,16 @@ char* ca_chunk_id_format(const CaChunkID *id, char v[CA_CHUNK_ID_FORMAT_MAX]) {
 int ca_chunk_id_make(gcry_md_hd_t *digest, const void *p, size_t l, CaChunkID *ret) {
         const void *q;
 
-        assert(p || l == 0);
-        assert(ret);
+        if (!digest)
+                return -EINVAL;
+        if (!p)
+                return -EINVAL;
+        if (l == 0)
+                return -EINVAL;
+        if (l > CA_CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
 
         if (*digest)
                 gcry_md_reset(*digest);

@@ -50,6 +50,7 @@ struct CaRemote {
         ReallocBuffer output_buffer;
         ReallocBuffer chunk_buffer;
         ReallocBuffer index_buffer;
+        ReallocBuffer validate_buffer;
 
         uint64_t queue_start_high, queue_start_low;
         uint64_t queue_end_high, queue_end_low;
@@ -71,6 +72,8 @@ struct CaRemote {
         bool sent_goodbye;
 
         size_t frame_size;
+
+        gcry_md_hd_t validate_digest;
 };
 
 CaRemote* ca_remote_new(void) {
@@ -131,6 +134,7 @@ CaRemote* ca_remote_unref(CaRemote *rr) {
         realloc_buffer_free(&rr->output_buffer);
         realloc_buffer_free(&rr->chunk_buffer);
         realloc_buffer_free(&rr->index_buffer);
+        realloc_buffer_free(&rr->validate_buffer);
 
         free(rr->index_path);
         safe_close(rr->index_fd);
@@ -144,6 +148,8 @@ CaRemote* ca_remote_unref(CaRemote *rr) {
                 /* (void) kill(rr->pid, SIGTERM); */
                 (void) wait_for_terminate(rr->pid, NULL);
         }
+
+        gcry_md_close(rr->validate_digest);
 
         return mfree(rr);
 }
@@ -1684,6 +1690,50 @@ int ca_remote_poll(CaRemote *rr, uint64_t timeout) {
         return 1;
 }
 
+static int ca_remote_validate_chunk(
+                CaRemote *rr,
+                const CaChunkID *id,
+                CaChunkCompression compression,
+                const void *p,
+                size_t l) {
+
+        CaChunkID actual;
+        int r;
+
+        if (!rr)
+                return -EINVAL;
+        if (!id)
+                return -EINVAL;
+        if (!IN_SET(compression, CA_CHUNK_COMPRESSED, CA_CHUNK_UNCOMPRESSED))
+                return -EINVAL;
+        if (!p)
+                return -EINVAL;
+        if (l == 0)
+                return -EINVAL;
+        if (l > CA_CHUNK_SIZE_LIMIT)
+                return -EINVAL;
+
+        if (compression == CA_CHUNK_COMPRESSED) {
+                realloc_buffer_empty(&rr->validate_buffer);
+
+                r = ca_decompress(p, l, &rr->validate_buffer);
+                if (r < 0)
+                        return r;
+
+                p = realloc_buffer_data(&rr->validate_buffer);
+                l = realloc_buffer_size(&rr->validate_buffer);
+        }
+
+        r = ca_chunk_id_make(&rr->validate_digest, p, l, &actual);
+        if (r < 0)
+                return r;
+
+        if (!ca_chunk_id_equal(id, &actual))
+                return -EBADMSG;
+
+        return 0;
+}
+
 int ca_remote_request(
                 CaRemote *rr,
                 const CaChunkID *chunk_id,
@@ -1693,6 +1743,7 @@ int ca_remote_request(
                 size_t *ret_size,
                 CaChunkCompression *ret_effective_compression) {
 
+        CaChunkCompression compression;
         int r;
 
         if (!rr)
@@ -1713,7 +1764,7 @@ int ca_remote_request(
 
         realloc_buffer_empty(&rr->chunk_buffer);
 
-        r = ca_chunk_file_load(rr->cache_fd, NULL, chunk_id, desired_compression, &rr->chunk_buffer, ret_effective_compression);
+        r = ca_chunk_file_load(rr->cache_fd, NULL, chunk_id, desired_compression, &rr->chunk_buffer, &compression);
         if (r == -ENOENT) {
                 /* We don't have it right now. Enqueue it */
                 r = ca_remote_enqueue_request(rr, chunk_id, high_priority);
@@ -1729,8 +1780,15 @@ int ca_remote_request(
         if (r < 0)
                 return r;
 
+        r = ca_remote_validate_chunk(rr, chunk_id, compression, realloc_buffer_data(&rr->chunk_buffer), realloc_buffer_size(&rr->chunk_buffer));
+        if (r < 0)
+                return r;
+
         *ret = realloc_buffer_data(&rr->chunk_buffer);
         *ret_size = realloc_buffer_size(&rr->chunk_buffer);
+
+        if (ret_effective_compression)
+                *ret_effective_compression = compression;
 
         return 1;
 }
@@ -2121,15 +2179,29 @@ int ca_remote_next_chunk(
         if (!rr->last_chunk_valid)
                 return -ENODATA;
 
+        if (rr->state == CA_REMOTE_EOF)
+                return -EPIPE;
+        if (rr->cache_fd < 0)
+                return -ENXIO;
+
         if (ret_data) {
+                CaChunkCompression compression;
+
                 realloc_buffer_empty(&rr->chunk_buffer);
 
-                r = ca_chunk_file_load(rr->cache_fd, NULL, &rr->last_chunk, desired_compression, &rr->chunk_buffer, ret_effective_compression);
+                r = ca_chunk_file_load(rr->cache_fd, NULL, &rr->last_chunk, desired_compression, &rr->chunk_buffer, &compression);
+                if (r < 0)
+                        return r;
+
+                r = ca_remote_validate_chunk(rr, &rr->last_chunk, compression, realloc_buffer_data(&rr->chunk_buffer), realloc_buffer_size(&rr->chunk_buffer));
                 if (r < 0)
                         return r;
 
                 *ret_data = realloc_buffer_data(&rr->chunk_buffer);
                 *ret_size = realloc_buffer_size(&rr->chunk_buffer);
+
+                if (ret_effective_compression)
+                        *ret_effective_compression = compression;
         } else {
                 if (ret_effective_compression)
                         *ret_effective_compression = desired_compression;
