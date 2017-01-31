@@ -26,7 +26,9 @@ int ca_index_write_eof(CaIndex *i);
 
 int ca_index_read_chunk(CaIndex *i, CaChunkID *id, uint64_t *ret_size);
 
-int ca_index_seek(CaIndex *i, uint64_t offset);
+int ca_index_set_position(CaIndex *i, uint64_t position);
+int ca_index_get_position(CaIndex *i, uint64_t *ret);
+int ca_index_get_available_chunks(CaIndex *i, uint64_t *ret);
 
 int ca_index_incremental_write(CaIndex *i, const void *data, size_t size);
 int ca_index_incremental_eof(CaIndex *i);

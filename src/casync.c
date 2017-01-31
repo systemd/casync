@@ -81,7 +81,8 @@ typedef struct CaSync {
 
         uint64_t feature_flags;
 
-        uint64_t n_chunks;
+        uint64_t n_written_chunks;
+        uint64_t n_prefetched_chunks;
 } CaSync;
 
 static CaSync *ca_sync_new(void) {
@@ -956,7 +957,7 @@ static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l) {
         if (r < 0)
                 return r;
 
-        s->n_chunks++;
+        s->n_written_chunks++;
 
         if (s->wstore) {
                 r = ca_store_put(s->wstore, &id, CA_CHUNK_UNCOMPRESSED, p, l);
@@ -1323,6 +1324,65 @@ static CaRemote *ca_sync_current_remote(CaSync *s) {
         return remote;
 }
 
+static int ca_sync_remote_prefetch(CaSync *s) {
+        uint64_t available, saved, requested = 0;
+        int r;
+
+        assert(s);
+
+        if (!s->index)
+                return CA_SYNC_POLL;
+        if (s->direction != CA_SYNC_DECODE)
+                return CA_SYNC_POLL;
+        if (!s->remote_wstore)
+                return CA_SYNC_POLL;
+
+        r = ca_index_get_available_chunks(s->index, &available);
+        if (r == -ENODATA || r == -EAGAIN)
+                return CA_SYNC_POLL;
+        if (r < 0)
+                return r;
+        if (s->n_prefetched_chunks >= available) /* Already prefetched all we have */
+                return CA_SYNC_POLL;
+
+        r = ca_index_get_position(s->index, &saved);
+        if (r < 0)
+                return r;
+
+        r = ca_index_set_position(s->index, s->n_prefetched_chunks);
+        if (r < 0)
+                return r;
+
+        for (;;) {
+                CaChunkID id;
+
+                r = ca_index_read_chunk(s->index, &id, NULL);
+                if (r == 0 || r == -EAGAIN)
+                        break;
+                if (r < 0)
+                        return r;
+
+                r = ca_sync_has_local(s, &id);
+                if (r < 0)
+                        return r;
+                if (r > 0)
+                        continue;
+
+                r = ca_remote_request_async(s->remote_wstore, &id, false);
+                if (r < 0)
+                        return r;
+
+                s->n_prefetched_chunks++;
+                requested ++;
+        }
+
+        r = ca_index_set_position(s->index, saved);
+        if (r < 0)
+                return r;
+
+        return requested > 0 ? CA_SYNC_STEP : CA_SYNC_POLL;
+}
+
 static int ca_sync_remote_push_index(CaSync *s) {
         int r;
 
@@ -1500,8 +1560,6 @@ static int ca_sync_propagate_chunk_size(CaSync *s) {
         if (r < 0)
                 return r;
 
-        fprintf(stderr, "Propagating chunk size! %zu/%zu/%zu\n", cmin, cavg, cmax);
-
         for (i = 0; i < s->n_seeds; i++) {
 
                 r = ca_seed_set_chunk_size_min(s->seeds[i], cmin);
@@ -1554,6 +1612,13 @@ int ca_sync_step(CaSync *s) {
                 }
         }
 
+
+        r = ca_sync_remote_prefetch(s);
+        if (r < 0)
+                return r;
+        if (r != CA_SYNC_POLL)
+                return r;
+
         r = ca_sync_remote_push_index(s);
         if (r < 0)
                 return r;
@@ -1577,9 +1642,11 @@ int ca_sync_step(CaSync *s) {
 
         case CA_REMOTE_REQUEST:
         case CA_REMOTE_CHUNK:
+        case CA_REMOTE_STEP:
+                return CA_SYNC_STEP;
+
         case CA_REMOTE_READ_INDEX:
         case CA_REMOTE_READ_INDEX_EOF:
-        case CA_REMOTE_STEP:
                 return CA_SYNC_STEP;
 
         case CA_REMOTE_FINISHED:
@@ -1699,18 +1766,55 @@ int ca_sync_get(CaSync *s,
                 return r;
 
         if (s->remote_wstore) {
-                r = ca_remote_request(s->remote_wstore, chunk_id, false, desired_compression, ret, ret_size, ret_effective_compression);
+                r = ca_remote_request(s->remote_wstore, chunk_id, true, desired_compression, ret, ret_size, ret_effective_compression);
                 if (r != -ENOENT)
                         return r;
         }
 
         for (i = 0; i < s->n_remote_rstores; i++) {
-                r = ca_remote_request(s->remote_rstores[i], chunk_id, false, desired_compression, ret, ret_size, ret_effective_compression);
+                r = ca_remote_request(s->remote_rstores[i], chunk_id, true, desired_compression, ret, ret_size, ret_effective_compression);
                 if (r != -ENOENT)
                         return r;
         }
 
         return -ENOENT;
+}
+
+int ca_sync_has_local(CaSync *s, const CaChunkID *chunk_id) {
+
+        size_t i;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!chunk_id)
+                return -EINVAL;
+
+        for (i = 0; i < s->n_seeds; i++) {
+                r = ca_seed_has(s->seeds[i], chunk_id);
+                if (r != 0)
+                        return r;
+        }
+
+        if (s->wstore) {
+                r = ca_store_has(s->wstore, chunk_id);
+                if (r != 0)
+                        return r;
+        }
+
+        if (s->cache_store) {
+                r = ca_store_has(s->cache_store, chunk_id);
+                if (r != 0)
+                        return r;
+        }
+
+        for (i = 0; i < s->n_rstores; i++) {
+                r = ca_store_has(s->rstores[i], chunk_id);
+                if (r != 0)
+                        return r;
+        }
+
+        return 0;
 }
 
 int ca_sync_make_chunk_id(CaSync *s, const void *p, size_t l, CaChunkID *ret) {
@@ -1856,7 +1960,7 @@ int ca_sync_current_archive_chunks(CaSync *s, uint64_t *ret) {
         if (s->direction != CA_SYNC_ENCODE)
                 return -ENODATA;
 
-        *ret = s->n_chunks;
+        *ret = s->n_written_chunks;
         return 0;
 }
 

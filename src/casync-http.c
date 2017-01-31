@@ -16,6 +16,7 @@ static enum {
 } arg_protocol = _ARG_PROTOCOL_INVALID;
 
 typedef enum ProcessUntil {
+        PROCESS_UNTIL_WRITTEN,
         PROCESS_UNTIL_CAN_PUT_CHUNK,
         PROCESS_UNTIL_CAN_PUT_INDEX,
         PROCESS_UNTIL_HAVE_REQUEST,
@@ -66,6 +67,19 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
                                 return r;
                         if (r < 0) {
                                 fprintf(stderr, "Failed to determine whether there are pending requests.\n");
+                                return r;
+                        }
+                        if (r > 0)
+                                return 0;
+
+                        break;
+
+                case PROCESS_UNTIL_WRITTEN:
+                        r = ca_remote_has_unwritten(rr);
+                        if (r == -EPIPE)
+                                return r;
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to determine whether there's more data to write.\n");
                                 return r;
                         }
                         if (r > 0)
@@ -307,7 +321,6 @@ static int run(int argc, char *argv[]) {
                         goto flush;
                 }
 
-
                 r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_INDEX);
                 if (r < 0)
                         goto finish;
@@ -335,6 +348,8 @@ static int run(int argc, char *argv[]) {
                         goto finish;
 
                 r = ca_remote_next_request(rr, &id);
+                if (r == -ENODATA)
+                        continue;
                 if (r < 0) {
                         fprintf(stderr, "Failed to determine next chunk to get: %s\n", strerror(-r));
                         goto finish;
@@ -416,6 +431,14 @@ static int run(int argc, char *argv[]) {
                 }
 
                 realloc_buffer_empty(&chunk_buffer);
+
+                r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
+                if (r == -EPIPE) {
+                        r = 0;
+                        goto finish;
+                }
+                if (r < 0)
+                        goto finish;
         }
 
 flush:

@@ -25,6 +25,7 @@ int ca_seed_set_cache_path(CaSeed *s, const char *path);
 int ca_seed_step(CaSeed *s);
 
 int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *ret_size);
+int ca_seed_has(CaSeed *s, const CaChunkID *chunk_id);
 
 int ca_seed_current_path(CaSeed *seed, char **ret);
 int ca_seed_current_mode(CaSeed *seed, mode_t *ret);

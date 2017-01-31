@@ -75,4 +75,6 @@ int ca_remote_abort(CaRemote *rr, int error, const char *message);
 
 int ca_remote_has_pending_requests(CaRemote *rr);
 
+int ca_remote_has_unwritten(CaRemote *rr);
+
 #endif

@@ -486,6 +486,31 @@ int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *
         }
 }
 
+int ca_seed_has(CaSeed *s, const CaChunkID *chunk_id) {
+        char id[CA_CHUNK_ID_FORMAT_MAX];
+        const char *four, *combined;
+
+        if (!s)
+                return -EINVAL;
+        if (!chunk_id)
+                return -EINVAL;
+
+        if (!ca_chunk_id_format(chunk_id, id))
+                return -EINVAL;
+
+        four = strndupa(id, 4);
+        combined = strjoina(four, "/", id);
+
+        if (faccessat(s->cache_fd, combined, F_OK, AT_SYMLINK_NOFOLLOW) < 0) {
+                if (errno == ENOENT)
+                        return 0;
+
+                return -errno;
+        }
+
+        return 1;
+}
+
 int ca_seed_current_path(CaSeed *seed, char **ret) {
         if (!seed)
                 return -EINVAL;

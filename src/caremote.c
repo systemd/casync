@@ -402,48 +402,6 @@ static int ca_remote_any_prefix_install(CaRemote *rr, const char *url) {
         return ca_remote_ssh_prefix_install(rr, url);
 }
 
-/* int ca_remote_set_base_url(CaRemote *rr, const char *url) { */
-/*         int r; */
-
-/*         if (!rr) */
-/*                 return -EINVAL; */
-/*         if (!url) */
-/*                 return -EINVAL; */
-/*         if (rr->base_url) */
-/*                 return -EBUSY; */
-
-/*         r = ca_remote_any_prefix_install(rr, url); */
-/*         if (r < 0) */
-/*                 return r; */
-
-/*         rr->base_url = strdup(url); */
-/*         if (!rr->base_url) */
-/*                 return -ENOMEM; */
-
-/*         return 0; */
-/* } */
-
-/* int ca_remote_set_archive_url(CaRemote *rr, const char *url) { */
-/*         int r; */
-
-/*         if (!rr) */
-/*                 return -EINVAL; */
-/*         if (!url) */
-/*                 return -EINVAL; */
-/*         if (rr->archive_url) */
-/*                 return -EBUSY; */
-
-/*         r = ca_remote_any_prefix_install(rr, url); */
-/*         if (r < 0) */
-/*                 return r; */
-
-/*         rr->archive_url = strdup(url); */
-/*         if (!rr->archive_url) */
-/*                 return -ENOMEM; */
-
-/*         return 0; */
-/* } */
-
 int ca_remote_set_index_url(CaRemote *rr, const char *url) {
         int r;
 
@@ -585,43 +543,11 @@ int ca_remote_open_index_fd(CaRemote *rr) {
         return fd;
 }
 
-static int ca_remote_remove_queue_item(CaRemote *rr, const char *queue_name, const CaChunkID *id) {
-        char ids[CA_CHUNK_ID_FORMAT_MAX], *target;
-        const char *f;
-
-        assert(rr);
-        assert(id);
-
-        if (!ca_chunk_id_format(id, ids))
-                return -EINVAL;
-
-        f = strjoina(queue_name, ids, NULL);
-
-        /* Drop position → hash link first */
-        if (readlinkat_malloc(rr->cache_fd, f, &target) >= 0) {
-
-                if (safe_atou64(target, NULL) >= 0) { /* Safety check: validate that this is indeed a position nr */
-                        const char *g;
-
-                        g = strjoina(queue_name, target, NULL);
-                        (void) unlinkat(rr->cache_fd, g, 0);
-                }
-
-                free(target);
-        }
-
-        /* Drop hash → position link second */
-        if (unlinkat(rr->cache_fd, f, 0) < 0)
-                return -errno;
-
-        return 0;
-}
-
-static int ca_remote_enqueue_request(CaRemote *rr, const CaChunkID *id, bool high_priority) {
+static int ca_remote_enqueue_request(CaRemote *rr, const CaChunkID *id, bool high_priority, bool please_requeue) {
         char ids[CA_CHUNK_ID_FORMAT_MAX];
         uint64_t position;
         const char *f, *queue_name;
-        char *b;
+        char *qpos;
         int r;
 
         assert(rr);
@@ -641,56 +567,97 @@ static int ca_remote_enqueue_request(CaRemote *rr, const CaChunkID *id, bool hig
                 queue_name = "high-priority/";
                 position = rr->queue_end_high;
         } else {
-                /* If this is a low-priority request, then check if it is already queued as high-priority, before
-                 * enqueuing as low priority. */
-
-                f = strjoina("high-priority/", ids, NULL);
-                if (faccessat(rr->cache_fd, f, F_OK, AT_SYMLINK_NOFOLLOW) >= 0)
-                        return 0;
-
                 queue_name = "low-priority/";
                 position = rr->queue_end_low;
         }
 
-        if (position == 0)
+        /* Check whether the chunk is already enqueued */
+        f = strjoina("chunks/", ids);
+        r = readlinkat_malloc(rr->cache_fd, f, &qpos);
+        if (r < 0 && r != -ENOENT)
+                goto finish;
+
+        if (r >= 0) {
+                uint64_t old_position;
+                const char *p;
+
+                /* Already queued on the same priority? Then there's nothing to do. */
+                if (startswith(qpos, queue_name)) {
+                        r = 0;
+                        goto finish;
+                }
+
+                /* Not matching, but the new priority is low? Then there's nothing to do.*/
+                if (!high_priority) {
+                        r = 0;
+                        goto finish;
+                }
+
+                p = startswith(qpos, "low-priority/");
+                if (!p) {
+                        r = -EBADMSG;
+                        goto finish;
+                }
+                r = safe_atou64(p, &old_position);
+                if (r < 0)
+                        goto finish;
+
+                /* Was the old low-priority item already dispatched? Don't requeue the item then, except this is explicitly requested. */
+                if (old_position < rr->queue_start_low && !please_requeue) {
+                        r = 0;
+                        goto finish;
+                }
+
+                if (unlinkat(rr->cache_fd, f, 0) < 0) {
+                        r = -errno;
+                        goto finish;
+                }
+                if (unlinkat(rr->cache_fd, qpos, 0) < 0) {
+                        r = -errno;
+                        goto finish;
+                }
+
+                qpos = mfree(qpos);
+        }
+
+        if (asprintf(&qpos, "%s%" PRIu64, queue_name, position) < 0) {
+                r = -ENOMEM;
+                goto finish;
+        }
+
+        if (position == 0) {
+                (void) mkdirat(rr->cache_fd, "chunks", 0777);
                 (void) mkdirat(rr->cache_fd, queue_name, 0777);
-
-        f = strjoina(queue_name, ids, NULL);
-        if (asprintf(&b, "%s%" PRIu64, queue_name, position) < 0)
-                return -ENOMEM;
-
-        /* Link the hash → queue position. This way we can easily check if a block is already queued */
-        if (symlinkat(b + strlen(queue_name), rr->cache_fd, f) < 0) {
-                free(b);
-                return errno == EEXIST ? 0 : -errno;
         }
 
-        /* Link the queue position → hash. This way we know what to get next */
-        r = symlinkat(ids, rr->cache_fd, b) < 0 ? -errno : 0;
-        free(b);
-        if (r < 0) {
-                (void) unlinkat(rr->cache_fd, f, 0);
-                return r;
+        if (symlinkat(qpos, rr->cache_fd, f) < 0) {
+                r = -errno;
+                goto finish;
         }
 
-        if (high_priority) {
+        if (symlinkat(ids, rr->cache_fd, qpos) < 0) {
+                r = -errno;
+                goto finish;
+        }
+
+        if (high_priority)
                 rr->queue_end_high++;
-
-                /* If we enqueued this as high priority, make sure to drop it as low priority. First drop the ID
-                 * symlink. */
-                (void) ca_remote_remove_queue_item(rr, "low-priority/", id);
-        } else
+        else
                 rr->queue_end_low++;
 
-        /* fprintf(stderr, PID_FMT ": Enqueued request for %s\n", getpid(), ids); */
+        /* fprintf(stderr, PID_FMT ": Enqueued request for %s (%s)\n", getpid(), ids, qpos); */
 
-        return 1;
+        r = 1;
+
+finish:
+        free(qpos);
+        return r;
 }
 
 static int ca_remote_dequeue_request(CaRemote *rr, int only_high_priority, CaChunkID *ret, bool *ret_high_priority) {
         const char *queue_name;
         uint64_t position;
-        char *target, *b;
+        char *ids;
         CaChunkID id;
         bool hp;
         int r;
@@ -699,33 +666,44 @@ static int ca_remote_dequeue_request(CaRemote *rr, int only_high_priority, CaChu
         assert(ret);
         assert(rr->cache_fd >= 0);
 
-        if (rr->queue_start_high < rr->queue_end_high && only_high_priority != 0) {
-                hp = true;
-                position = rr->queue_start_high;
-                queue_name = "high-priority/";
-        } else if (rr->queue_start_low < rr->queue_end_low && only_high_priority <= 0) {
-                hp = false;
-                position = rr->queue_start_low;
-                queue_name = "low-priority/";
-        } else
-                return -ENODATA;
+        for (;;) {
+                char *qpos;
 
-        if (asprintf(&b, "%s%" PRIu64, queue_name, position) < 0)
-                return -ENOMEM;
+                if (rr->queue_start_high < rr->queue_end_high && only_high_priority != 0) {
+                        hp = true;
+                        position = rr->queue_start_high;
+                        queue_name = "high-priority/";
+                } else if (rr->queue_start_low < rr->queue_end_low && only_high_priority <= 0) {
+                        hp = false;
+                        position = rr->queue_start_low;
+                        queue_name = "low-priority/";
+                } else
+                        return -ENODATA;
 
-        r = readlinkat_malloc(rr->cache_fd, b, &target);
-        free(b);
-        if (r < 0)
-                return r;
+                if (asprintf(&qpos, "%s%" PRIu64, queue_name, position) < 0)
+                        return -ENOMEM;
 
-        if (!ca_chunk_id_parse(target, &id)) {
-                free(target);
-                return -EINVAL;
+                r = readlinkat_malloc(rr->cache_fd, qpos, &ids);
+                free(qpos);
+                if (r >= 0)
+                        break;
+                if (r != -ENOENT)
+                        return r;
+
+                /* Hmm, this symlink is missing? I figure it was already processed otherwise */
+                if (hp)
+                        rr->queue_start_high++;
+                else
+                        rr->queue_start_low++;
         }
 
-        /* fprintf(stderr, PID_FMT ": Dequeued request for %s\n", getpid(), target); */
+        if (!ca_chunk_id_parse(ids, &id)) {
+                free(ids);
+                return -EBADMSG;
+        }
 
-        free(target);
+        /* fprintf(stderr, PID_FMT ": Dequeued request for %s\n", getpid(), ids); */
+        free(ids);
 
         if (hp)
                 rr->queue_start_high++;
@@ -739,28 +717,6 @@ static int ca_remote_dequeue_request(CaRemote *rr, int only_high_priority, CaChu
 
         return 0;
 }
-
-static int ca_remote_drop_request(CaRemote *rr, const CaChunkID *id) {
-        int r, q;
-
-        assert(rr);
-        assert(id);
-
-        r = ca_remote_remove_queue_item(rr, "low-priority/", id);
-        q = ca_remote_remove_queue_item(rr, "high-priority/", id);
-
-        if (r != -ENOENT)
-                return r;
-
-        return q;
-}
-
-/* static int ca_remote_get_queued(CaRemote *rr) { */
-/*         assert(rr); */
-
-/*         return (rr->queue_start_high < rr->queue_end_high) || */
-/*                 (rr->queue_start_low < rr->queue_end_low); */
-/* } */
 
 static int ca_remote_start(CaRemote *rr) {
         int r;
@@ -1070,7 +1026,7 @@ static int ca_remote_process_request(CaRemote *rr, const CaProtocolRequest *req)
         ms = le64toh(req->header.size) - offsetof(CaProtocolRequest, chunks);
 
         for (p = req->chunks; p < req->chunks + ms; p += CA_CHUNK_ID_SIZE) {
-                r = ca_remote_enqueue_request(rr, (const CaChunkID*) p, le64toh(req->flags) & CA_PROTOCOL_REQUEST_HIGH_PRIORITY);
+                r = ca_remote_enqueue_request(rr, (const CaChunkID*) p, le64toh(req->flags) & CA_PROTOCOL_REQUEST_HIGH_PRIORITY, false);
                 if (r < 0)
                         return r;
         }
@@ -1090,8 +1046,6 @@ static int ca_remote_process_chunk(CaRemote *rr, const CaProtocolChunk *chunk) {
 
         memcpy(&rr->last_chunk, chunk->chunk, CA_CHUNK_ID_SIZE);
         rr->last_chunk_valid = true;
-
-        (void) ca_remote_drop_request(rr, &rr->last_chunk);
 
         ms = le64toh(chunk->header.size) - offsetof(CaProtocolChunk, data);
 
@@ -1579,13 +1533,25 @@ static int ca_remote_send_request(CaRemote *rr) {
                 CaChunkID id;
                 void *p;
 
+                /* Is the frame already large enough? If so, let's stop it for now */
+                if (req && read_le64(&req->header.size) >= BUFFER_SIZE)
+                        break;
+
                 r = ca_remote_dequeue_request(rr, only_high_priority, &id, &high_priority);
                 if (r == -ENODATA)
                         break;
                 if (r < 0)
                         return r;
 
-                if (!req) {
+                if (req) {
+                        /* If we already have a request, append one item */
+                        write_le64(&req->header.size, read_le64(&req->header.size) + CA_CHUNK_ID_SIZE);
+
+                        p = realloc_buffer_extend(&rr->output_buffer, CA_CHUNK_ID_SIZE);
+                        if (!p)
+                                return -ENOMEM;
+                } else {
+                        /* If we don't have a request frame yet, allocate one with one item. */
                         req = realloc_buffer_extend0(&rr->output_buffer, offsetof(CaProtocolRequest, chunks) + CA_CHUNK_ID_SIZE);
                         if (!req)
                                 return -ENOMEM;
@@ -1595,18 +1561,6 @@ static int ca_remote_send_request(CaRemote *rr) {
                         write_le64(&req->flags, high_priority ? CA_PROTOCOL_REQUEST_HIGH_PRIORITY : 0);
 
                         p = req->chunks;
-                } else {
-                        uint64_t new_size;
-
-                        new_size = read_le64(&req->header.size) + CA_CHUNK_ID_SIZE;
-                        if (new_size > offsetof(CaProtocolRequest, chunks) + BUFFER_SIZE)
-                                break;
-
-                        write_le64(&req->header.size, new_size);
-
-                        p = realloc_buffer_extend(&rr->output_buffer, CA_CHUNK_ID_SIZE);
-                        if (!p)
-                                return -ENOMEM;
                 }
 
                 memcpy(p, &id, CA_CHUNK_ID_SIZE);
@@ -1767,7 +1721,7 @@ int ca_remote_request(
         r = ca_chunk_file_load(rr->cache_fd, NULL, chunk_id, desired_compression, &rr->chunk_buffer, &compression);
         if (r == -ENOENT) {
                 /* We don't have it right now. Enqueue it */
-                r = ca_remote_enqueue_request(rr, chunk_id, high_priority);
+                r = ca_remote_enqueue_request(rr, chunk_id, high_priority, true);
                 if (r < 0)
                         return r;
                 if (r > 0)
@@ -1805,7 +1759,7 @@ int ca_remote_request_async(CaRemote *rr, const CaChunkID *chunk_id, bool high_p
         if (rr->state == CA_REMOTE_EOF)
                 return -EPIPE;
 
-        return ca_remote_enqueue_request(rr, chunk_id, high_priority);
+        return ca_remote_enqueue_request(rr, chunk_id, high_priority, true);
 }
 
 int ca_remote_next_request(CaRemote *rr, CaChunkID *ret) {
@@ -1894,8 +1848,6 @@ int ca_remote_put_chunk(
         memcpy(chunk->chunk, chunk_id, CA_CHUNK_ID_SIZE);
         memcpy(chunk->data, data, size);
 
-        (void) ca_remote_drop_request(rr, chunk_id);
-
         return 0;
 }
 
@@ -1926,8 +1878,6 @@ int ca_remote_put_missing(CaRemote *rr, const CaChunkID *chunk_id) {
         write_le64(&missing->header.size, sizeof(CaProtocolMissing));
 
         memcpy(missing->chunk, chunk_id, CA_CHUNK_ID_SIZE);
-
-        (void) ca_remote_drop_request(rr, chunk_id);
 
         return 0;
 }
@@ -2112,9 +2062,6 @@ int ca_remote_abort(CaRemote *rr, int error, const char *message) {
 }
 
 int ca_remote_has_pending_requests(CaRemote *rr) {
-        const char *qn;
-        int r;
-
         if (!rr)
                 return -EINVAL;
 
@@ -2122,40 +2069,6 @@ int ca_remote_has_pending_requests(CaRemote *rr) {
         if ((rr->queue_start_high < rr->queue_end_high) ||
             (rr->queue_start_low < rr->queue_end_low))
                 return 1;
-
-        /* Does it have remotely queued requests? */
-        FOREACH_STRING(qn, "high-priority/", "low-priority/") {
-                DIR *d;
-
-                r = xopendirat(rr->cache_fd, qn, 0, &d);
-                if (r == -ENOENT)
-                        continue;
-                if (r < 0)
-                        return r;
-
-                for (;;) {
-                        struct dirent *de;
-
-                        errno = 0;
-                        de = readdir(d);
-                        if (!de) {
-                                if (errno != 0) {
-                                        closedir(d);
-                                        return -errno;
-                                }
-
-                                break;
-                        }
-
-                        if (STR_IN_SET(de->d_name, ".", ".."))
-                                continue;
-
-                        closedir(d);
-                        return 1;
-                }
-
-                closedir(d);
-        }
 
         return 0;
 }
@@ -2212,4 +2125,13 @@ int ca_remote_next_chunk(
         *ret_id = rr->last_chunk;
 
         return r;
+}
+
+int ca_remote_has_unwritten(CaRemote *rr) {
+        if (!rr)
+                return -EINVAL;
+        if (rr->state == CA_REMOTE_EOF)
+                return -EPIPE;
+
+        return realloc_buffer_size(&rr->output_buffer) > 0;
 }
