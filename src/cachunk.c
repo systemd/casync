@@ -608,7 +608,10 @@ static int ca_chunk_file_remove(int chunk_fd, const char *prefix, const CaChunkI
         if (unlinkat(chunk_fd, path, 0) < 0)
                 return -errno;
 
-        path[4] = 0;
+        slash = strrchr(path, '/');
+        assert(slash);
+        *slash = 0;
+
         (void) unlinkat(chunk_fd, path, AT_REMOVEDIR);
 
         return 0;
