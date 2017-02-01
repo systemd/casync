@@ -566,7 +566,7 @@ int ca_sync_set_store_remote(CaSync *s, const char *url) {
         if (r < 0)
                 return r;
 
-        r = ca_remote_set_local_feature_flags(s->remote_index, flags);
+        r = ca_remote_set_local_feature_flags(s->remote_wstore, flags);
         if (r < 0)
                 return r;
 
