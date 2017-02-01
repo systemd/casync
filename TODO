@@ -24,3 +24,4 @@
 * coalesce index frames sent over protocol
 * add per-file sha256 sum to serialization
 * rework uploading via ssh to use seed instead of cache store for providing chunks to server
+* parallel http GETs
