@@ -2142,3 +2142,108 @@ int ca_remote_has_unwritten(CaRemote *rr) {
 
         return realloc_buffer_size(&rr->output_buffer) > 0;
 }
+
+int ca_remote_has_chunks(CaRemote *rr) {
+        DIR *d;
+        int r;
+
+        if (!rr)
+                return -EINVAL;
+
+        /* Returns true, when this remote has any chunks queued now, or before. */
+
+        r = ca_remote_has_pending_requests(rr);
+        if (r != 0)
+                return r;
+
+        r = xopendirat(rr->cache_fd, "chunks", 0, &d);
+        if (r == -ENOENT)
+                return 0;
+        if (r < 0)
+                return r;
+
+        for (;;) {
+                struct dirent *de;
+
+                errno = 0;
+                de = readdir(d);
+                if (!de) {
+                        r = -errno;
+                        closedir(d);
+
+                        if (r == 0)
+                                break;
+
+                        return r;
+                }
+
+                if (!dot_or_dot_dot(de->d_name)) {
+                        closedir(d);
+                        return 1;
+                }
+        }
+
+        return 0;
+}
+
+int ca_remote_forget_chunk(CaRemote *rr, const CaChunkID *id) {
+        char ids[CA_CHUNK_ID_FORMAT_MAX], *qpos;
+        const char *f;
+        int r;
+
+        /* Forget everything we know about the specified chunk, and the chunk itself. Specifically:
+         *
+         * - Remove the chunks/<hash> symlink
+         * - Remove the low-priority/<position> or high-priority</position> symlink
+         * - Remove the cached chunk
+         */
+
+        if (!rr)
+                return -EINVAL;
+        if (!id)
+                return -EINVAL;
+
+        if (!ca_chunk_id_format(id, ids))
+                return -EINVAL;
+
+        f = strjoina("chunks/", ids);
+        r = readlinkat_malloc(rr->cache_fd, f, &qpos);
+        if (r < 0 && r != -ENOENT)
+                return r;
+
+        if (r >= 0) {
+                const char *p;
+
+                p = startswith(qpos, "low-priority/");
+                if (!p) {
+                        p = startswith(p, "high-priority/");
+                        if (!p) {
+                                r = -EBADMSG;
+                                goto finish;
+                        }
+                }
+
+                r = safe_atou64(p, NULL);
+                if (r < 0)
+                        goto finish;
+
+                if (unlinkat(rr->cache_fd, f, 0) < 0) {
+                        r = -errno;
+                        goto finish;
+                }
+                if (unlinkat(rr->cache_fd, qpos, 0) < 0) {
+                        r = -errno;
+                        goto finish;
+                }
+        }
+
+        r = ca_chunk_file_remove(rr->cache_fd, NULL, id);
+        if (r < 0 && r != -ENOENT)
+                goto finish;
+
+        r = 0;
+
+finish:
+        free(qpos);
+        return r;
+}

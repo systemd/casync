@@ -74,7 +74,9 @@ int ca_remote_goodbye(CaRemote *rr);
 int ca_remote_abort(CaRemote *rr, int error, const char *message);
 
 int ca_remote_has_pending_requests(CaRemote *rr);
-
 int ca_remote_has_unwritten(CaRemote *rr);
+int ca_remote_has_chunks(CaRemote *rr);
+
+int ca_remote_forget_chunk(CaRemote *rr, const CaChunkID *id);
 
 #endif

@@ -595,8 +595,8 @@ static int ca_chunk_file_access(int chunk_fd, const char *prefix, const CaChunkI
         return 1;
 }
 
-static int ca_chunk_file_remove(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix) {
-        char path[CHUNK_PATH_SIZE(prefix, suffix)];
+static int ca_chunk_file_unlink(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix) {
+        char path[CHUNK_PATH_SIZE(prefix, suffix)], *slash;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
@@ -760,7 +760,7 @@ int ca_chunk_file_save(
         return 0;
 
 fail:
-        (void) ca_chunk_file_remove(chunk_fd, prefix, chunkid, suffix);
+        (void) ca_chunk_file_unlink(chunk_fd, prefix, chunkid, suffix);
         free(suffix);
         return r;
 }
@@ -823,4 +823,19 @@ int ca_chunk_file_test(int chunk_fd, const char *prefix, const CaChunkID *chunki
                 return r;
 
         return ca_chunk_file_access(chunk_fd, prefix, chunkid, ".xz");
+}
+
+int ca_chunk_file_remove(int chunk_fd, const char *prefix, const CaChunkID *chunkid) {
+        int r;
+
+        if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
+                return -EINVAL;
+        if (!chunkid)
+                return -EINVAL;
+
+        r = ca_chunk_file_unlink(chunk_fd, prefix, chunkid, NULL);
+        if (r < 0 && r != -ENOENT)
+                return -EINVAL;
+
+        return ca_chunk_file_unlink(chunk_fd, prefix, chunkid, ".xz");
 }

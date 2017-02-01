@@ -1880,6 +1880,12 @@ static int push(int argc, char *argv[]) {
                                 goto finish;
                         }
 
+                        r = ca_remote_forget_chunk(rr, &id);
+                        if (r < 0 && r != -ENOENT) {
+                                fprintf(stderr, "Failed to forget chunk: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
                         break;
                 }
 
@@ -1957,7 +1963,7 @@ static int push(int argc, char *argv[]) {
 
                 if (index && index_written && index_processed) {
 
-                        r = ca_remote_has_pending_requests(rr);
+                        r = ca_remote_has_chunks(rr);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to determine if further requests are pending: %s\n", strerror(-r));
                                 goto finish;
