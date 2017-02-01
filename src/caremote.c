@@ -577,7 +577,7 @@ static int ca_remote_enqueue_request(CaRemote *rr, const CaChunkID *id, bool hig
         f = strjoina("chunks/", ids);
         r = readlinkat_malloc(rr->cache_fd, f, &qpos);
         if (r < 0 && r != -ENOENT)
-                goto finish;
+                return r;
 
         if (r >= 0) {
                 uint64_t old_position;
