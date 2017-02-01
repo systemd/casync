@@ -2,18 +2,17 @@
 * diff
 * mtree manifest
 * seeks
-* ssh/remoting protocol
 * fuse mount logic
 * nbd expose logic
 * store/extract file properties of the "root" directory
-* dos flags
-* btrfs flags
-* xattrs
-* acls
-* check fs features
+* save/restore dos file flags
+* save/restore btrfs file/subvol flags
+* save/restore xattrs
+* save/restore acls
+* save/restore hardlinks?
+* check fs features, when saving/restoring
 * encryption
-* hard link mode
-* per-file seed cache
+* hardlink/reflink from seed
 * exclude patterns
 * permit shifting UID/GIDs
 * delete old files in destination after sync
@@ -24,4 +23,4 @@
 * permit passing catar through native protocol
 * coalesce index frames sent over protocol
 * add per-file sha256 sum to serialization
-* properly remove all temporary directories
+* rework uploading via ssh to use seed instead of cache store for providing chunks to server
