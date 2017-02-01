@@ -1337,6 +1337,9 @@ static int ca_sync_remote_prefetch(CaSync *s) {
         if (!s->remote_wstore)
                 return CA_SYNC_POLL;
 
+        if (!ca_sync_seed_ready(s))
+                return CA_SYNC_POLL;
+
         r = ca_index_get_available_chunks(s->index, &available);
         if (r == -ENODATA || r == -EAGAIN)
                 return CA_SYNC_POLL;
