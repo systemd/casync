@@ -840,7 +840,7 @@ static int ca_remote_start(CaRemote *rr) {
 
         if (rr->cache_fd < 0) {
                 if (!rr->cache_path) {
-                        if (asprintf(&rr->cache_path, "/var/tmp/casync-remote-%" PRIu64, random_u64()) < 0)
+                        if (asprintf(&rr->cache_path, "/var/tmp/%" PRIx64 ".carem", random_u64()) < 0)
                                 return -ENOMEM;
 
                         rr->remove_cache = true;

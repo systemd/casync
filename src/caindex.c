@@ -194,7 +194,7 @@ static int ca_index_open_fd(CaIndex *i) {
                                 if (r < 0)
                                         return r;
                         } else {
-                                if (asprintf(&i->temporary_path, "/var/tmp/index.%" PRIx64, random_u64()) < 0)
+                                if (asprintf(&i->temporary_path, "/var/tmp/%" PRIx64 ".caidx", random_u64()) < 0)
                                         return -ENOMEM;
                         }
                 }
