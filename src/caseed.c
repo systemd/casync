@@ -400,6 +400,8 @@ int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *
                 return -EINVAL;
         if (!ret_size)
                 return -EINVAL;
+        if (s->cache_fd < 0)
+                return -EBUSY;
 
         if (!ca_chunk_id_format(chunk_id, id))
                 return -EINVAL;
@@ -494,6 +496,8 @@ int ca_seed_has(CaSeed *s, const CaChunkID *chunk_id) {
                 return -EINVAL;
         if (!chunk_id)
                 return -EINVAL;
+        if (s->cache_fd < 0)
+                return -EBUSY;
 
         if (!ca_chunk_id_format(chunk_id, id))
                 return -EINVAL;
