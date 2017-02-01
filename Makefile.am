@@ -119,6 +119,8 @@ lib_SOURCES = \
 	src/parse-util.h \
 	src/realloc-buffer.c \
 	src/realloc-buffer.h \
+	src/rm-rf.c \
+	src/rm-rf.h \
 	src/util.c \
 	src/util.h
 

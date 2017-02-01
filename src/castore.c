@@ -7,6 +7,7 @@
 #include "castore.h"
 #include "def.h"
 #include "realloc-buffer.h"
+#include "rm-rf.h"
 #include "util.h"
 
 /* #undef EINVAL */
@@ -52,6 +53,9 @@ CaStore *ca_store_new_cache(void) {
 CaStore* ca_store_unref(CaStore *store) {
         if (!store)
                 return NULL;
+
+        if (store->destroy && store->root)
+                (void) rm_rf(store->root, REMOVE_ROOT|REMOVE_PHYSICAL);
 
         free(store->root);
         realloc_buffer_free(&store->buffer);

@@ -11,6 +11,7 @@
 #include "caremote.h"
 #include "def.h"
 #include "realloc-buffer.h"
+#include "rm-rf.h"
 #include "util.h"
 
 /* #undef EBADMSG */
@@ -106,6 +107,44 @@ CaRemote* ca_remote_ref(CaRemote *rr) {
         return rr;
 }
 
+static void ca_remote_remove_cache(CaRemote *rr) {
+        const char *c;
+
+        assert(rr);
+
+        if (rr->remove_cache) {
+                /* If we shall remove the cache in its entirety, then do so, rby removing its root */
+
+                if (rr->cache_path) {
+                        (void) rm_rf(rr->cache_path, REMOVE_ROOT|REMOVE_PHYSICAL);
+                        rr->cache_path = mfree(rr->cache_path);
+                        rr->cache_fd = safe_close(rr->cache_fd);
+                } else if (rr->cache_fd >= 0) {
+                        (void) rm_rf_children(rr->cache_fd, REMOVE_PHYSICAL, NULL);
+                        rr->cache_fd = -1;
+                }
+
+                return;
+        }
+
+        if (rr->cache_fd < 0)
+                return;
+
+        /* If we shall not remove the cache, at least remove the queueing symlinks */
+
+        FOREACH_STRING(c, "low-priority/", "high-priority/", "chunks/") {
+
+                int fd;
+
+                fd = openat(rr->cache_fd, c, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_DIRECTORY);
+                if (fd < 0)
+                        continue;
+
+                (void) rm_rf_children(fd, REMOVE_PHYSICAL, NULL);
+                (void) unlinkat(rr->cache_fd, c, AT_REMOVEDIR);
+        }
+}
+
 CaRemote* ca_remote_unref(CaRemote *rr) {
         if (!rr)
                 return NULL;
@@ -116,6 +155,8 @@ CaRemote* ca_remote_unref(CaRemote *rr) {
         if (rr->n_ref > 0)
                 return NULL;
 
+        ca_remote_remove_cache(rr);
+
         free(rr->url_prefix);
         free(rr->callout);
         /* free(rr->base_url); */
@@ -125,7 +166,7 @@ CaRemote* ca_remote_unref(CaRemote *rr) {
         strv_free(rr->rstore_urls);
 
         free(rr->cache_path);
-        safe_close(rr->cache_fd);
+        rr->cache_fd = safe_close(rr->cache_fd);
 
         if (rr->input_fd > 2)
                 safe_close(rr->input_fd);

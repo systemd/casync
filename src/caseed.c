@@ -6,6 +6,7 @@
 #include "calocation.h"
 #include "caseed.h"
 #include "realloc-buffer.h"
+#include "rm-rf.h"
 #include "util.h"
 
 struct CaSeed {
@@ -40,61 +41,18 @@ CaSeed *ca_seed_new(void) {
 }
 
 static void ca_seed_remove_and_close_cache(CaSeed *s) {
-        DIR *d;
-        int r;
-
         assert(s);
 
         if (!s->remove_cache)
                 return;
 
-        d = fdopendir(s->cache_fd);
-        if (!d)
-                return;
-        s->cache_fd = -1;
-
-        for (;;) {
-                DIR *sub;
-                struct dirent *de;
-
-                errno = 0;
-                de = readdir(d);
-                if (!de)
-                        break;
-
-                if (dot_or_dot_dot(de->d_name))
-                        continue;
-
-                if (!IN_SET(de->d_type, DT_DIR, DT_UNKNOWN))
-                        continue;
-
-                r = xopendirat(dirfd(d), de->d_name, 0, &sub);
-                if (r < 0)
-                        continue;
-
-                for (;;) {
-                        struct dirent *sde;
-
-                        errno = 0;
-                        sde = readdir(sub);
-                        if (!sde)
-                                break;
-
-                        if (dot_or_dot_dot(sde->d_name))
-                                continue;
-
-                        (void) unlinkat(dirfd(sub), sde->d_name, 0);
-                }
-
-                closedir(sub);
-                (void) unlinkat(dirfd(d), de->d_name, AT_REMOVEDIR);
-        }
-
-        closedir(d);
-
         if (s->cache_path) {
-                (void) rmdir(s->cache_path);
+                (void) rm_rf(s->cache_path, REMOVE_ROOT|REMOVE_PHYSICAL);
                 s->cache_path = mfree(s->cache_path);
+                s->cache_fd = safe_close(s->cache_fd);
+        } else if (s->cache_fd >= 0) {
+                (void) rm_rf_children(s->cache_fd, REMOVE_PHYSICAL, NULL);
+                s->cache_fd = -1;
         }
 }
 

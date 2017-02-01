@@ -10,7 +10,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/vfs.h>
 #include <unistd.h>
+
+#include <linux/magic.h>
 
 #define new(t, n) ((t*) malloc((n) * sizeof(t)))
 #define new0(t, n) ((t*) calloc((n), sizeof(t)))
@@ -486,5 +489,21 @@ int parse_boolean(const char *v);
 int getenv_bool(const char *p);
 
 #define strcaseeq(a,b) (strcasecmp((a),(b)) == 0)
+
+typedef typeof(((struct statfs*)NULL)->f_type) statfs_f_type_t;
+
+static inline bool F_TYPE_EQUAL(statfs_f_type_t a, statfs_f_type_t b) {
+        return a == b;
+}
+
+static inline bool is_fs_type(const struct statfs *s, statfs_f_type_t magic_value) {
+        assert(s);
+        return F_TYPE_EQUAL(s->f_type, magic_value);
+}
+
+static inline bool is_temporary_fs(const struct statfs *s) {
+    return is_fs_type(s, TMPFS_MAGIC) ||
+           is_fs_type(s, RAMFS_MAGIC);
+}
 
 #endif
