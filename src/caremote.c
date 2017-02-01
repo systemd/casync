@@ -127,8 +127,10 @@ CaRemote* ca_remote_unref(CaRemote *rr) {
         free(rr->cache_path);
         safe_close(rr->cache_fd);
 
-        safe_close(rr->input_fd);
-        safe_close(rr->output_fd);
+        if (rr->input_fd > 2)
+                safe_close(rr->input_fd);
+        if (rr->output_fd > 2)
+                safe_close(rr->output_fd);
 
         realloc_buffer_free(&rr->input_buffer);
         realloc_buffer_free(&rr->output_buffer);
