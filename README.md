@@ -14,39 +14,35 @@ What is this?
 
 The longer explanation goes something like this:
 
-Encoding: Let's take a large linear data stream, split it into
-variable-sized chunks (the size being a function of the chunk
-contents), and store these chunk in individual, compressed files,
-named after a strong hash value of their contents. Let's call this
-directory an "object store". Then, generate an "index" file that lists
-these hash values plust the chunk size.
+Encoding: Let's take a large linear data stream, split it into variable-sized
+chunks (the size being a function of the chunk contents), and store these
+chunks in individual, compressed files, named after a strong hash value of
+their contents. Let's call this directory a "chunk store". Then, generate an
+"chunk index" file that lists these chunk hash values plust their respective
+chunk size.
 
-Decoding: Let's take the "index" file, and reassemble the large linear
-data stream by concatenating the uncompressed chunks from the "object
-store".
+Decoding: Let's take the "chunk index" file, and reassemble the large linear
+data stream by concatenating the uncompressed chunks from the "chunk store".
 
-As an extra twist, we introduce a well-defined, reproducible
-serialization format for directory trees (i.e. a more modern "tar"),
-to permit efficient, stable storage of complete directory trees in the
-system.
+As an extra twist, we introduce a well-defined, reproducible serialization
+format for directory trees (i.e. a more modern "tar"), to permit efficient,
+stable storage of complete directory trees in the system.
 
-Why bother with all of this? Streams with similar contents will result
-in mostly the same object files in the object store. This means, it is
-very efficient to store many related versions of a data stream in the
-same object store, thus minimizing disk usage. Moreover, when
-transferring linear data streams chunks already existing on the
-receiving side can be made use of, thus minimizing network traffic.
+Why bother with all of this? Streams with similar contents will result in
+mostly the same chunk files in the chunk store. This means, it is very
+efficient to store many related versions of a data stream in the same chunk
+store, thus minimizing disk usage. Moreover, when transferring linear data
+streams chunks already existing on the receiving side can be made use of, thus
+minimizing network traffic.
 
-The "chunking" algorithm is based on a the Adler32 rolling hash
-function (similar to how the rsync algorithm does it). Otherwise,
-SHA256 is used as strong hash function to generate digests of the
-chunk objects.
+The "chunking" algorithm is based on a the Adler32 rolling hash function
+(similar to how the rsync algorithm does it). Otherwise, SHA256 is used as
+strong hash function to generate digests of the chunks.
 
-Is this new? Conceptually, not too much. This uses well-known
-concepts, implemented in a variety of other projects, and puts them
-together in a moderately new, nice way. That's all. The primary
-influences are rsync and git, but there are other systems that use
-similar algorithms, in particular:
+Is this new? Conceptually, not too much. This uses well-known concepts,
+implemented in a variety of other projects, and puts them together in a
+moderately new, nice way. That's all. The primary influences are rsync and git,
+but there are other systems that use similar algorithms, in particular:
 
 - bup (https://bup.github.io/)
 - CAFS (https://github.com/indyjo/cafs)
@@ -61,14 +57,15 @@ similar algorithms, in particular:
 ## File Suffixes
 
 1. .catar → archive containing a directory tree (like "tar")
-2. .caidx → index file referring to a directory tree (i.e. a .catar object)
-3. .caibx → index file referring to a blob (i.e. any other object)
-4. .castr → hash object store directory (where we store objects under their hashes)
+2. .caidx → index file referring to a directory tree (i.e. a .catar file)
+3. .caibx → index file referring to a blob (i.e. any other file)
+4. .castr → chunk store directory (where we store chunks under their hashes)
 
 ## Operations on directory trees
 
 ```
 # casync digest /home/lennart
+# casync list /home/lennart
 ```
 
 ## Operations on archives
@@ -109,17 +106,34 @@ similar algorithms, in particular:
 # casync mkdev --store=/var/lib/backup.castr fedora25.caibx (NOT IMPLEMENTED YET)
 ```
 
+## Operations involving ssh remoting
+
+```
+# casync make foobar:/srv/backup/lennart.caidx /home/lennart
+# casync extract foobar:/srv/backup/lennart.caidx /home/lennart2
+# casync list foobar:/srv/backup/lennart.caidx
+# casync digest foobar:/srv/backup/lennart.caidx
+```
+
 ## Operations involving the web
 
 ```
-# casync extract http://www.foobar.com/lennart.caidx /home/lennart (NOT IMPLEMENTED YET)
-# casync extract --seed=/home/lennart http://www.foobar.com/lennart.caidx /home/lennart2 (NOT IMPLEMENTED YET)
-# casync mount --seed=/home/lennart --cache=/var/tmp/lennart/cache http://www.foobar.com/lennart.caidx /home/lennart2 (NOT IMPLEMENTED YET)
+# casync extract http://www.foobar.com/lennart.caidx /home/lennart
+# casync list http://www.foobar.com/lennart.caidx
+# casync digest http://www.foobar.com/lennart.caidx
+# casync extract --seed=/home/lennart http://www.foobar.com/lennart.caidx /home/lennart2
+# casync mount --seed=/home/lennart http://www.foobar.com/lennart.caidx /home/lennart2 (NOT IMPLEMENTED YET)
 ```
+
+## Operations between two directories
 
 ```
 # casync clone /home/lennart /home/lennart2 (NOT IMPLEMENTED YET)
+# casync clone foobar:/home/lennart /home/lennart2 (NOT IMPLEMENTED YET)
+# casync clone /home/lennart foobar:/home/lennart2 (NOT IMPLEMENTED YET)
 ```
+
+## Maintainance
 
 ```
 # casync gc /var/lib/backup.castr /home/lennart.caidx /home/foobar.caidx ... (NOT IMPLEMENTED YET)
