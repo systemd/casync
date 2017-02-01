@@ -20,7 +20,6 @@
 * build seed while extracting
 * optionally make seeds persistent
 * stop at mount points
-* prefetch of chunks
 * acquire gpg signature along with caidx/caibx/catar
 * permit passing catar through native protocol
 * coalesce index frames sent over protocol
