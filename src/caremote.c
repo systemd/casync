@@ -47,6 +47,8 @@ struct CaRemote {
         int input_fd;
         int output_fd;
 
+        uint64_t rate_limit_bps;
+
         ReallocBuffer input_buffer;
         ReallocBuffer output_buffer;
         ReallocBuffer chunk_buffer;
@@ -93,6 +95,8 @@ CaRemote* ca_remote_new(void) {
 
         rr->local_feature_flags = UINT64_MAX;
         rr->remote_feature_flags = UINT64_MAX;
+
+        rr->rate_limit_bps = UINT64_MAX;
 
         return rr;
 }
@@ -195,6 +199,15 @@ CaRemote* ca_remote_unref(CaRemote *rr) {
         gcry_md_close(rr->validate_digest);
 
         return mfree(rr);
+}
+
+int ca_remote_set_rate_limit_bps(CaRemote *rr, uint64_t rate_limit_bps) {
+        if (!rr)
+                return -EINVAL;
+
+        rr->rate_limit_bps = rate_limit_bps;
+
+        return 0;
 }
 
 int ca_remote_set_local_feature_flags(CaRemote *rr, uint64_t flags) {
@@ -799,8 +812,9 @@ static int ca_remote_start(CaRemote *rr) {
                 }
 
                 if (rr->pid == 0) {
-                        size_t i = 0, skip;
                         char **args, **u;
+                        size_t i = 0, skip;
+                        int argc;
 
                         /* Child */
                         safe_close(pair1[0]);
@@ -822,7 +836,12 @@ static int ca_remote_start(CaRemote *rr) {
 
                         (void) prctl(PR_SET_PDEATHSIG, SIGTERM);
 
-                        args = newa(char*, (rr->callout ? 1 : 3) + 5 + strv_length(rr->rstore_urls) + 1);
+                        argc = (rr->callout ? 1 : 3) + 5 + strv_length(rr->rstore_urls);
+
+                        if (rr->rate_limit_bps != UINT64_MAX)
+                                argc++;
+
+                        args = newa(char*, argc + 1);
 
                         if (rr->callout) {
                                 const char *e;
@@ -849,6 +868,14 @@ static int ca_remote_start(CaRemote *rr) {
                                 args[i++] = (char*) ssh;
                                 args[i++] = strndupa(rr->url_prefix, skip - 1);
                                 args[i++] = (char*) remote_casync;
+                        }
+
+                        if (rr->rate_limit_bps != UINT64_MAX) {
+                                r = asprintf(args + i, "--rate-limit-bps=%" PRIu64, rr->rate_limit_bps);
+                                if (r < 0)
+                                        return log_oom();
+
+                                i++;
                         }
 
                         args[i++] = (char*) ((rr->local_feature_flags & (CA_PROTOCOL_PUSH_CHUNKS|CA_PROTOCOL_PUSH_INDEX)) ? "push" : "pull");

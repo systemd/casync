@@ -31,6 +31,7 @@ static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
 static size_t arg_chunk_size_avg = 0;
+static uint64_t arg_rate_limit_bps = UINT64_MAX;
 static uint64_t arg_with = 0;
 static uint64_t arg_without = 0;
 
@@ -45,7 +46,8 @@ static void help(void) {
                "     --store=PATH            The primary chunk store to use\n"
                "     --extra-store=PATH      Additional chunk store to look for chunks in\n"
                "     --chunk-size-avg=SIZE   The average number of bytes for a chunk file\n"
-               "     --seed=PATH             Additional file or directory to use as seed\n\n"
+               "     --seed=PATH             Additional file or directory to use as seed\n"
+               "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n\n"
                "Input/output selector:\n"
                "     --what=archive          Operate on archive file\n"
                "     --what=archive-index    Operate on archive index file\n"
@@ -92,6 +94,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_EXTRA_STORE,
                 ARG_CHUNK_SIZE_AVG,
                 ARG_SEED,
+                ARG_RATE_LIMIT_BPS,
                 ARG_WITH,
                 ARG_WITHOUT,
                 ARG_WHAT,
@@ -104,6 +107,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "extra-store",    required_argument, NULL, ARG_EXTRA_STORE    },
                 { "chunk-size-avg", required_argument, NULL, ARG_CHUNK_SIZE_AVG },
                 { "seed",           required_argument, NULL, ARG_SEED           },
+                { "rate-limit-bps", required_argument, NULL, ARG_RATE_LIMIT_BPS },
                 { "with",           required_argument, NULL, ARG_WITH           },
                 { "without",        required_argument, NULL, ARG_WITHOUT        },
                 { "what",           required_argument, NULL, ARG_WHAT           },
@@ -167,6 +171,19 @@ static int parse_argv(int argc, char *argv[]) {
                         r = strv_extend(&arg_seeds, optarg);
                         if (r < 0)
                                 return log_oom();
+
+                        break;
+
+                case ARG_RATE_LIMIT_BPS:
+                        r = parse_size(optarg, &arg_rate_limit_bps);
+                        if (r < 0) {
+                                fprintf(stderr, "Unable to parse rate limit %s: %s\n", optarg, strerror(-r));
+                                return r;
+                        }
+                        if (arg_rate_limit_bps == 0) {
+                                fprintf(stderr, "Rate limit size cannot be zero.\n");
+                                return -EINVAL;
+                        }
 
                         break;
 
@@ -613,6 +630,14 @@ static int make(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
+        if (arg_rate_limit_bps != UINT64_MAX) {
+                r = ca_sync_set_rate_limit_bps(s, arg_rate_limit_bps);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
+                        return r;
+                }
+        }
+
         r = ca_sync_set_base_fd(s, input_fd);
         if (r < 0) {
                 fprintf(stderr, "Failed to set sync base: %s\n", strerror(-r));
@@ -872,6 +897,14 @@ static int extract(int argc, char *argv[]) {
         if (!s) {
                 r = log_oom();
                 goto finish;
+        }
+
+        if (arg_rate_limit_bps != UINT64_MAX) {
+                r = ca_sync_set_rate_limit_bps(s, arg_rate_limit_bps);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
+                        return r;
+                }
         }
 
         if (output_fd >= 0)
@@ -1629,6 +1662,14 @@ static int pull(int argc, char *argv[]) {
                 return r;
         }
 
+        if (arg_rate_limit_bps != UINT64_MAX) {
+                r = ca_remote_set_rate_limit_bps(rr, arg_rate_limit_bps);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
+                        return r;
+                }
+        }
+
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);
         if (r < 0) {
                 fprintf(stderr, "Failed to set I/O file descriptors: %s\n", strerror(-r));
@@ -1774,6 +1815,14 @@ static int push(int argc, char *argv[]) {
         if (r < 0) {
                 fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
                 return r;
+        }
+
+        if (arg_rate_limit_bps != UINT64_MAX) {
+                r = ca_remote_set_rate_limit_bps(rr, arg_rate_limit_bps);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
+                        return r;
+                }
         }
 
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);

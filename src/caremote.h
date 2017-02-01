@@ -29,6 +29,8 @@ int ca_remote_add_local_feature_flags(CaRemote *rr, uint64_t flags);
 int ca_remote_get_local_feature_flags(CaRemote *rr, uint64_t* flags);
 int ca_remote_get_remote_feature_flags(CaRemote *rr, uint64_t* flags);
 
+int ca_remote_set_rate_limit_bps(CaRemote *rr, uint64_t rate_limit_bps);
+
 int ca_remote_set_io_fds(CaRemote *rr, int input_fd, int output_fd);
 int ca_remote_get_io_fds(CaRemote *rr, int *ret_input_fd, int *ret_output_fd);
 int ca_remote_get_io_events(CaRemote *rr, short *ret_input_events, short *ret_output_events);
