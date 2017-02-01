@@ -1365,6 +1365,8 @@ static int ca_sync_remote_prefetch(CaSync *s) {
                 if (r < 0)
                         return r;
 
+                s->n_prefetched_chunks++;
+
                 r = ca_sync_has_local(s, &id);
                 if (r < 0)
                         return r;
@@ -1375,7 +1377,6 @@ static int ca_sync_remote_prefetch(CaSync *s) {
                 if (r < 0)
                         return r;
 
-                s->n_prefetched_chunks++;
                 requested ++;
         }
 
