@@ -24,6 +24,22 @@ static inline void *realloc_buffer_data(ReallocBuffer *buffer) {
         return (uint8_t*) buffer->data + buffer->start;
 }
 
+static inline void *realloc_buffer_data_offset(ReallocBuffer *buffer, size_t offset) {
+        size_t p;
+
+        assert(buffer);
+        assert(buffer->start <= buffer->end);
+        assert(buffer->end <= buffer->allocated);
+
+        p = buffer->start + offset;
+        if (p < buffer->start) /* overflow? */
+                return NULL;
+        if (p > buffer->end) /* out of bounds? */
+                return NULL;
+
+        return (uint8_t*) buffer->data + p;
+}
+
 static inline size_t realloc_buffer_size(ReallocBuffer *buffer) {
         assert(buffer);
         assert(buffer->start <= buffer->end);

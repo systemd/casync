@@ -1513,8 +1513,8 @@ static int ca_remote_send_index(CaRemote *rr) {
 }
 
 static int ca_remote_send_request(CaRemote *rr) {
+        size_t header_offset = (size_t) -1;
         int only_high_priority = -1, r;
-        CaProtocolRequest *req = NULL;
 
         assert(rr);
         assert(rr->cache_fd >= 0);
@@ -1531,13 +1531,10 @@ static int ca_remote_send_request(CaRemote *rr) {
                 return CA_REMOTE_POLL;
 
         for (;;) {
+                CaProtocolRequest *req;
                 bool high_priority;
                 CaChunkID id;
                 void *p;
-
-                /* Is the frame already large enough? If so, let's stop it for now */
-                if (req && read_le64(&req->header.size) >= BUFFER_SIZE)
-                        break;
 
                 r = ca_remote_dequeue_request(rr, only_high_priority, &id, &high_priority);
                 if (r == -ENODATA)
@@ -1545,14 +1542,19 @@ static int ca_remote_send_request(CaRemote *rr) {
                 if (r < 0)
                         return r;
 
-                if (req) {
+                if (header_offset != (size_t) -1) {
                         /* If we already have a request, append one item */
-                        write_le64(&req->header.size, read_le64(&req->header.size) + CA_CHUNK_ID_SIZE);
-
                         p = realloc_buffer_extend(&rr->output_buffer, CA_CHUNK_ID_SIZE);
                         if (!p)
                                 return -ENOMEM;
+
+                        req = realloc_buffer_data_offset(&rr->output_buffer, header_offset);
+                        assert(req);
+
+                        write_le64(&req->header.size, read_le64(&req->header.size) + CA_CHUNK_ID_SIZE);
                 } else {
+                        header_offset = realloc_buffer_size(&rr->output_buffer);
+
                         /* If we don't have a request frame yet, allocate one with one item. */
                         req = realloc_buffer_extend0(&rr->output_buffer, offsetof(CaProtocolRequest, chunks) + CA_CHUNK_ID_SIZE);
                         if (!req)
@@ -1566,11 +1568,14 @@ static int ca_remote_send_request(CaRemote *rr) {
                 }
 
                 memcpy(p, &id, CA_CHUNK_ID_SIZE);
-
                 only_high_priority = high_priority;
+
+                /* Is the frame already large enough? If so, let's stop it for now */
+                if (read_le64(&req->header.size) >= BUFFER_SIZE)
+                        break;
         }
 
-        return req ? CA_REMOTE_STEP : CA_REMOTE_POLL;
+        return header_offset != (size_t) -1 ? CA_REMOTE_STEP : CA_REMOTE_POLL;
 }
 
 int ca_remote_step(CaRemote *rr) {
