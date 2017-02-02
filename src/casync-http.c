@@ -7,6 +7,7 @@
 #include "util.h"
 
 static bool arg_verbose = false;
+static curl_off_t arg_rate_limit_bps = 0;
 
 static enum {
         ARG_PROTOCOL_HTTP,
@@ -275,6 +276,20 @@ static int run(int argc, char *argv[]) {
                         goto finish;
                 }
 
+                if (arg_rate_limit_bps > 0) {
+                        if (curl_easy_setopt(curl, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
+                                fprintf(stderr, "Failed to set CURL send speed limit.\n");
+                                r = -EIO;
+                                goto finish;
+                        }
+
+                        if (curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
+                                fprintf(stderr, "Failed to set CURL receive speed limit.\n");
+                                r = -EIO;
+                                goto finish;
+                        }
+                }
+
                 if (arg_verbose)
                         fprintf(stderr, "Acquiring %s...\n", index_url);
 
@@ -387,6 +402,20 @@ static int run(int argc, char *argv[]) {
                         goto finish;
                 }
 
+                if (arg_rate_limit_bps > 0) {
+                        if (curl_easy_setopt(curl, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
+                                fprintf(stderr, "Failed to set CURL send speed limit.\n");
+                                r = -EIO;
+                                goto finish;
+                        }
+
+                        if (curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
+                                fprintf(stderr, "Failed to set CURL receive speed limit.\n");
+                                r = -EIO;
+                                goto finish;
+                        }
+                }
+
                 if (arg_verbose)
                         fprintf(stderr, "Acquiring %s...\n", url_buffer);
 
@@ -465,6 +494,7 @@ static int parse_argv(int argc, char *argv[]) {
         static const struct option options[] = {
                 { "help",           no_argument,       NULL, 'h'                },
                 { "verbose",        no_argument,       NULL, 'v'                },
+                { "rate-limit-bps", required_argument, NULL, 'l'                },
                 {}
         };
 
@@ -499,6 +529,10 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_verbose = true;
                         break;
 
+                case 'l':
+                        arg_rate_limit_bps = strtoll(optarg, NULL, 10);
+                        break;
+
                 case '?':
                         return -EINVAL;
 
@@ -524,16 +558,16 @@ int main(int argc, char* argv[]) {
         if (r <= 0)
                 goto finish;
 
-        if (argc < 2) {
+        if (argc < optind) {
                 fprintf(stderr, "Verb expected.\n");
                 r = -EINVAL;
                 goto finish;
         }
 
-        if (streq(argv[1], "pull"))
-                r = run(argc-1, argv+1);
+        if (streq(argv[optind], "pull"))
+                r = run(argc - optind, argv + optind);
         else {
-                fprintf(stderr, "Unknown verb: %s\n", argv[1]);
+                fprintf(stderr, "Unknown verb: %s\n", argv[optind]);
                 r = -EINVAL;
         }
 

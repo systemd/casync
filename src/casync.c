@@ -79,6 +79,8 @@ typedef struct CaSync {
         bool archive_eof;
         bool remote_index_eof;
 
+        size_t rate_limit_bps;
+
         uint64_t feature_flags;
 
         uint64_t n_written_chunks;
@@ -216,6 +218,15 @@ CaSync *ca_sync_unref(CaSync *s) {
         return NULL;
 }
 
+int ca_sync_set_rate_limit_bps(CaSync *s, size_t rate_limit_bps) {
+        if (!s)
+                return -EINVAL;
+
+        s->rate_limit_bps = rate_limit_bps;
+
+        return 0;
+}
+
 int ca_sync_set_feature_flags(CaSync *s, uint64_t flags) {
         if (!s)
                 return -EINVAL;
@@ -340,6 +351,12 @@ int ca_sync_set_index_remote(CaSync *s, const char *url) {
         s->remote_index = ca_remote_new();
         if (!s->remote_index)
                 return -ENOMEM;
+
+        if (s->rate_limit_bps > 0) {
+                r = ca_remote_set_rate_limit_bps(s->remote_index, s->rate_limit_bps);
+                if (r < 0)
+                        return r;
+        }
 
         r = ca_remote_set_index_url(s->remote_index, url);
         if (r < 0)
@@ -562,11 +579,17 @@ int ca_sync_set_store_remote(CaSync *s, const char *url) {
         if (!s->remote_wstore)
                 return -ENOMEM;
 
+        if (s->rate_limit_bps > 0) {
+                r = ca_remote_set_rate_limit_bps(s->remote_wstore, s->rate_limit_bps);
+                if (r < 0)
+                        return r;
+        }
+
         r = ca_remote_set_store_url(s->remote_wstore, url);
         if (r < 0)
                 return r;
 
-        r = ca_remote_set_local_feature_flags(s->remote_index, flags);
+        r = ca_remote_set_local_feature_flags(s->remote_wstore, flags);
         if (r < 0)
                 return r;
 
