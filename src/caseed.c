@@ -164,7 +164,7 @@ static int ca_seed_open(CaSeed *s) {
         if (s->cache_fd < 0) {
                 if (!s->cache_path) {
                         if (asprintf(&s->cache_path, "/var/tmp/%" PRIx64 ".cased", random_u64()) < 0)
-                                return r;
+                                return -ENOMEM;
 
                         s->remove_cache = true;
                 }
