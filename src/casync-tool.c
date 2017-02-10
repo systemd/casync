@@ -903,7 +903,7 @@ static int extract(int argc, char *argv[]) {
                 r = ca_sync_set_rate_limit_bps(s, arg_rate_limit_bps);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
-                        return r;
+                        goto finish;
                 }
         }
 
