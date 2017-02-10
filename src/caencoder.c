@@ -329,7 +329,7 @@ static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
 
         switch(le32toh(superblock.magic)) {
                 case SQUASHFS_MAGIC:
-                        n->device_size = le64toh(superblock.squashfs.bytes_used);
+                        n->device_size = ALIGN_TO(le64toh(superblock.squashfs.bytes_used), 4096UL);
                         return 1;
 
                 case _ANDROID_BOOTIMG_MAGIC_1:
