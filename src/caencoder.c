@@ -309,6 +309,11 @@ static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
                                 le32_t second_size;
                                 unsigned int second_addr;
 
+                                unsigned int tags_addr;
+                                le32_t page_size;
+
+                                le32_t dtb_size;
+
                                 /* ignore the rest */
                         } _packed_ android_bootimg;
                 };
@@ -334,10 +339,13 @@ static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
 
                 case _ANDROID_BOOTIMG_MAGIC_1:
                         if (le32toh(superblock.android_bootimg.magic2) == _ANDROID_BOOTIMG_MAGIC_2) {
-                                n->device_size = 608 /* header size */ +
-                                                 le32toh(superblock.android_bootimg.kernel_size) +
-                                                 le32toh(superblock.android_bootimg.initrd_size) +
-                                                 le32toh(superblock.android_bootimg.second_size);
+                                uint32_t pagesize = le32toh(superblock.android_bootimg.page_size);
+
+                                n->device_size = ALIGN_TO(608, pagesize) /* header size */ +
+                                                 ALIGN_TO(le32toh(superblock.android_bootimg.kernel_size), pagesize) +
+                                                 ALIGN_TO(le32toh(superblock.android_bootimg.initrd_size), pagesize) +
+                                                 ALIGN_TO(le32toh(superblock.android_bootimg.second_size), pagesize) +
+                                                 ALIGN_TO(le32toh(superblock.android_bootimg.dtb_size), pagesize);
                                 return 1;
                         }
 
