@@ -282,18 +282,18 @@ static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
                 union {
                         struct {
                                 /* unsigned int   s_magic; */
-                                unsigned int   inodes;
-                                int            mkfs_time;
-                                unsigned int   block_size;
-                                unsigned int   fragments;
-                                unsigned short compression;
-                                unsigned short block_log;
-                                unsigned short flags;
-                                unsigned short no_ids;
-                                unsigned short s_major;
-                                unsigned short s_minor;
-                                long long      root_inode;
-                                le64_t         bytes_used;
+                                le32_t inodes;
+                                le32_t mkfs_time;
+                                le32_t block_size;
+                                le32_t fragments;
+                                le16_t compression;
+                                le16_t block_log;
+                                le16_t flags;
+                                le16_t no_ids;
+                                le16_t s_major;
+                                le16_t s_minor;
+                                le64_t root_inode;
+                                le64_t bytes_used;
                                 /* ignore the rest */
                         } _packed_ squashfs;
 
@@ -301,15 +301,15 @@ static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
                                 le32_t magic2;
 
                                 le32_t kernel_size;
-                                unsigned int kernel_addr;
+                                le32_t kernel_addr;
 
                                 le32_t initrd_size;
-                                unsigned int initrd_addr;
+                                le32_t initrd_addr;
 
                                 le32_t second_size;
-                                unsigned int second_addr;
+                                le32_t second_addr;
 
-                                unsigned int tags_addr;
+                                le32_t tags_addr;
                                 le32_t page_size;
 
                                 le32_t dtb_size;
