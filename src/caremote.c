@@ -599,6 +599,28 @@ int ca_remote_open_index_fd(CaRemote *rr) {
         return fd;
 }
 
+static int ca_remote_init_cache(CaRemote *rr) {
+        assert(rr);
+
+        if (rr->cache_fd >= 0)
+                return 0;
+
+        if (!rr->cache_path) {
+                if (asprintf(&rr->cache_path, "/var/tmp/%" PRIx64 ".carem", random_u64()) < 0)
+                        return -ENOMEM;
+
+                rr->remove_cache = true;
+        }
+
+        (void) mkdir(rr->cache_path, 0777);
+
+        rr->cache_fd = open(rr->cache_path, O_RDONLY|O_CLOEXEC|O_DIRECTORY);
+        if (rr->cache_fd < 0)
+                return -errno;
+
+        return 1;
+}
+
 static int ca_remote_enqueue_request(CaRemote *rr, const CaChunkID *id, bool high_priority, bool please_requeue) {
         char ids[CA_CHUNK_ID_FORMAT_MAX];
         uint64_t position;
@@ -608,7 +630,10 @@ static int ca_remote_enqueue_request(CaRemote *rr, const CaChunkID *id, bool hig
 
         assert(rr);
         assert(id);
-        assert(rr->cache_fd >= 0);
+
+        r = ca_remote_init_cache(rr);
+        if (r < 0)
+                return r;
 
         /* Enqueues a GET request. We maintain a 2-level priority queue on disk for this, in two directories
          * "low-priority" and "high-priority". This could be much easier if we could maintain this entirely in memory,
@@ -720,7 +745,9 @@ static int ca_remote_dequeue_request(CaRemote *rr, int only_high_priority, CaChu
 
         assert(rr);
         assert(ret);
-        assert(rr->cache_fd >= 0);
+
+        if (rr->cache_fd < 0)
+                return -ENODATA;
 
         for (;;) {
                 char *qpos;
@@ -904,21 +931,6 @@ static int ca_remote_start(CaRemote *rr) {
 
                 safe_close(pair1[1]);
                 safe_close(pair2[0]);
-        }
-
-        if (rr->cache_fd < 0) {
-                if (!rr->cache_path) {
-                        if (asprintf(&rr->cache_path, "/var/tmp/%" PRIx64 ".carem", random_u64()) < 0)
-                                return -ENOMEM;
-
-                        rr->remove_cache = true;
-                }
-
-                (void) mkdir(rr->cache_path, 0777);
-
-                rr->cache_fd = open(rr->cache_path, O_RDONLY|O_CLOEXEC|O_DIRECTORY);
-                if (rr->cache_fd < 0)
-                        return -errno;
         }
 
         if (rr->index_fd < 0 && rr->index_path) {
@@ -1585,7 +1597,6 @@ static int ca_remote_send_request(CaRemote *rr) {
         int only_high_priority = -1, r;
 
         assert(rr);
-        assert(rr->cache_fd >= 0);
 
         if (!(rr->remote_feature_flags & CA_PROTOCOL_PUSH_INDEX_CHUNKS) &&
             !(rr->local_feature_flags & CA_PROTOCOL_PULL_CHUNKS))
@@ -1788,8 +1799,10 @@ int ca_remote_request(
                 return -ENOTTY;
         if (rr->state == CA_REMOTE_EOF)
                 return -EPIPE;
-        if (rr->cache_fd < 0)
-                return -ENXIO;
+
+        r = ca_remote_init_cache(rr);
+        if (r < 0)
+                return r;
 
         realloc_buffer_empty(&rr->chunk_buffer);
 
@@ -2140,6 +2153,10 @@ int ca_remote_has_pending_requests(CaRemote *rr) {
         if (!rr)
                 return -EINVAL;
 
+        /* If there's no cache, then we can't have anything queued */
+        if (rr->cache_fd < 0)
+                return 0;
+
         /* Does this have locally queued requests? */
         if ((rr->queue_start_high < rr->queue_end_high) ||
             (rr->queue_start_low < rr->queue_end_low))
@@ -2169,8 +2186,9 @@ int ca_remote_next_chunk(
 
         if (rr->state == CA_REMOTE_EOF)
                 return -EPIPE;
+
         if (rr->cache_fd < 0)
-                return -ENXIO;
+                return -ENODATA;
 
         if (ret_data) {
                 CaChunkCompression compression;
@@ -2270,6 +2288,9 @@ int ca_remote_forget_chunk(CaRemote *rr, const CaChunkID *id) {
                 return -EINVAL;
         if (!id)
                 return -EINVAL;
+
+        if (rr->cache_fd < 0)
+                return 0;
 
         if (!ca_chunk_id_format(id, ids))
                 return -EINVAL;
