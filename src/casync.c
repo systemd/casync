@@ -1639,7 +1639,6 @@ int ca_sync_step(CaSync *s) {
                 }
         }
 
-
         r = ca_sync_remote_prefetch(s);
         if (r < 0)
                 return r;

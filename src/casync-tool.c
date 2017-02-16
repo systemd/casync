@@ -718,8 +718,10 @@ static int make(int argc, char *argv[]) {
 
                 case CA_SYNC_POLL:
                         r = ca_sync_poll(s, UINT64_MAX);
-                        if (r < 0)
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
                                 goto finish;
+                        }
                         break;
 
                 default:
@@ -1004,8 +1006,10 @@ static int extract(int argc, char *argv[]) {
 
                 case CA_SYNC_POLL:
                         r = ca_sync_poll(s, UINT64_MAX);
-                        if (r < 0)
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
                                 goto finish;
+                        }
                         break;
 
                 default:
@@ -1261,8 +1265,10 @@ static int list(int argc, char *argv[]) {
 
                 case CA_SYNC_POLL:
                         r = ca_sync_poll(s, UINT64_MAX);
-                        if (r < 0)
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
                                 goto finish;
+                        }
                         break;
 
                 default:
@@ -1518,8 +1524,10 @@ static int digest(int argc, char *argv[]) {
 
                 case CA_SYNC_POLL:
                         r = ca_sync_poll(s, UINT64_MAX);
-                        if (r < 0)
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
                                 goto finish;
+                        }
                         break;
 
                 default:
