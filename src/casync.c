@@ -1330,21 +1330,42 @@ static int ca_sync_seed_step(CaSync *s) {
         }
 }
 
-static CaRemote *ca_sync_current_remote(CaSync *s) {
-        CaRemote *remote;
+static size_t ca_sync_n_remotes(CaSync *s) {
+        size_t n;
 
         assert(s);
 
-        s->current_remote %= 2 + s->n_remote_rstores;
+        n = s->n_remote_rstores;
 
-        if (s->current_remote == 0)
-                remote = s->remote_index;
-        else if (s->current_remote == 1)
-                remote = s->remote_wstore;
-        else
-                remote = s->remote_rstores[s->current_remote-2];
+        if (s->remote_index)
+                n++;
+        if (s->remote_wstore && s->remote_wstore != s->remote_index)
+                n++;
 
-        return remote;
+        return n;
+}
+
+static CaRemote *ca_sync_current_remote(CaSync *s) {
+        size_t c;
+
+        assert(s);
+
+        s->current_remote %= ca_sync_n_remotes(s);
+        c = s->current_remote;
+
+        if (s->remote_index) {
+                if (c == 0)
+                        return s->remote_index;
+                c--;
+        }
+
+        if (s->remote_wstore && s->remote_wstore != s->remote_index) {
+                if (c == 0)
+                        return s->remote_wstore;
+                c--;
+        }
+
+        return s->remote_rstores[c];
 }
 
 static int ca_sync_remote_prefetch(CaSync *s) {
@@ -1537,7 +1558,7 @@ static int ca_sync_remote_step(CaSync *s) {
 
         assert(s);
 
-        for (i = 0; i < 2 + s->n_remote_rstores; i++) {
+        for (i = 0; i < ca_sync_n_remotes(s); i++) {
                 CaRemote *remote;
 
                 remote = ca_sync_current_remote(s);
