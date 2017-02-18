@@ -808,6 +808,12 @@ static int extract(int argc, char *argv[]) {
                 }
         }
 
+        s = ca_sync_new_decode();
+        if (!s) {
+                r = log_oom();
+                goto finish;
+        }
+
         if (!input || streq(input, "-"))
                 input_fd = STDIN_FILENO;
 
@@ -823,6 +829,10 @@ static int extract(int argc, char *argv[]) {
                 output_fd = STDOUT_FILENO;
         else {
                 CaLocatorClass output_class;
+
+                r = ca_sync_add_seed_path(s, output);
+                if (r < 0 && r != -ENOENT)
+                        fprintf(stderr, "Failed to add existing file as seed %s, ignoring: %s\n", output, strerror(-r));
 
                 output_class = ca_classify_locator(output);
                 if (output_class < 0) {
@@ -893,12 +903,6 @@ static int extract(int argc, char *argv[]) {
                 r = set_default_store(input);
                 if (r < 0)
                         goto finish;
-        }
-
-        s = ca_sync_new_decode();
-        if (!s) {
-                r = log_oom();
-                goto finish;
         }
 
         if (arg_rate_limit_bps != UINT64_MAX) {
