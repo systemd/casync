@@ -11,7 +11,7 @@
 * save/restore acls
 * save/restore hardlinks?
 * check fs features, when saving/restoring
-* encryption
+* encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
 * hardlink/reflink from seed
 * exclude patterns
 * permit shifting UID/GIDs
@@ -24,4 +24,13 @@
 * coalesce index frames sent over protocol
 * add per-file sha256 sum to serialization
 * rework uploading via ssh to use seed instead of cache store for providing chunks to server
-* parallel http GETs
+* casync-http: parallel http GETs
+* casync-http: try all configured stores one after the other before sending MISSING
+* add support for compressed index files and archive files
+* maybe honour "nodump" file flag á la tarsnap?
+* automatically exclude procfs, sysfs, ...
+* replace adler32 by something better
+* define mime types for our files
+* define http-based url protocol prefix for caibx+caidx
+* support accessing base trees through native protocol
+* implicitly generate index + chunks when accessing base trees or archives through native protocol
