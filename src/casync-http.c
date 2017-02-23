@@ -20,6 +20,7 @@ typedef enum ProcessUntil {
         PROCESS_UNTIL_WRITTEN,
         PROCESS_UNTIL_CAN_PUT_CHUNK,
         PROCESS_UNTIL_CAN_PUT_INDEX,
+        PROCESS_UNTIL_CAN_PUT_ARCHIVE,
         PROCESS_UNTIL_HAVE_REQUEST,
         PROCESS_UNTIL_FINISHED,
 } ProcessUntil;
@@ -54,6 +55,20 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
                                 return r;
                         if (r < 0) {
                                 fprintf(stderr, "Failed to determine whether we can add an index fragment to the buffer: %s\n", strerror(-r));
+                                return r;
+                        }
+                        if (r > 0)
+                                return 0;
+
+                        break;
+
+                case PROCESS_UNTIL_CAN_PUT_ARCHIVE:
+
+                        r = ca_remote_can_put_archive(rr);
+                        if (r == -EPIPE)
+                                return r;
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to determine whether we can add an archive fragment to the buffer: %s\n", strerror(-r));
                                 return r;
                         }
                         if (r > 0)
@@ -139,6 +154,62 @@ static size_t write_index(const void *buffer, size_t size, size_t nmemb, void *u
         return product;
 }
 
+static int write_index_eof(CaRemote *rr) {
+        int r;
+
+        assert(rr);
+
+        r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_INDEX);
+        if (r < 0)
+                return r;
+
+        r = ca_remote_put_index_eof(rr);
+        if (r < 0) {
+                fprintf(stderr, "Failed to put index EOF: %s\n", strerror(-r));
+                return r;
+        }
+
+        return 0;
+}
+
+static size_t write_archive(const void *buffer, size_t size, size_t nmemb, void *userdata) {
+        CaRemote *rr = userdata;
+        size_t product;
+        int r;
+
+        product = size * nmemb;
+
+        r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_ARCHIVE);
+        if (r < 0)
+                return 0;
+
+        r = ca_remote_put_archive(rr, buffer, product);
+        if (r < 0) {
+                fprintf(stderr, "Failed to put archive: %s\n", strerror(-r));
+                return 0;
+        }
+
+        return product;
+}
+
+static int write_archive_eof(CaRemote *rr) {
+        int r;
+
+        assert(rr);
+
+        r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_ARCHIVE);
+        if (r < 0)
+                return r;
+
+        r = ca_remote_put_archive_eof(rr);
+        if (r < 0) {
+                fprintf(stderr, "Failed to put archive EOF: %s\n", strerror(-r));
+                return r;
+        }
+
+        return 0;
+}
+
 static size_t write_chunk(const void *buffer, size_t size, size_t nmemb, void *userdata) {
         ReallocBuffer *chunk_buffer = userdata;
         size_t product, z;
@@ -183,6 +254,76 @@ static char *chunk_url(const char *store_url, const CaChunkID *id) {
         return buffer;
 }
 
+static int acquire_file(CaRemote *rr,
+                        CURL *curl,
+                        const char *url,
+                        size_t (*callback)(const void *p, size_t size, size_t nmemb, void *userdata)) {
+
+        long protocol_status;
+
+        assert(curl);
+        assert(url);
+        assert(callback);
+
+        if (curl_easy_setopt(curl, CURLOPT_URL, url) != CURLE_OK) {
+                fprintf(stderr, "Failed to set CURL URL to: %s\n", url);
+                return -EIO;
+        }
+
+        if (curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback) != CURLE_OK) {
+                fprintf(stderr, "Failed to set CURL callback function.\n");
+                return -EIO;
+        }
+
+        if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, rr) != CURLE_OK) {
+                fprintf(stderr, "Failed to set CURL private data.\n");
+                return -EIO;
+        }
+
+        if (arg_verbose)
+                fprintf(stderr, "Acquiring %s...\n", url);
+
+        if (curl_easy_perform(curl) != CURLE_OK) {
+                fprintf(stderr, "Failed to acquire %s\n", url);
+                return -EIO;
+        }
+
+        if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK) {
+                fprintf(stderr, "Failed to query response code\n");
+                return -EIO;
+        }
+
+        if (IN_SET(arg_protocol, ARG_PROTOCOL_HTTP, ARG_PROTOCOL_HTTPS) && protocol_status != 200) {
+                char *m;
+
+                if (arg_verbose)
+                        fprintf(stderr, "HTTP server failure %li while requesting %s.\n", protocol_status, url);
+
+                if (asprintf(&m, "HTTP request on %s failed with status %li", url, protocol_status) < 0)
+                        return log_oom();
+
+                (void) ca_remote_abort(rr, protocol_status == 404 ? ENOMEDIUM : EBADR, m);
+                free(m);
+
+                return 0;
+
+        } else if (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status < 200 || protocol_status > 299)) {
+                char *m;
+
+                if (arg_verbose)
+                        fprintf(stderr, "FTP server failure %li while requesting %s.n", protocol_status, url);
+
+                if (asprintf(&m, "FTP request on %s failed with status %li", url, protocol_status) < 0)
+                        return log_oom();
+
+                (void) ca_remote_abort(rr, EBADR, m);
+                free(m);
+                return 0;
+        }
+
+        return 1;
+}
+
 static int run(int argc, char *argv[]) {
         const char *base_url, *archive_url, *index_url, *wstore_url;
         size_t n_stores = 0, current_store = 0;
@@ -207,12 +348,12 @@ static int run(int argc, char *argv[]) {
 
         n_stores = !!wstore_url + (argc - 5);
 
-        if (base_url || archive_url) {
-                fprintf(stderr, "Pushing/pulling to base or archive via HTTP not yet supported.\n");
+        if (base_url) {
+                fprintf(stderr, "Pushing/pulling to base via HTTP not yet supported.\n");
                 return -EOPNOTSUPP;
         }
 
-        if (!index_url && n_stores == 0) {
+        if (!archive_url && !index_url && n_stores == 0) {
                 fprintf(stderr, "Nothing to do.\n");
                 return -EINVAL;
         }
@@ -225,7 +366,8 @@ static int run(int argc, char *argv[]) {
 
         r = ca_remote_set_local_feature_flags(rr,
                                               (n_stores > 0 ? CA_PROTOCOL_READABLE_STORE : 0) |
-                                              (index_url ? CA_PROTOCOL_READABLE_INDEX : 0));
+                                              (index_url ? CA_PROTOCOL_READABLE_INDEX : 0) |
+                                              (archive_url ? CA_PROTOCOL_READABLE_ARCHIVE : 0));
         if (r < 0) {
                 fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
                 goto finish;
@@ -255,96 +397,44 @@ static int run(int argc, char *argv[]) {
                 goto finish;
         }
 
+        if (arg_rate_limit_bps > 0) {
+                if (curl_easy_setopt(curl, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
+                        fprintf(stderr, "Failed to set CURL send speed limit.\n");
+                        r = -EIO;
+                        goto finish;
+                }
+
+                if (curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
+                        fprintf(stderr, "Failed to set CURL receive speed limit.\n");
+                        r = -EIO;
+                        goto finish;
+                }
+        }
+
         /* (void) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L); */
 
-        if (index_url) {
-                if (curl_easy_setopt(curl, CURLOPT_URL, index_url) != CURLE_OK) {
-                        fprintf(stderr, "Failed to set CURL URL to: %s\n", index_url);
-                        r = -EIO;
-                        goto finish;
-                }
-
-                if (curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_index) != CURLE_OK) {
-                        fprintf(stderr, "Failed to set CURL callback function.\n");
-                        r = -EIO;
-                        goto finish;
-                }
-
-                if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, rr) != CURLE_OK) {
-                        fprintf(stderr, "Failed to set CURL private data.\n");
-                        r = -EIO;
-                        goto finish;
-                }
-
-                if (arg_rate_limit_bps > 0) {
-                        if (curl_easy_setopt(curl, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                                fprintf(stderr, "Failed to set CURL send speed limit.\n");
-                                r = -EIO;
-                                goto finish;
-                        }
-
-                        if (curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                                fprintf(stderr, "Failed to set CURL receive speed limit.\n");
-                                r = -EIO;
-                                goto finish;
-                        }
-                }
-
-                if (arg_verbose)
-                        fprintf(stderr, "Acquiring %s...\n", index_url);
-
-                if (curl_easy_perform(curl) != CURLE_OK) {
-                        fprintf(stderr, "Failed to acquire %s\n", index_url);
-                        r = -EIO;
-                        goto finish;
-                }
-
-                if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK) {
-                        fprintf(stderr, "Failed to query response code\n");
-                        r = -EIO;
-                        goto finish;
-                }
-
-                if (IN_SET(arg_protocol, ARG_PROTOCOL_HTTP, ARG_PROTOCOL_HTTPS) && protocol_status != 200) {
-                        char *m;
-
-                        if (arg_verbose)
-                                fprintf(stderr, "HTTP server failure %li while requesting %s.\n", protocol_status, index_url);
-
-                        if (asprintf(&m, "HTTP request on %s failed with status %li", index_url, protocol_status) < 0) {
-                                r = log_oom();
-                                goto finish;
-                        }
-
-                        (void) ca_remote_abort(rr, protocol_status == 404 ? ENOMEDIUM : EBADR, m);
-                        free(m);
-                        goto flush;
-
-                } else if (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status < 200 || protocol_status > 299)) {
-                        char *m;
-
-                        if (arg_verbose)
-                                fprintf(stderr, "FTP server failure %li while requesting %s.n", protocol_status, index_url);
-
-                        if (asprintf(&m, "FTP request on %s failed with status %li", index_url, protocol_status) < 0) {
-                                r = log_oom();
-                                goto finish;
-                        }
-
-                        (void) ca_remote_abort(rr, EBADR, m);
-                        free(m);
-                        goto flush;
-                }
-
-                r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_INDEX);
+        if (archive_url) {
+                r = acquire_file(rr, curl, archive_url, write_archive);
                 if (r < 0)
                         goto finish;
+                if (r == 0)
+                        goto flush;
 
-                r = ca_remote_put_index_eof(rr);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to put index EOF: %s\n", strerror(-r));
+                r = write_archive_eof(rr);
+                if (r < 0)
                         goto finish;
-                }
+        }
+
+        if (index_url) {
+                r = acquire_file(rr, curl, index_url, write_index);
+                if (r < 0)
+                        goto finish;
+                if (r == 0)
+                        goto flush;
+
+                r = write_index_eof(rr);
+                if (r < 0)
+                        goto finish;
         }
 
         for (;;) {
