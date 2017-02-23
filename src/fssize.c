@@ -1,13 +1,39 @@
 #include "fssize.h"
 #include "util.h"
 
-#define _ANDROID_BOOTIMG_MAGIC_1 0x52444e41
-#define _ANDROID_BOOTIMG_MAGIC_2 0x2144494f
+#define FAT_SIGNATURE UINT16_C(0xaa55)
+
+#define _ANDROID_BOOTIMG_MAGIC_1 UINT32_C(0x52444e41)
+#define _ANDROID_BOOTIMG_MAGIC_2 UINT32_C(0x2144494f)
 
 int read_file_system_size(int fd, uint64_t *ret) {
 
         /* The squashfs and Android bootimg super block starts at offset 1024 */
         union {
+                struct {
+                        uint8_t ignored[3];
+                        uint8_t system_id[8];
+                        le16_t sector_size;
+                        uint8_t sec_per_cluster;
+                        le16_t reserved;
+                        uint8_t fats;
+                        le16_t dir_entries;
+                        le16_t sectors;
+                        uint8_t media;
+                        le16_t fat_length;
+                        le16_t secs_track;
+                        le16_t heads;
+                        le32_t hidden;
+                        le32_t total_sect;
+
+                        /* skip the boot code in the middle */
+                        uint8_t _skip[474];
+
+                        uint16_t signature;
+
+                        /* ignore the rest */
+                } _packed_ fat;
+
                 struct {
                         le32_t s_magic;
                         le32_t inodes;
@@ -46,11 +72,11 @@ int read_file_system_size(int fd, uint64_t *ret) {
 
                         /* ignore the rest */
                 } _packed_ android_bootimg;
-        } superblock0;
 
-        /* The ext2, ext3, ext4 superblock starts at offset 1024 */
-        union {
                 struct {
+                        /* The ext2, ext3, ext4 superblock starts at offset 1024 */
+                        uint8_t _skip[1024];
+
                         le32_t s_inodes_count;
                         le32_t s_blocks_count;
                         le32_t s_r_blocks_count;
@@ -70,56 +96,68 @@ int read_file_system_size(int fd, uint64_t *ret) {
 
                         /* ignore the rest */
                 } _packed_ ext234;
-        } superblock1024;
+
+        } superblock;
 
         ssize_t n;
 
         assert(fd >= 0);
         assert(ret);
 
-        n = pread(fd, &superblock0, sizeof(superblock0), 0);
+        n = pread(fd, &superblock, sizeof(superblock), 0);
         if (n < 0)
                 return -errno;
-        if (n != sizeof(superblock0))
-                return 0; /* don't know such short superblock0s */
+        if (n != sizeof(superblock))
+                return 0; /* don't know such short file systems */
 
-        if (le32toh(superblock0.squashfs.s_magic == SQUASHFS_MAGIC)) {
-                *ret = ALIGN_TO(le64toh(superblock0.squashfs.bytes_used), UINT64_C(4096));
+        if (le32toh(superblock.squashfs.s_magic == SQUASHFS_MAGIC)) {
+                *ret = ALIGN_TO(le64toh(superblock.squashfs.bytes_used), UINT64_C(4096));
                 return 1;
         }
 
-        if (le32toh(superblock0.android_bootimg.magic) == _ANDROID_BOOTIMG_MAGIC_1 &&
-            le32toh(superblock0.android_bootimg.magic2) == _ANDROID_BOOTIMG_MAGIC_2) {
+        if (le32toh(superblock.android_bootimg.magic) == _ANDROID_BOOTIMG_MAGIC_1 &&
+            le32toh(superblock.android_bootimg.magic2) == _ANDROID_BOOTIMG_MAGIC_2) {
                 uint32_t pagesize;
 
-                pagesize = le32toh(superblock0.android_bootimg.page_size);
-                if (__builtin_popcount(pagesize) != 1)
-                        return -EBADMSG;
+                pagesize = le32toh(superblock.android_bootimg.page_size);
+                if (IS_POWER_OF_TWO(pagesize)) {
 
-                *ret = ALIGN_TO(608, pagesize) /* header size */ +
-                        ALIGN_TO(le32toh(superblock0.android_bootimg.kernel_size), pagesize) +
-                        ALIGN_TO(le32toh(superblock0.android_bootimg.initrd_size), pagesize) +
-                        ALIGN_TO(le32toh(superblock0.android_bootimg.second_size), pagesize) +
-                        ALIGN_TO(le32toh(superblock0.android_bootimg.dtb_size), pagesize);
+                        *ret = (uint64_t) ALIGN_TO(608, pagesize) /* header size */ +
+                                (uint64_t) ALIGN_TO(le32toh(superblock.android_bootimg.kernel_size), pagesize) +
+                                (uint64_t) ALIGN_TO(le32toh(superblock.android_bootimg.initrd_size), pagesize) +
+                                (uint64_t) ALIGN_TO(le32toh(superblock.android_bootimg.second_size), pagesize) +
+                                (uint64_t) ALIGN_TO(le32toh(superblock.android_bootimg.dtb_size), pagesize);
 
-                return 1;
+                        return 1;
+                }
         }
 
-        n = pread(fd, &superblock1024, sizeof(superblock1024), 1024);
-        if (n < 0)
-                return -errno;
-        if (n != sizeof(superblock1024))
-                return 0; /* don't know this */
+        if (le16toh(superblock.fat.signature) == FAT_SIGNATURE) {
+                uint16_t sector_size;
 
-        if (le16toh(superblock1024.ext234.s_magic) == EXT2_SUPER_MAGIC) {
+                sector_size = le16toh(superblock.fat.sector_size);
+                if (IS_POWER_OF_TWO(sector_size)) {
+                        uint64_t l;
+
+                        l = (uint64_t) le16toh(superblock.fat.sectors) * le16toh(superblock.fat.sector_size);
+                        if (l == 0)
+                                l = (uint64_t) le32toh(superblock.fat.total_sect) * le16toh(superblock.fat.sector_size);
+
+                        if (l > 0) {
+                                *ret = l;
+                                return 1;
+                        }
+                }
+        }
+
+        if (le16toh(superblock.ext234.s_magic) == EXT2_SUPER_MAGIC) {
                 uint64_t shift;
 
-                shift = 10 + le32toh(superblock1024.ext234.s_log_block_size);
-                if (shift >= 64)
-                        return -EBADMSG;
-
-                *ret = le32toh(superblock1024.ext234.s_blocks_count) * (UINT64_C(1) << shift);
-                return 1;
+                shift = 10 + le32toh(superblock.ext234.s_log_block_size);
+                if (shift < 64) {
+                        *ret = (uint64_t) le32toh(superblock.ext234.s_blocks_count) * (UINT64_C(1) << shift);
+                        return 1;
+                }
         }
 
         return 0;

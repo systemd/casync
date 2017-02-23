@@ -508,4 +508,6 @@ static inline bool is_temporary_fs(const struct statfs *s) {
            is_fs_type(s, RAMFS_MAGIC);
 }
 
+#define IS_POWER_OF_TWO(x) (__builtin_popcount(x) == 1)
+
 #endif
