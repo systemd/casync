@@ -122,7 +122,9 @@ lib_SOURCES = \
 	src/rm-rf.c \
 	src/rm-rf.h \
 	src/util.c \
-	src/util.h
+	src/util.h \
+	src/fssize.h \
+	src/fssize.c
 
 ## casync
 
