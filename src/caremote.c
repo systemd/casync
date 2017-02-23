@@ -26,6 +26,13 @@ typedef enum CaRemoteState {
         CA_REMOTE_EOF,
 } CaRemoteState;
 
+typedef struct CaRemoteFile {
+        char *path, *temporary_path;
+        int fd;
+        ReallocBuffer buffer;
+        bool complete;
+} CaRemoteFile;
+
 struct CaRemote {
         unsigned n_ref;
 
@@ -36,7 +43,7 @@ struct CaRemote {
 
         /* char *base_url; */
         char *index_url;
-        /* char *archive_url; */
+        char *archive_url;
         char *wstore_url; /* The "primary" store, where we write to */
         char **rstore_urls; /* Additional, "secondary" stores we check */
 
@@ -52,25 +59,22 @@ struct CaRemote {
         ReallocBuffer input_buffer;
         ReallocBuffer output_buffer;
         ReallocBuffer chunk_buffer;
-        ReallocBuffer index_buffer;
         ReallocBuffer validate_buffer;
 
         uint64_t queue_start_high, queue_start_low;
         uint64_t queue_end_high, queue_end_low;
 
-        char *index_path;
-        char *temporary_index_path;
-        int index_fd;
-
         uint64_t local_feature_flags;
         uint64_t remote_feature_flags;
+
+        CaRemoteFile index_file;
+        CaRemoteFile archive_file;
 
         CaChunkID last_chunk;
         bool last_chunk_valid;
 
         pid_t pid;
 
-        bool index_complete;
         bool sent_hello;
         bool sent_goodbye;
 
@@ -91,7 +95,9 @@ CaRemote* ca_remote_new(void) {
         rr->cache_fd = -1;
         rr->input_fd = -1;
         rr->output_fd = -1;
-        rr->index_fd = -1;
+
+        rr->index_file.fd = -1;
+        rr->archive_file.fd = -1;
 
         rr->local_feature_flags = UINT64_MAX;
         rr->remote_feature_flags = UINT64_MAX;
@@ -149,6 +155,20 @@ static void ca_remote_remove_cache(CaRemote *rr) {
         }
 }
 
+static void ca_remote_file_free(CaRemoteFile *f) {
+        assert(f);
+
+        f->fd = safe_close(f->fd);
+
+        if (f->temporary_path) {
+                (void) unlink(f->temporary_path);
+                f->temporary_path = mfree(f->temporary_path);
+        }
+
+        f->path = mfree(f->path);
+        realloc_buffer_free(&f->buffer);
+}
+
 CaRemote* ca_remote_unref(CaRemote *rr) {
         if (!rr)
                 return NULL;
@@ -165,7 +185,7 @@ CaRemote* ca_remote_unref(CaRemote *rr) {
         free(rr->callout);
         /* free(rr->base_url); */
         free(rr->index_url);
-        /* free(rr->archive_url); */
+        free(rr->archive_url);
         free(rr->wstore_url);
         strv_free(rr->rstore_urls);
 
@@ -180,16 +200,10 @@ CaRemote* ca_remote_unref(CaRemote *rr) {
         realloc_buffer_free(&rr->input_buffer);
         realloc_buffer_free(&rr->output_buffer);
         realloc_buffer_free(&rr->chunk_buffer);
-        realloc_buffer_free(&rr->index_buffer);
         realloc_buffer_free(&rr->validate_buffer);
 
-        free(rr->index_path);
-        safe_close(rr->index_fd);
-
-        if (rr->temporary_index_path) {
-                (void) unlink(rr->temporary_index_path);
-                free(rr->temporary_index_path);
-        }
+        ca_remote_file_free(&rr->index_file);
+        ca_remote_file_free(&rr->archive_file);
 
         if (rr->pid > 1) {
                 /* (void) kill(rr->pid, SIGTERM); */
@@ -451,10 +465,12 @@ static int ca_remote_ssh_prefix_install(CaRemote *rr, const char *url) {
 static int ca_remote_any_prefix_install(CaRemote *rr, const char *url) {
         int r;
 
+        /* First, try to parse as proper URL */
         r = ca_remote_url_prefix_install(rr, url);
         if (r != -EINVAL)
                 return r;
 
+        /* If that didn't work, parse as ssh-style pseudo-URL */
         return ca_remote_ssh_prefix_install(rr, url);
 }
 
@@ -474,6 +490,27 @@ int ca_remote_set_index_url(CaRemote *rr, const char *url) {
 
         rr->index_url = strdup(url);
         if (!rr->index_url)
+                return -ENOMEM;
+
+        return 0;
+}
+
+int ca_remote_set_archive_url(CaRemote *rr, const char *url) {
+        int r;
+
+        if (!rr)
+                return -EINVAL;
+        if (!url)
+                return -EINVAL;
+        if (rr->archive_url)
+                return -EBUSY;
+
+        r = ca_remote_any_prefix_install(rr, url);
+        if (r < 0)
+                return r;
+
+        rr->archive_url = strdup(url);
+        if (!rr->archive_url)
                 return -ENOMEM;
 
         return 0;
@@ -548,21 +585,41 @@ int ca_remote_set_cache_fd(CaRemote *rr, int fd) {
         return 0;
 }
 
+static int ca_remote_file_set_path(CaRemoteFile *f, const char *path) {
+        assert(f);
+        assert(path);
+
+        if (f->path)
+                return -EBUSY;
+        if (f->fd >= 0)
+                return -EBUSY;
+
+        f->path = strdup(path);
+        if (!f->path)
+                return -ENOMEM;
+
+        return 0;
+}
+
 int ca_remote_set_index_path(CaRemote *rr, const char *path) {
         if (!rr)
                 return -EINVAL;
         if (!path)
                 return -EINVAL;
 
-        if (rr->index_path)
+        return ca_remote_file_set_path(&rr->index_file, path);
+}
+
+static int ca_remote_file_set_fd(CaRemoteFile *f, int fd) {
+        assert(f);
+        assert(fd >= 0);
+
+        if (f->path)
                 return -EBUSY;
-        if (rr->index_fd >= 0)
+        if (f->fd >= 0)
                 return -EBUSY;
 
-        rr->index_path = strdup(path);
-        if (!rr->index_path)
-                return -ENOMEM;
-
+        f->fd = fd;
         return 0;
 }
 
@@ -572,31 +629,25 @@ int ca_remote_set_index_fd(CaRemote *rr, int fd) {
         if (fd < 0)
                 return -EINVAL;
 
-        if (rr->index_path)
-                return -EBUSY;
-        if (rr->index_fd >= 0)
-                return -EBUSY;
-
-        rr->index_fd = fd;
-        return 0;
+        return ca_remote_file_set_fd(&rr->index_file, fd);
 }
 
-int ca_remote_open_index_fd(CaRemote *rr) {
-        int fd;
-
+int ca_remote_set_archive_path(CaRemote *rr, const char *path) {
         if (!rr)
                 return -EINVAL;
+        if (!path)
+                return -EINVAL;
 
-        if (!rr->index_path)
-                return -ENODATA;
-        if (!rr->index_complete)
-                return -ENODATA;
+        return ca_remote_file_set_path(&rr->archive_file, path);
+}
 
-        fd = open(rr->index_path, O_RDONLY|O_CLOEXEC|O_NOCTTY);
+int ca_remote_set_archive_fd(CaRemote *rr, int fd) {
+        if (!rr)
+                return -EINVAL;
         if (fd < 0)
-                return -errno;
+                return -EINVAL;
 
-        return fd;
+        return ca_remote_file_set_fd(&rr->index_file, fd);
 }
 
 static int ca_remote_init_cache(CaRemote *rr) {
@@ -801,6 +852,43 @@ static int ca_remote_dequeue_request(CaRemote *rr, int only_high_priority, CaChu
         return 0;
 }
 
+static int ca_remote_file_open(CaRemote *rr, CaRemoteFile *f, int flags) {
+        int r;
+
+        assert(f);
+
+        if (rr->state != CA_REMOTE_RUNNING)
+                return 0; /* Don't open files before we haven't settled on whether we shall do so for read or write */
+
+        if (f->fd >= 0)
+                return 0;
+        if (!f->path)
+                return 0;
+
+        flags |= O_CLOEXEC|O_NOCTTY;
+
+        if ((flags & O_ACCMODE) == O_RDONLY) {
+
+                f->fd = open(f->path, flags);
+                if (f->fd < 0)
+                        return -errno;
+
+                return 1;
+        }
+
+        if (!f->temporary_path) {
+                r = tempfn_random(f->path, &f->temporary_path);
+                if (r < 0)
+                        return r;
+        }
+
+        f->fd = open(f->temporary_path, flags|O_CREAT|O_EXCL|O_NOFOLLOW, 0666);
+        if (f->fd < 0)
+                return -errno;
+
+        return 1;
+}
+
 static int ca_remote_start(CaRemote *rr) {
         int r;
 
@@ -809,11 +897,21 @@ static int ca_remote_start(CaRemote *rr) {
         if (rr->local_feature_flags == UINT64_MAX)
                 return -EUNATCH;
 
+        /* We support either a readable or a writable index, not both. */
+        if ((rr->local_feature_flags & CA_PROTOCOL_READABLE_INDEX) &&
+            (rr->local_feature_flags & CA_PROTOCOL_WRITABLE_INDEX))
+                return -EINVAL;
+
+        /* We support either a readable or a writable archive, not both. */
+        if ((rr->local_feature_flags & CA_PROTOCOL_READABLE_ARCHIVE) &&
+            (rr->local_feature_flags & CA_PROTOCOL_WRITABLE_ARCHIVE))
+                return -EINVAL;
+
         if (rr->input_fd < 0 || rr->output_fd < 0) {
                 int pair1[2], pair2[2];
 
                 if (/* isempty(rr->base_url) && */
-                    /* isempty(rr->archive_url) && */
+                    isempty(rr->archive_url) &&
                     isempty(rr->index_url) &&
                     isempty(rr->wstore_url) &&
                     strv_isempty(rr->rstore_urls))
@@ -905,9 +1003,9 @@ static int ca_remote_start(CaRemote *rr) {
                                 i++;
                         }
 
-                        args[i++] = (char*) ((rr->local_feature_flags & (CA_PROTOCOL_PUSH_CHUNKS|CA_PROTOCOL_PUSH_INDEX)) ? "push" : "pull");
+                        args[i++] = (char*) ((rr->local_feature_flags & (CA_PROTOCOL_PUSH_CHUNKS|CA_PROTOCOL_PUSH_INDEX|CA_PROTOCOL_PUSH_ARCHIVE)) ? "push" : "pull");
                         args[i++] = /* rr->base_url ? rr->base_url + skip :*/ (char*) "-";
-                        args[i++] = /* rr->archive_url ? rr->archive_url + skip :*/ (char*) "-";
+                        args[i++] = rr->archive_url ? rr->archive_url + skip : (char*) "-";
                         args[i++] = rr->index_url ? rr->index_url + skip : (char*) "-";
                         args[i++] = rr->wstore_url ? rr->wstore_url + skip: (char*) "-";
 
@@ -933,40 +1031,34 @@ static int ca_remote_start(CaRemote *rr) {
                 safe_close(pair2[0]);
         }
 
-        if (rr->index_fd < 0 && rr->index_path) {
-                bool do_open = false;
-                int flags = O_CLOEXEC|O_NOCTTY;
+        if ((rr->remote_feature_flags & CA_PROTOCOL_PULL_INDEX) ||
+            (rr->local_feature_flags & CA_PROTOCOL_PUSH_INDEX)) {
 
-                /* We support either a readable or a writable index, not both. */
-                if ((rr->local_feature_flags & CA_PROTOCOL_READABLE_INDEX) &&
-                    (rr->local_feature_flags & CA_PROTOCOL_WRITABLE_INDEX))
-                        return -EINVAL;
+                r = ca_remote_file_open(rr, &rr->index_file, O_RDONLY);
+                if (r < 0)
+                        return r;
 
-                if ((rr->remote_feature_flags & CA_PROTOCOL_PULL_INDEX) ||
-                    (rr->local_feature_flags & CA_PROTOCOL_PUSH_INDEX)) {
-                        do_open = true;
-                        flags |= O_RDONLY;
-                } else if ((rr->remote_feature_flags & CA_PROTOCOL_PUSH_INDEX) ||
-                           (rr->local_feature_flags & CA_PROTOCOL_PULL_INDEX)) {
-                        do_open = true;
-                        flags |= O_WRONLY;
-                }
+        } else if ((rr->remote_feature_flags & CA_PROTOCOL_PUSH_INDEX) ||
+                   (rr->local_feature_flags & CA_PROTOCOL_PULL_INDEX)) {
 
-                if (do_open) {
-                        if ((flags & O_ACCMODE) == O_RDONLY) {
-                                rr->index_fd = open(rr->index_path, flags);
-                                if (rr->index_fd < 0)
-                                        return -errno;
-                        } else {
-                                r = tempfn_random(rr->index_path, &rr->temporary_index_path);
-                                if (r < 0)
-                                        return r;
+                r = ca_remote_file_open(rr, &rr->index_file, O_WRONLY);
+                if (r < 0)
+                        return r;
+        }
 
-                                rr->index_fd = open(rr->temporary_index_path, flags|O_CREAT|O_EXCL|O_NOFOLLOW, 0666);
-                                if (rr->index_fd < 0)
-                                        return -errno;
-                        }
-                }
+        if ((rr->remote_feature_flags & CA_PROTOCOL_PULL_ARCHIVE) ||
+            (rr->local_feature_flags & CA_PROTOCOL_PUSH_ARCHIVE)) {
+
+                r = ca_remote_file_open(rr, &rr->archive_file, O_RDONLY);
+                if (r < 0)
+                        return r;
+
+        } else if ((rr->remote_feature_flags & CA_PROTOCOL_PUSH_ARCHIVE) ||
+                   (rr->local_feature_flags & CA_PROTOCOL_PULL_ARCHIVE)) {
+
+                r = ca_remote_file_open(rr, &rr->archive_file, O_WRONLY);
+                if (r < 0)
+                        return r;
         }
 
         return CA_REMOTE_POLL;
@@ -994,7 +1086,7 @@ static int ca_remote_read(CaRemote *rr) {
         realloc_buffer_shorten(&rr->input_buffer, n < 0 ? left : left - n);
         if (n < 0)
                 return errno == EAGAIN ? CA_REMOTE_POLL : -errno;
-        if (n == 0)
+        if (n == 0) /* EOF */
                 return -EPIPE;
 
         return CA_REMOTE_STEP;
@@ -1026,10 +1118,14 @@ static bool operations_and_services_compatible(uint64_t operations, uint64_t ser
                 return false;
         if ((operations & CA_PROTOCOL_PULL_INDEX) && !(services & CA_PROTOCOL_READABLE_INDEX))
                 return false;
+        if ((operations & CA_PROTOCOL_PULL_ARCHIVE) && !(services & CA_PROTOCOL_READABLE_ARCHIVE))
+                return false;
 
         if ((operations & CA_PROTOCOL_PUSH_CHUNKS) && !(services & CA_PROTOCOL_WRITABLE_STORE))
                 return false;
         if ((operations & CA_PROTOCOL_PUSH_INDEX) && !(services & CA_PROTOCOL_WRITABLE_INDEX))
+                return false;
+        if ((operations & CA_PROTOCOL_PUSH_ARCHIVE) && !(services & CA_PROTOCOL_WRITABLE_ARCHIVE))
                 return false;
 
         return true;
@@ -1056,7 +1152,7 @@ static int ca_remote_process_hello(CaRemote *rr, const CaProtocolHello *hello) {
                 return -EBADE;
 
         /* Check that between both sides there are are any operations requested */
-        if (((remote_flags | rr->local_feature_flags) & (CA_PROTOCOL_PULL_INDEX|CA_PROTOCOL_PULL_CHUNKS|CA_PROTOCOL_PUSH_CHUNKS|CA_PROTOCOL_PUSH_INDEX)) == 0)
+        if (((remote_flags | rr->local_feature_flags) & (CA_PROTOCOL_PULL_INDEX|CA_PROTOCOL_PULL_CHUNKS|CA_PROTOCOL_PULL_ARCHIVE|CA_PROTOCOL_PUSH_CHUNKS|CA_PROTOCOL_PUSH_INDEX|CA_PROTOCOL_PUSH_ARCHIVE)) == 0)
                 return -EBADE;
 
         rr->remote_feature_flags = remote_flags;
@@ -1065,36 +1161,91 @@ static int ca_remote_process_hello(CaRemote *rr, const CaProtocolHello *hello) {
         return CA_REMOTE_STEP;
 }
 
-static int ca_remote_process_index(CaRemote *rr, const CaProtocolIndex *idx) {
+static int ca_remote_file_process(CaRemoteFile *f, const CaProtocolFile *p) {
         size_t sz;
         int r;
 
-        assert(rr);
-        assert(idx);
+        assert(f);
+        assert(p);
 
-        if (rr->index_complete)
+        if (f->complete)
                 return -EBADMSG;
 
-        sz = read_le64(&idx->header.size) - offsetof(CaProtocolIndex, data);
+        sz = read_le64(&p->header.size) - offsetof(CaProtocolFile, data);
 
-        if (rr->index_fd >= 0) {
-                r = loop_write(rr->index_fd, idx->data, sz);
+        if (f->fd >=0) {
+                r = loop_write(f->fd, p->data, sz);
                 if (r < 0)
                         return r;
         } else {
-                if (!realloc_buffer_append(&rr->index_buffer, idx->data, sz))
+                if (!realloc_buffer_append(&f->buffer, p->data, sz))
                         return -ENOMEM;
         }
+
+        return 0;
+}
+
+static int ca_remote_file_process_eof(CaRemoteFile *f, const CaProtocolFileEOF *eof) {
+        assert(f);
+        assert(eof);
+
+        if (f->complete)
+                return -EBADMSG;
+
+        f->complete = true;
+        return 0;
+}
+
+static int ca_remote_process_index(CaRemote *rr, const CaProtocolFile *p) {
+        int r;
+
+        assert(rr);
+        assert(p);
+
+        r = ca_remote_file_process(&rr->index_file, p);
+        if (r < 0)
+                return r;
 
         return CA_REMOTE_READ_INDEX;
 }
 
-static int ca_remote_process_index_eof(CaRemote *rr, const CaProtocolIndexEOF *eof) {
+static int ca_remote_process_index_eof(CaRemote *rr, const CaProtocolFileEOF *eof) {
+        int r;
+
         assert(rr);
         assert(eof);
 
-        rr->index_complete = true;
+        r = ca_remote_file_process_eof(&rr->index_file, eof);
+        if (r < 0)
+                return r;
+
         return CA_REMOTE_READ_INDEX_EOF;
+}
+
+static int ca_remote_process_archive(CaRemote *rr, const CaProtocolFile *p) {
+        int r;
+
+        assert(rr);
+        assert(p);
+
+        r = ca_remote_file_process(&rr->archive_file, p);
+        if (r < 0)
+                return r;
+
+        return CA_REMOTE_READ_ARCHIVE;
+}
+
+static int ca_remote_process_archive_eof(CaRemote *rr, const CaProtocolFileEOF *eof) {
+        int r;
+
+        assert(rr);
+        assert(eof);
+
+        r = ca_remote_file_process_eof(&rr->archive_file, eof);
+        if (r < 0)
+                return r;
+
+        return CA_REMOTE_READ_ARCHIVE_EOF;
 }
 
 static int ca_remote_process_request(CaRemote *rr, const CaProtocolRequest *req) {
@@ -1164,20 +1315,22 @@ static int ca_remote_process_missing(CaRemote *rr, const CaProtocolMissing *miss
         return CA_REMOTE_CHUNK;
 }
 
-static int ca_remote_install_index_file(CaRemote *rr) {
-        assert(rr);
+static int ca_remote_file_install(CaRemoteFile *f) {
+        assert(f);
 
-        if (rr->index_complete &&
-            rr->temporary_index_path &&
-            rr->index_path) {
+        if (!f->complete)
+                return 0;
+        if (!f->temporary_path)
+                return 0;
+        if (!f->path)
+                return 0;
 
-                if (rename(rr->temporary_index_path, rr->index_path) < 0)
-                        return -errno;
+        if (rename(f->temporary_path, f->path) < 0)
+                return -errno;
 
-                rr->temporary_index_path = mfree(rr->temporary_index_path);
-        }
+        f->temporary_path = mfree(f->temporary_path);
 
-        return 0;
+        return 1;
 }
 
 static int ca_remote_process_goodbye(CaRemote *rr, const CaProtocolGoodbye *goodbye) {
@@ -1186,7 +1339,11 @@ static int ca_remote_process_goodbye(CaRemote *rr, const CaProtocolGoodbye *good
         assert(rr);
         assert(goodbye);
 
-        r = ca_remote_install_index_file(rr);
+        r = ca_remote_file_install(&rr->index_file);
+        if (r < 0)
+                return r;
+
+        r = ca_remote_file_install(&rr->archive_file);
         if (r < 0)
                 return r;
 
@@ -1200,7 +1357,7 @@ static int ca_remote_process_abort(CaRemote *rr, const CaProtocolAbort *a) {
         assert(a);
 
         if (a->error != 0)
-                return -a->error;
+                return - (int) read_le64(&a->error);
 
         return -ECONNABORTED;
 }
@@ -1226,28 +1383,28 @@ static const CaProtocolHello* validate_hello(CaRemote *rr, const CaProtocolHeade
         return (const CaProtocolHello*) h;
 }
 
-static const CaProtocolIndex* validate_index(CaRemote *rr, const CaProtocolHeader *h) {
+static const CaProtocolFile* validate_file(CaRemote *rr, uint64_t type, const CaProtocolHeader *h) {
         assert(rr);
         assert(h);
 
-        if (read_le64(&h->size) < offsetof(CaProtocolIndex, data) + 1)
+        if (read_le64(&h->size) < offsetof(CaProtocolFile, data) + 1)
                 return NULL;
-        if (read_le64(&h->type) != CA_PROTOCOL_INDEX)
+        if (read_le64(&h->type) != type)
                 return NULL;
 
-        return (const CaProtocolIndex*) h;
+        return (const CaProtocolFile*) h;
 }
 
-static const CaProtocolIndexEOF* validate_index_eof(CaRemote *rr, const CaProtocolHeader *h) {
+static const CaProtocolFileEOF* validate_file_eof(CaRemote *rr, uint64_t type, const CaProtocolHeader *h) {
         assert(rr);
         assert(h);
 
-        if (read_le64(&h->size) != sizeof(CaProtocolIndexEOF))
+        if (read_le64(&h->size) != sizeof(CaProtocolFileEOF))
                 return NULL;
-        if (read_le64(&h->type) != CA_PROTOCOL_INDEX_EOF)
+        if (read_le64(&h->type) != type)
                 return NULL;
 
-        return (const CaProtocolIndexEOF*) h;
+        return (const CaProtocolFileEOF*) h;
 }
 
 static const CaProtocolRequest* validate_request(CaRemote *rr, const CaProtocolHeader *h) {
@@ -1368,7 +1525,11 @@ static int ca_remote_process_message(CaRemote *rr) {
                 return CA_REMOTE_POLL;
         }
 
-        /* fprintf(stderr, PID_FMT " Got message: %s\n", getpid(), strna(ca_protocol_type_name(read_le64(&h->type)))); */
+        /* fprintf(stderr, */
+        /*         PID_FMT " Got frame %s of size %" PRIu64 "\n", */
+        /*         getpid(), */
+        /*         strna(ca_protocol_type_name(read_le64(&h->type))), */
+        /*         size); */
 
         switch (read_le64(&h->type)) {
 
@@ -1387,7 +1548,7 @@ static int ca_remote_process_message(CaRemote *rr) {
         }
 
         case CA_PROTOCOL_INDEX: {
-                const CaProtocolIndex *idx;
+                const CaProtocolFile *f;
 
                 if (rr->state != CA_REMOTE_RUNNING)
                         return -EBADMSG;
@@ -1395,16 +1556,16 @@ static int ca_remote_process_message(CaRemote *rr) {
                      ((rr->remote_feature_flags & CA_PROTOCOL_PUSH_INDEX) == 0))
                         return -EBADMSG;
 
-                idx = validate_index(rr, h);
-                if (!idx)
+                f = validate_file(rr, CA_PROTOCOL_INDEX, h);
+                if (!f)
                         return -EBADMSG;
 
-                step = ca_remote_process_index(rr, idx);
+                step = ca_remote_process_index(rr, f);
                 break;
         }
 
         case CA_PROTOCOL_INDEX_EOF: {
-                const CaProtocolIndexEOF *eof;
+                const CaProtocolFileEOF *eof;
 
                 if (rr->state != CA_REMOTE_RUNNING)
                         return -EBADMSG;
@@ -1412,11 +1573,45 @@ static int ca_remote_process_message(CaRemote *rr) {
                     ((rr->remote_feature_flags & CA_PROTOCOL_PUSH_INDEX) == 0))
                         return -EBADMSG;
 
-                eof = validate_index_eof(rr, h);
+                eof = validate_file_eof(rr, CA_PROTOCOL_INDEX_EOF, h);
                 if (!eof)
                         return -EBADMSG;
 
                 step = ca_remote_process_index_eof(rr, eof);
+                break;
+        }
+
+        case CA_PROTOCOL_ARCHIVE: {
+                const CaProtocolFile *f;
+
+                if (rr->state != CA_REMOTE_RUNNING)
+                        return -EBADMSG;
+                if (((rr->local_feature_flags & CA_PROTOCOL_PULL_ARCHIVE) == 0) &&
+                     ((rr->remote_feature_flags & CA_PROTOCOL_PUSH_ARCHIVE) == 0))
+                        return -EBADMSG;
+
+                f = validate_file(rr, CA_PROTOCOL_ARCHIVE, h);
+                if (!f)
+                        return -EBADMSG;
+
+                step = ca_remote_process_archive(rr, f);
+                break;
+        }
+
+        case CA_PROTOCOL_ARCHIVE_EOF: {
+                const CaProtocolFileEOF *eof;
+
+                if (rr->state != CA_REMOTE_RUNNING)
+                        return -EBADMSG;
+                if (((rr->local_feature_flags & CA_PROTOCOL_PULL_ARCHIVE) == 0) &&
+                    ((rr->remote_feature_flags & CA_PROTOCOL_PUSH_ARCHIVE) == 0))
+                        return -EBADMSG;
+
+                eof = validate_file_eof(rr, CA_PROTOCOL_ARCHIVE_EOF, h);
+                if (!eof)
+                        return -EBADMSG;
+
+                step = ca_remote_process_archive_eof(rr, eof);
                 break;
         }
 
@@ -1532,64 +1727,97 @@ static int ca_remote_send_hello(CaRemote *rr) {
         return CA_REMOTE_STEP;
 }
 
-static int ca_remote_send_index(CaRemote *rr) {
+static int ca_remote_send_file(
+                CaRemote *rr,
+                CaRemoteFile *f,
+                uint64_t file_type,
+                uint64_t eof_type,
+                int request_step) {
+
         ssize_t n;
         void *p;
         int r;
 
+        assert(rr);
+        assert(f);
+
+        if (rr->state != CA_REMOTE_RUNNING)
+                return CA_REMOTE_POLL;
+
+        if (f->complete)
+                return CA_REMOTE_POLL;
+
+        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
+                return CA_REMOTE_POLL;
+
+        if (f->fd < 0)
+                return request_step; /* request more data from caller */
+
+        p = realloc_buffer_extend(&rr->output_buffer, offsetof(CaProtocolFile, data) + BUFFER_SIZE);
+        if (!p)
+                return -ENOMEM;
+
+        n = read(f->fd, (uint8_t*) p + offsetof(CaProtocolFile, data), BUFFER_SIZE);
+        if (n <= 0) {
+                CaProtocolFileEOF *eof;
+
+                (void) realloc_buffer_shorten(&rr->output_buffer, offsetof(CaProtocolFile, data) + BUFFER_SIZE);
+
+                if (n < 0)
+                        return -errno;
+
+                p = realloc_buffer_extend(&rr->output_buffer, sizeof(CaProtocolFileEOF));
+                if (!p)
+                        return -ENOMEM;
+
+                eof = (CaProtocolFileEOF*) p;
+                write_le64(&eof->header.size, sizeof(CaProtocolFileEOF));
+                write_le64(&eof->header.type, eof_type);
+
+                f->complete = true;
+        } else {
+                CaProtocolFile *idx;
+
+                r = realloc_buffer_shorten(&rr->output_buffer, BUFFER_SIZE - n);
+                if (r < 0)
+                        return r;
+
+                idx = (CaProtocolFile*) p;
+                write_le64(&idx->header.size, offsetof(CaProtocolFile, data) + n);
+                write_le64(&idx->header.type, file_type);
+        }
+
+        return CA_REMOTE_STEP;
+}
+
+static int ca_remote_send_index(CaRemote *rr) {
         assert(rr);
 
         if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_INDEX) &&
             !(rr->local_feature_flags & CA_PROTOCOL_PUSH_INDEX))
                 return CA_REMOTE_POLL;
 
-        if (rr->state != CA_REMOTE_RUNNING)
+        return ca_remote_send_file(
+                        rr,
+                        &rr->index_file,
+                        CA_PROTOCOL_INDEX,
+                        CA_PROTOCOL_INDEX_EOF,
+                        CA_REMOTE_WRITE_INDEX);
+}
+
+static int ca_remote_send_archive(CaRemote *rr) {
+        assert(rr);
+
+        if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_ARCHIVE) &&
+            !(rr->local_feature_flags & CA_PROTOCOL_PUSH_ARCHIVE))
                 return CA_REMOTE_POLL;
 
-        if (rr->index_complete)
-                return CA_REMOTE_POLL;
-
-        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
-                return CA_REMOTE_POLL;
-
-        if (rr->index_fd < 0)
-                return CA_REMOTE_WRITE_INDEX;
-
-        p = realloc_buffer_extend(&rr->output_buffer, offsetof(CaProtocolIndex, data) + BUFFER_SIZE);
-        if (!p)
-                return -ENOMEM;
-
-        n = read(rr->index_fd, (uint8_t*) p + offsetof(CaProtocolIndex, data), BUFFER_SIZE);
-        if (n <= 0) {
-                CaProtocolIndexEOF *eof;
-
-                (void) realloc_buffer_shorten(&rr->output_buffer, offsetof(CaProtocolIndex, data) + BUFFER_SIZE);
-
-                if (n < 0)
-                        return -errno;
-
-                p = realloc_buffer_extend(&rr->output_buffer, sizeof(CaProtocolIndexEOF));
-                if (!p)
-                        return -ENOMEM;
-
-                eof = (CaProtocolIndexEOF*) p;
-                write_le64(&eof->header.size, sizeof(CaProtocolIndexEOF));
-                write_le64(&eof->header.type, CA_PROTOCOL_INDEX_EOF);
-
-                rr->index_complete = true;
-        } else {
-                CaProtocolIndex *idx;
-
-                r = realloc_buffer_shorten(&rr->output_buffer, BUFFER_SIZE - n);
-                if (r < 0)
-                        return r;
-
-                idx = (CaProtocolIndex*) p;
-                write_le64(&idx->header.size, offsetof(CaProtocolIndex, data) + n);
-                write_le64(&idx->header.type, CA_PROTOCOL_INDEX);
-        }
-
-        return CA_REMOTE_STEP;
+        return ca_remote_send_file(
+                        rr,
+                        &rr->archive_file,
+                        CA_PROTOCOL_ARCHIVE,
+                        CA_PROTOCOL_ARCHIVE_EOF,
+                        CA_REMOTE_WRITE_ARCHIVE);
 }
 
 static int ca_remote_send_request(CaRemote *rr) {
@@ -1665,7 +1893,8 @@ int ca_remote_step(CaRemote *rr) {
         if (rr->state == CA_REMOTE_EOF)
                 return -EPIPE;
 
-        realloc_buffer_empty(&rr->index_buffer);
+        realloc_buffer_empty(&rr->index_file.buffer);
+        realloc_buffer_empty(&rr->archive_file.buffer);
 
         r = ca_remote_start(rr);
         if (r != CA_REMOTE_POLL)
@@ -1688,6 +1917,10 @@ int ca_remote_step(CaRemote *rr) {
                 return r;
 
         r = ca_remote_send_index(rr);
+        if (r != CA_REMOTE_POLL)
+                return r;
+
+        r = ca_remote_send_archive(rr);
         if (r != CA_REMOTE_POLL)
                 return r;
 
@@ -1822,6 +2055,8 @@ int ca_remote_request(
         if (r < 0)
                 return r;
 
+        /* We already have the chunk. Now, validate it before returning it. */
+
         r = ca_remote_validate_chunk(rr, chunk_id, compression, realloc_buffer_data(&rr->chunk_buffer), realloc_buffer_size(&rr->chunk_buffer));
         if (r < 0)
                 return r;
@@ -1871,16 +2106,17 @@ int ca_remote_can_put_chunk(CaRemote *rr) {
 
         /* Returns > 0 if there's buffer space to enqueue more chunks */
 
-        if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_CHUNKS) &&
-            !(rr->local_feature_flags & CA_PROTOCOL_PUSH_CHUNKS))
-                return -ENOTTY;
         if (rr->state == CA_REMOTE_EOF)
                 return -EPIPE;
 
+        if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_CHUNKS) &&
+            !(rr->local_feature_flags & CA_PROTOCOL_PUSH_CHUNKS))
+                return 0;
+
         if (rr->state != CA_REMOTE_RUNNING)
-                return 0;
+                return 0; /* can't take your data right now. */
         if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
-                return 0;
+                return 0; /* won't take your data right now, already got enough in my queue */
 
         return 1;
 }
@@ -1894,6 +2130,7 @@ int ca_remote_put_chunk(
 
         CaProtocolChunk *chunk;
         uint64_t msz;
+        int r;
 
         if (!rr)
                 return -EINVAL;
@@ -1911,13 +2148,12 @@ int ca_remote_put_chunk(
         if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_CHUNKS) &&
             !(rr->local_feature_flags & CA_PROTOCOL_PUSH_CHUNKS))
                 return -ENOTTY;
-        if (rr->state == CA_REMOTE_EOF)
-                return -EPIPE;
 
-        if (rr->state != CA_REMOTE_RUNNING)
-                return -EAGAIN; /* can't take your data right now. */
-        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
-                return -EAGAIN; /* won't take your data right now, already got enough in my queue */
+        r = ca_remote_can_put_chunk(rr);
+        if (r < 0)
+                return r;
+        if (r == 0)
+                return -EAGAIN;
 
         msz = offsetof(CaProtocolChunk, data) + size;
         if (msz < size) /* overflow? */
@@ -1941,6 +2177,7 @@ int ca_remote_put_chunk(
 
 int ca_remote_put_missing(CaRemote *rr, const CaChunkID *chunk_id) {
         CaProtocolMissing *missing;
+        int r;
 
         if (!rr)
                 return -EINVAL;
@@ -1950,12 +2187,11 @@ int ca_remote_put_missing(CaRemote *rr, const CaChunkID *chunk_id) {
         if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_CHUNKS) &&
             !(rr->local_feature_flags & CA_PROTOCOL_PUSH_CHUNKS))
                 return -ENOTTY;
-        if (rr->state == CA_REMOTE_EOF)
-                return -EPIPE;
 
-        if (rr->state != CA_REMOTE_RUNNING)
-                return -EAGAIN;
-        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
+        r = ca_remote_can_put_chunk(rr);
+        if (r < 0)
+                return r;
+        if (r == 0)
                 return -EAGAIN;
 
         missing = realloc_buffer_extend0(&rr->output_buffer, sizeof(CaProtocolMissing));
@@ -1970,19 +2206,14 @@ int ca_remote_put_missing(CaRemote *rr, const CaChunkID *chunk_id) {
         return 0;
 }
 
-int ca_remote_can_put_index(CaRemote *rr) {
-        if (!rr)
-                return -EINVAL;
+static int ca_remote_file_can_put(CaRemote *rr, CaRemoteFile *f) {
+        assert(rr);
+        assert(f);
 
-        /* Returns > 0 if there's buffer space to enqueue more index data */
-
-        if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_INDEX) &&
-            !(rr->local_feature_flags & CA_PROTOCOL_PUSH_INDEX))
-                return -ENOTTY;
         if (rr->state == CA_REMOTE_EOF)
                 return -EPIPE;
 
-        if (rr->index_complete)
+        if (f->complete)
                 return -EBUSY;
 
         if (rr->state != CA_REMOTE_RUNNING)
@@ -1993,9 +2224,46 @@ int ca_remote_can_put_index(CaRemote *rr) {
         return 1;
 }
 
-int ca_remote_put_index(CaRemote *rr, const void *data, size_t size) {
-        CaProtocolIndex *idx;
+int ca_remote_can_put_index(CaRemote *rr) {
+        if (!rr)
+                return -EINVAL;
+
+        /* Returns > 0 if there's buffer space to enqueue more index data */
+
+        if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_INDEX) &&
+            !(rr->local_feature_flags & CA_PROTOCOL_PUSH_INDEX))
+                return 0;
+
+        return ca_remote_file_can_put(rr, &rr->index_file);
+}
+
+static int ca_remote_file_put(CaRemote *rr, CaRemoteFile *f, uint64_t type, const void *data, size_t size) {
+        CaProtocolFile *p;
         size_t msz;
+
+        assert(rr);
+        assert(f);
+
+        msz = offsetof(CaProtocolFile, data) + size;
+        if (msz < size) /* overflow? */
+                return -EFBIG;
+        if (msz > CA_PROTOCOL_SIZE_MAX)
+                return -EFBIG;
+
+        p = realloc_buffer_extend(&rr->output_buffer, msz);
+        if (!p)
+                return -ENOMEM;
+
+        write_le64(&p->header.type, type);
+        write_le64(&p->header.size, msz);
+
+        memcpy(p->data, data, size);
+
+        return 0;
+}
+
+int ca_remote_put_index(CaRemote *rr, const void *data, size_t size) {
+        int r;
 
         if (!rr)
                 return -EINVAL;
@@ -2007,37 +2275,36 @@ int ca_remote_put_index(CaRemote *rr, const void *data, size_t size) {
         if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_INDEX) &&
             !(rr->local_feature_flags & CA_PROTOCOL_PUSH_INDEX))
                 return -ENOTTY;
-        if (rr->state == CA_REMOTE_EOF)
-                return -EPIPE;
 
-        if (rr->index_complete)
-                return -EBUSY;
-
-        if (rr->state != CA_REMOTE_RUNNING)
-                return -EAGAIN;
-        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
+        r = ca_remote_can_put_index(rr);
+        if (r < 0)
+                return r;
+        if (r == 0)
                 return -EAGAIN;
 
-        msz = offsetof(CaProtocolIndex, data) + size;
-        if (msz < size) /* overflow? */
-                return -EFBIG;
-        if (msz > CA_PROTOCOL_SIZE_MAX)
-                return -EFBIG;
+        return ca_remote_file_put(rr, &rr->index_file, CA_PROTOCOL_INDEX, data, size);
+}
 
-        idx = realloc_buffer_extend(&rr->output_buffer, msz);
-        if (!idx)
+static int ca_remote_file_put_eof(CaRemote *rr, CaRemoteFile *f, uint64_t type) {
+        CaProtocolFileEOF *eof;
+
+        assert(rr);
+        assert(f);
+
+        eof = realloc_buffer_extend(&rr->output_buffer, sizeof(CaProtocolFileEOF));
+        if (!eof)
                 return -ENOMEM;
 
-        write_le64(&idx->header.type, CA_PROTOCOL_INDEX);
-        write_le64(&idx->header.size, msz);
+        write_le64(&eof->header.type, type);
+        write_le64(&eof->header.size, sizeof(CaProtocolFileEOF));
 
-        memcpy(idx->data, data, size);
+        f->complete = true;
 
         return 0;
 }
 
 int ca_remote_put_index_eof(CaRemote *rr) {
-        CaProtocolIndexEOF *eof;
+        int r;
 
         if (!rr)
                 return -EINVAL;
@@ -2045,38 +2312,28 @@ int ca_remote_put_index_eof(CaRemote *rr) {
         if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_INDEX) &&
             !(rr->local_feature_flags & CA_PROTOCOL_PUSH_INDEX))
                 return -ENOTTY;
-        if (rr->state == CA_REMOTE_EOF)
-                return -EPIPE;
 
-        if (rr->index_complete)
-                return -EBUSY;
-
-        if (rr->state != CA_REMOTE_RUNNING)
-                return -EAGAIN;
-        if (realloc_buffer_size(&rr->output_buffer) > REMOTE_BUFFER_LOW)
+        r = ca_remote_can_put_index(rr);
+        if (r < 0)
+                return r;
+        if (r == 0)
                 return -EAGAIN;
 
-        eof = realloc_buffer_extend(&rr->output_buffer, sizeof(CaProtocolIndexEOF));
-        if (!eof)
-                return -ENOMEM;
-
-        write_le64(&eof->header.type, CA_PROTOCOL_INDEX_EOF);
-        write_le64(&eof->header.size, sizeof(CaProtocolIndexEOF));
-
-        rr->index_complete = true;
-
-        return 0;
+        return ca_remote_file_put_eof(rr, &rr->index_file, CA_PROTOCOL_INDEX_EOF);
 }
 
-int ca_remote_read_index(CaRemote *rr, const void **ret, size_t *ret_size) {
-        if (!rr)
-                return -EINVAL;
-        if (rr->index_fd >= 0)
+static int ca_remote_file_read(CaRemote *rr, CaRemoteFile *f, const void **ret, size_t *ret_size) {
+        assert(rr);
+        assert(f);
+        assert(ret);
+        assert(ret_size);
+
+        if (f->fd >= 0) /* either the caller can use this function, or we write the data directly to a file, not both */
                 return -ENOTTY;
 
-        if (realloc_buffer_size(&rr->index_buffer) == 0) {
+        if (realloc_buffer_size(&f->buffer) == 0) {
 
-                if (rr->index_complete) {
+                if (f->complete) {
                         *ret = NULL;
                         *ret_size = 0;
                         return 0; /* eof */
@@ -2085,10 +2342,95 @@ int ca_remote_read_index(CaRemote *rr, const void **ret, size_t *ret_size) {
                 return -EAGAIN;
         }
 
-        *ret = realloc_buffer_data(&rr->index_buffer);
-        *ret_size = realloc_buffer_size(&rr->index_buffer);
+        *ret = realloc_buffer_data(&f->buffer);
+        *ret_size = realloc_buffer_size(&f->buffer);
 
         return 1;
+}
+
+int ca_remote_read_index(CaRemote *rr, const void **ret, size_t *ret_size) {
+        if (!rr)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+        if (!ret_size)
+                return -EINVAL;
+
+        if (!(rr->remote_feature_flags & CA_PROTOCOL_PUSH_INDEX) &&
+            !(rr->local_feature_flags & CA_PROTOCOL_PULL_INDEX))
+                return -ENOTTY;
+
+        return ca_remote_file_read(rr, &rr->index_file, ret, ret_size);
+}
+
+int ca_remote_can_put_archive(CaRemote *rr) {
+        if (!rr)
+                return -EINVAL;
+
+        /* Returns > 0 if there's buffer space to enqueue more archive data */
+
+        if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_ARCHIVE) &&
+            !(rr->local_feature_flags & CA_PROTOCOL_PUSH_ARCHIVE))
+                return 0;
+
+        return ca_remote_file_can_put(rr, &rr->archive_file);
+}
+
+int ca_remote_put_archive(CaRemote *rr, const void *data, size_t size) {
+        int r;
+
+        if (!rr)
+                return -EINVAL;
+        if (!data)
+                return -EINVAL;
+        if (size == 0)
+                return -EINVAL;
+
+        if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_ARCHIVE) &&
+            !(rr->local_feature_flags & CA_PROTOCOL_PUSH_ARCHIVE))
+                return -ENOTTY;
+
+        r = ca_remote_can_put_archive(rr);
+        if (r < 0)
+                return r;
+        if (r == 0)
+                return -EAGAIN;
+
+        return ca_remote_file_put(rr, &rr->archive_file, CA_PROTOCOL_ARCHIVE, data, size);
+}
+
+int ca_remote_put_archive_eof(CaRemote *rr) {
+        int r;
+
+        if (!rr)
+                return -EINVAL;
+
+        if (!(rr->remote_feature_flags & CA_PROTOCOL_PULL_ARCHIVE) &&
+            !(rr->local_feature_flags & CA_PROTOCOL_PUSH_ARCHIVE))
+                return -ENOTTY;
+
+        r = ca_remote_can_put_archive(rr);
+        if (r < 0)
+                return r;
+        if (r == 0)
+                return -EAGAIN;
+
+        return ca_remote_file_put_eof(rr, &rr->archive_file, CA_PROTOCOL_ARCHIVE_EOF);
+}
+
+int ca_remote_read_archive(CaRemote *rr, const void **ret, size_t *ret_size) {
+        if (!rr)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+        if (!ret_size)
+                return -EINVAL;
+
+        if (!(rr->remote_feature_flags & CA_PROTOCOL_PUSH_ARCHIVE) &&
+            !(rr->local_feature_flags & CA_PROTOCOL_PULL_ARCHIVE))
+                return -ENOTTY;
+
+        return ca_remote_file_read(rr, &rr->archive_file, ret, ret_size);
 }
 
 int ca_remote_goodbye(CaRemote *rr) {
@@ -2102,7 +2444,11 @@ int ca_remote_goodbye(CaRemote *rr) {
         if (rr->sent_goodbye)
                 return -EALREADY;
 
-        r = ca_remote_install_index_file(rr);
+        r = ca_remote_file_install(&rr->index_file);
+        if (r < 0)
+                return r;
+
+        r = ca_remote_file_install(&rr->archive_file);
         if (r < 0)
                 return r;
 
@@ -2241,6 +2587,9 @@ int ca_remote_has_chunks(CaRemote *rr) {
         r = ca_remote_has_pending_requests(rr);
         if (r != 0)
                 return r;
+
+        if (rr->cache_fd < 0)
+                return 0;
 
         r = xopendirat(rr->cache_fd, "chunks", 0, &d);
         if (r == -ENOENT)

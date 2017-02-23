@@ -42,6 +42,8 @@ int ca_sync_set_base_mode(CaSync *sync, mode_t mode);
 /* The serialization of the user tree */
 int ca_sync_set_archive_fd(CaSync *sync, int fd);
 int ca_sync_set_archive_path(CaSync *sync, const char *path);
+int ca_sync_set_archive_remote(CaSync *sync, const char *url);
+int ca_sync_set_archive_auto(CaSync *sync, const char *url);
 
 /* The store to place data in (i.e. the "primary" store) */
 int ca_sync_set_store_path(CaSync *sync, const char *path);

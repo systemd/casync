@@ -655,7 +655,7 @@ static int make(int argc, char *argv[]) {
 
         if (operation == MAKE_ARCHIVE) {
                 if (output)
-                        r = ca_sync_set_archive_path(s, output);
+                        r = ca_sync_set_archive_auto(s, output);
                 else
                         r = ca_sync_set_archive_fd(s, STDOUT_FILENO);
                 if (r < 0) {
@@ -1177,9 +1177,12 @@ static int list(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
-        if (operation == LIST_ARCHIVE)
-                r = ca_sync_set_archive_fd(s, input_fd);
-        else if (operation == LIST_ARCHIVE_INDEX) {
+        if (operation == LIST_ARCHIVE) {
+                if (input_fd >= 0)
+                        r = ca_sync_set_archive_fd(s, input_fd);
+                else
+                        r = ca_sync_set_archive_auto(s, input);
+        } else if (operation == LIST_ARCHIVE_INDEX) {
                 if (input_fd >= 0)
                         r = ca_sync_set_index_fd(s, input_fd);
                 else
@@ -1454,7 +1457,7 @@ static int digest(int argc, char *argv[]) {
                 if (input_fd >= 0)
                         r = ca_sync_set_archive_fd(s, input_fd);
                 else
-                        r = ca_sync_set_archive_path(s, input);
+                        r = ca_sync_set_archive_auto(s, input);
         }
         if (r < 0) {
                 fprintf(stderr, "Failed to set sync input: %s", strerror(-r));
@@ -1650,17 +1653,17 @@ static int pull(int argc, char *argv[]) {
 
         n_stores = !!wstore_path + (argc - 5);
 
-        if (base_path || archive_path) {
+        if (base_path) {
                 fprintf(stderr, "Pull from base or archive not yet supported.\n");
                 return -EOPNOTSUPP;
         }
 
-        if (!index_path && n_stores == 0) {
+        if (!archive_path && !index_path && n_stores == 0) {
                 fprintf(stderr, "Nothing to do.\n");
                 return -EINVAL;
         }
 
-        /* fprintf(stderr, "pull index: %s wstore: %s\n", strna(index_path), strna(wstore_path)); */
+        /* fprintf(stderr, "pull archive: %s index: %s wstore: %s\n", strna(archive_path), strna(index_path), strna(wstore_path)); */
 
         rr = ca_remote_new();
         if (!rr)
@@ -1668,7 +1671,8 @@ static int pull(int argc, char *argv[]) {
 
         r = ca_remote_set_local_feature_flags(rr,
                                               (n_stores > 0 ? CA_PROTOCOL_READABLE_STORE : 0) |
-                                              (index_path ? CA_PROTOCOL_READABLE_INDEX : 0));
+                                              (index_path ? CA_PROTOCOL_READABLE_INDEX : 0) |
+                                              (archive_path ? CA_PROTOCOL_READABLE_ARCHIVE : 0));
         if (r < 0) {
                 fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
                 return r;
@@ -1692,6 +1696,14 @@ static int pull(int argc, char *argv[]) {
                 r = ca_remote_set_index_path(rr, index_path);
                 if (r < 0) {
                         fprintf(stderr, "Unable to set index file %s: %s\n", index_path, strerror(-r));
+                        goto finish;
+                }
+        }
+
+        if (archive_path) {
+                r = ca_remote_set_archive_path(rr, archive_path);
+                if (r < 0) {
+                        fprintf(stderr, "Unable to set archive file %s: %s\n", archive_path, strerror(-r));
                         goto finish;
                 }
         }
@@ -1786,7 +1798,7 @@ finish:
 static int push(int argc, char *argv[]) {
 
         const char *base_path, *archive_path, *index_path, *wstore_path;
-        bool index_processed = false, index_written = false;
+        bool index_processed = false, index_written = false, archive_written = false;
         CaStore **stores = NULL;
         CaIndex *index = NULL;
         CaRemote *rr = NULL;
@@ -1805,17 +1817,17 @@ static int push(int argc, char *argv[]) {
 
         n_stores = !!wstore_path + (argc - 5);
 
-        if (base_path || archive_path) {
-                fprintf(stderr, "Push to base or archive not yet supported.\n");
+        if (base_path) {
+                fprintf(stderr, "Push to base not yet supported.\n");
                 return -EOPNOTSUPP;
         }
 
-        if (!index_path && n_stores == 0) {
+        if (!archive_path && !index_path && n_stores == 0) {
                 fprintf(stderr, "Nothing to do.\n");
                 return -EINVAL;
         }
 
-        /* fprintf(stderr, "push index: %s wstore: %s\n", strna(index_path), strna(wstore_path)); */
+        /* fprintf(stderr, "push archive: %s index: %s wstore: %s\n", strna(archive_path), strna(index_path), strna(wstore_path)); */
 
         rr = ca_remote_new();
         if (!rr)
@@ -1823,7 +1835,8 @@ static int push(int argc, char *argv[]) {
 
         r = ca_remote_set_local_feature_flags(rr,
                                               (wstore_path ? CA_PROTOCOL_WRITABLE_STORE : 0) |
-                                              (index_path ? CA_PROTOCOL_WRITABLE_INDEX : 0));
+                                              (index_path ? CA_PROTOCOL_WRITABLE_INDEX : 0) |
+                                              (archive_path ? CA_PROTOCOL_WRITABLE_ARCHIVE : 0));
         if (r < 0) {
                 fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
                 return r;
@@ -1863,11 +1876,20 @@ static int push(int argc, char *argv[]) {
                 }
         }
 
+        if (archive_path) {
+                r = ca_remote_set_archive_path(rr, archive_path);
+                if (r < 0) {
+                        fprintf(stderr, "Unable to set archive file %s: %s\n", archive_path, strerror(-r));
+                        goto finish;
+                }
+        }
+
         r = allocate_stores(wstore_path, argv + 5, argc - 5, &stores, &n_stores);
         if (r < 0)
                 goto finish;
 
         for (;;) {
+                bool finished;
                 int step;
 
                 step = ca_remote_step(rr);
@@ -1892,6 +1914,11 @@ static int push(int argc, char *argv[]) {
                         break;
 
                 case CA_REMOTE_STEP:
+                case CA_REMOTE_READ_ARCHIVE:
+                        break;
+
+                case CA_REMOTE_READ_ARCHIVE_EOF:
+                        archive_written = true;
                         break;
 
                 case CA_REMOTE_READ_INDEX: {
@@ -1954,6 +1981,7 @@ static int push(int argc, char *argv[]) {
                         assert(false);
                 }
 
+                /* Request all chunks from the client that the index it just send us listed but we don't have locally yet. */
                 for (;;) {
                         /* char ids[CA_CHUNK_ID_FORMAT_MAX]; */
                         uint64_t remote_flags;
@@ -2022,28 +2050,40 @@ static int push(int argc, char *argv[]) {
                         /*         fprintf(stderr, "New request for %s\n", ca_chunk_id_format(&id, ids)); */
                 }
 
-                if (index && index_written && index_processed) {
+                finished = true;
 
-                        r = ca_remote_has_chunks(rr);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to determine if further requests are pending: %s\n", strerror(-r));
+                /* If the index isn't written yet, don't finish yet */
+                if (index_path && (!index_written || !index_processed))
+                        finished = false;
+
+                /* If the archive isn't written yet, don't finish yet */
+                if (archive_path && !archive_written)
+                        finished = false;
+
+                /* If there are any chunks queued still, don't finish yet */
+                r = ca_remote_has_chunks(rr);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to determine if further requests are pending: %s\n", strerror(-r));
+                        goto finish;
+                }
+                if (r > 0)
+                        finished = false;
+
+                if (finished) {
+                        r = ca_remote_goodbye(rr);
+                        if (r < 0 && r != -EALREADY) {
+                                fprintf(stderr, "Failed to enqueue goodbye: %s\n", strerror(-r));
                                 goto finish;
-                        }
-
-                        if (r == 0) {
-                                r = ca_remote_goodbye(rr);
-                                if (r < 0 && r != -EALREADY) {
-                                        fprintf(stderr, "Failed to enqueue goodbye: %s\n", strerror(-r));
-                                        goto finish;
-                                }
                         }
                 }
         }
 
-        r = ca_index_install(index);
-        if (r < 0) {
-                fprintf(stderr, "Failed to install index on location: %s\n", strerror(-r));
-                goto finish;
+        if (index) {
+                r = ca_index_install(index);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to install index on location: %s\n", strerror(-r));
+                        goto finish;
+                }
         }
 
         r = 0;

@@ -40,6 +40,8 @@ typedef struct CaSync {
         CaIndex *index;
         CaRemote *remote_index;
 
+        CaRemote *remote_archive;
+
         CaChunkID next_chunk;
         size_t next_chunk_size;
         bool next_chunk_valid;
@@ -205,6 +207,8 @@ CaSync *ca_sync_unref(CaSync *s) {
 
         ca_index_unref(s->index);
         ca_remote_unref(s->remote_index);
+
+        ca_remote_unref(s->remote_archive);
 
         realloc_buffer_free(&s->buffer);
         realloc_buffer_free(&s->index_buffer);
@@ -483,6 +487,8 @@ int ca_sync_set_archive_fd(CaSync *s, int fd) {
                 return -EBUSY;
         if (s->archive_path)
                 return -EBUSY;
+        if (s->remote_archive)
+                return -EBUSY;
 
         s->archive_fd = fd;
         return 0;
@@ -497,6 +503,8 @@ int ca_sync_set_archive_path(CaSync *s, const char *path) {
         if (s->archive_fd >= 0)
                 return -EBUSY;
         if (s->archive_path)
+                return -EBUSY;
+        if (s->remote_archive)
                 return -EBUSY;
 
         if (s->direction == CA_SYNC_ENCODE) {
@@ -514,6 +522,55 @@ int ca_sync_set_archive_path(CaSync *s, const char *path) {
                 return -errno;
 
         return 0;
+}
+
+int ca_sync_set_archive_remote(CaSync *s, const char *url) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!url)
+                return -EINVAL;
+
+        if (s->archive_fd >= 0)
+                return -EBUSY;
+        if (s->archive_path)
+                return -EBUSY;
+        if (s->remote_archive)
+                return -EBUSY;
+
+        s->remote_archive = ca_remote_new();
+        if (!s->remote_archive)
+                return -ENOMEM;
+
+        r = ca_remote_set_archive_url(s->remote_archive, url);
+        if (r < 0)
+                return r;
+
+        r = ca_remote_set_local_feature_flags(s->remote_archive,
+                                              s->direction == CA_SYNC_ENCODE ? CA_PROTOCOL_PUSH_ARCHIVE : CA_PROTOCOL_PULL_ARCHIVE);
+        if (r < 0)
+                return r;
+
+        return 0;
+}
+
+int ca_sync_set_archive_auto(CaSync *s, const char *locator) {
+        CaLocatorClass c;
+
+        if (!s)
+                return -EINVAL;
+        if (!locator)
+                return -EINVAL;
+
+        c = ca_classify_locator(locator);
+        if (c < 0)
+                return -EINVAL;
+
+        if (c == CA_LOCATOR_PATH)
+                return ca_sync_set_archive_path(s, locator);
+
+        return ca_sync_set_archive_remote(s, locator);
 }
 
 int ca_sync_set_store_path(CaSync *s, const char *path) {
@@ -939,6 +996,16 @@ static int ca_sync_write_archive(CaSync *s, const void *p, size_t l) {
         return loop_write(s->archive_fd, p, l);
 }
 
+static int ca_sync_write_remote_archive(CaSync *s, const void *p, size_t l) {
+        assert(s);
+        assert(p || l == 0);
+
+        if (!s->remote_archive)
+                return 0;
+
+        return ca_remote_put_archive(s->remote_archive, p, l);
+}
+
 static int ca_sync_allocate_archive_digest(CaSync *s) {
         assert(s);
 
@@ -1089,74 +1156,110 @@ static int ca_sync_write_final_chunk(CaSync *s) {
         return 0;
 }
 
+static int ca_sync_install_archive(CaSync *s) {
+        assert(s);
+
+        if (!s->temporary_archive_path)
+                return 0;
+
+        if (!s->archive_path)
+                return 0;
+
+        if (rename(s->temporary_archive_path, s->archive_path) < 0)
+                return -errno;
+
+        s->temporary_archive_path = mfree(s->temporary_archive_path);
+        return 0;
+}
+
+static int ca_sync_write_remote_archive_eof(CaSync *s) {
+        assert(s);
+
+        if (!s->remote_archive)
+                return 0;
+
+        return ca_remote_put_archive_eof(s->remote_archive);
+}
+
 static int ca_sync_step_encode(CaSync *s) {
-        int r;
+        int r, step;
 
         assert(s);
 
         if (s->archive_eof)
                 return CA_SYNC_POLL;
 
-        if (s->encoder) {
-                int step;
+        if (!s->encoder)
+                return CA_SYNC_POLL;
 
-                step = ca_encoder_step(s->encoder);
-                if (step < 0)
-                        return step;
+        if (s->remote_archive) {
+                /* If we shall store the result remotely, wait until the remote side accepts more data */
+                r = ca_remote_can_put_archive(s->remote_archive);
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        return CA_SYNC_POLL;
+        }
 
-                switch (step) {
+        step = ca_encoder_step(s->encoder);
+        if (step < 0)
+                return step;
 
-                case CA_ENCODER_FINISHED:
+        switch (step) {
 
-                        if (s->temporary_archive_path && s->archive_path) {
-                                if (rename(s->temporary_archive_path, s->archive_path) < 0)
-                                        return -errno;
+        case CA_ENCODER_FINISHED:
 
-                                s->temporary_archive_path = mfree(s->temporary_archive_path);
-                        }
+                r = ca_sync_write_final_chunk(s);
+                if (r < 0)
+                        return r;
 
-                        r = ca_sync_write_final_chunk(s);
-                        if (r < 0)
-                                return r;
+                r = ca_sync_install_archive(s);
+                if (r < 0)
+                        return r;
 
-                        s->archive_eof = true;
+                r = ca_sync_write_remote_archive_eof(s);
+                if (r < 0)
+                        return r;
 
-                        if (s->remote_index)
-                                return CA_SYNC_STEP;
+                s->archive_eof = true;
 
-                        return CA_SYNC_FINISHED;
+                /* If we install an index or archive remotely, let's decide the peer when it's done */
+                if (s->remote_index || s->remote_archive)
+                        return CA_SYNC_STEP;
 
-                case CA_ENCODER_NEXT_FILE:
-                case CA_ENCODER_DATA: {
-                        const void *p;
-                        size_t l;
+                return CA_SYNC_FINISHED;
 
-                        r = ca_encoder_get_data(s->encoder, &p, &l);
-                        if (r < 0)
-                                return r;
+        case CA_ENCODER_NEXT_FILE:
+        case CA_ENCODER_DATA: {
+                const void *p;
+                size_t l;
 
-                        r = ca_sync_write_archive(s, p, l);
-                        if (r < 0)
-                                return r;
+                r = ca_encoder_get_data(s->encoder, &p, &l);
+                if (r < 0)
+                        return r;
 
-                        r = ca_sync_write_archive_digest(s, p, l);
-                        if (r < 0)
-                                return r;
+                r = ca_sync_write_chunks(s, p, l);
+                if (r < 0)
+                        return r;
 
-                        r = ca_sync_write_chunks(s, p, l);
-                        if (r < 0)
-                                return r;
+                r = ca_sync_write_archive(s, p, l);
+                if (r < 0)
+                        return r;
 
-                        return step == CA_ENCODER_NEXT_FILE ? CA_SYNC_NEXT_FILE : CA_SYNC_STEP;
-                }
+                r = ca_sync_write_remote_archive(s, p, l);
+                if (r < 0)
+                        return r;
 
-                default:
-                        assert(false);
-                }
-        } else
+                r = ca_sync_write_archive_digest(s, p, l);
+                if (r < 0)
+                        return r;
+
+                return step == CA_ENCODER_NEXT_FILE ? CA_SYNC_NEXT_FILE : CA_SYNC_STEP;
+        }
+
+        default:
                 assert(false);
-
-        return 0;
+        }
 }
 
 static bool ca_sync_seed_ready(CaSync *s) {
@@ -1205,7 +1308,8 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                         return CA_SYNC_POLL;
                 if (r < 0)
                         return r;
-                if (s->next_chunk_size != chunk_size)
+                if (s->next_chunk_size != UINT64_MAX && /* next_chunk_size will be -1 if we just seeked in the index file */
+                    s->next_chunk_size != chunk_size)
                         return -EBADMSG;
 
                 s->next_chunk_valid = false;
@@ -1256,49 +1360,81 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                 return CA_SYNC_STEP;
         }
 
-        return -ENOTTY;
+        return CA_SYNC_POLL;
+}
+
+static int ca_sync_install_base(CaSync *s) {
+        assert(s);
+
+        if (!s->temporary_base_path)
+                return 0;
+        if (!s->base_path)
+                return 0;
+
+        if (rename(s->temporary_base_path, s->base_path) < 0)
+                return -errno;
+
+        s->temporary_base_path = mfree(s->temporary_base_path);
+        return 0;
 }
 
 static int ca_sync_step_decode(CaSync *s) {
+        int step, r;
+
         assert(s);
+
+        if (!s->decoder)
+                return CA_SYNC_POLL;
 
         if (s->archive_eof)
                 return -EPIPE;
 
-        if (s->decoder) {
-                int step;
+        step = ca_decoder_step(s->decoder);
+        if (step < 0)
+                return step;
 
-                step = ca_decoder_step(s->decoder);
-                if (step < 0)
-                        return step;
+        switch (step) {
 
-                switch (step) {
+        case CA_DECODER_FINISHED:
 
-                case CA_DECODER_FINISHED:
+                r = ca_sync_install_base(s);
+                if (r < 0)
+                        return r;
 
-                        if (s->temporary_base_path && s->base_path) {
-                                if (rename(s->temporary_base_path, s->base_path) < 0)
-                                        return -errno;
+                s->archive_eof = true;
 
-                                s->temporary_base_path = mfree(s->temporary_base_path);
-                        }
+                return CA_SYNC_FINISHED;
 
-                        s->archive_eof = true;
-                        return CA_SYNC_FINISHED;
+        case CA_DECODER_NEXT_FILE:
+                return CA_SYNC_NEXT_FILE;
 
-                case CA_DECODER_NEXT_FILE:
-                        return CA_SYNC_NEXT_FILE;
+        case CA_DECODER_STEP:
+        case CA_DECODER_PAYLOAD:
+                return CA_SYNC_STEP;
 
-                case CA_DECODER_STEP:
-                case CA_DECODER_PAYLOAD:
-                        return CA_SYNC_STEP;
+        case CA_DECODER_REQUEST:
+                return ca_sync_process_decoder_request(s);
 
-                case CA_DECODER_REQUEST:
-                        return ca_sync_process_decoder_request(s);
-                }
+        default:
+                assert(false);
         }
+}
 
-        return -ENOTTY;
+static int ca_sync_chunk_size_propagated(CaSync *s) {
+
+        /* If we read the header of the index file, make sure to propagate the chunk size stored in it to the
+         * seed. Return > 0 if we successfully propagated the chunk size, and thus can start running the seeds. */
+
+        if (s->direction != CA_SYNC_DECODE)
+                return 1;
+        if (!s->index)
+                return 1;
+        if (s->n_seeds == 0)
+                return 1;
+        if (s->chunk_size_propagated)
+                return 1;
+
+        return 0;
 }
 
 static CaSeed *ca_sync_current_seed(CaSync *s) {
@@ -1315,19 +1451,41 @@ static int ca_sync_seed_step(CaSync *s) {
 
         assert(s);
 
+        r = ca_sync_chunk_size_propagated(s);
+        if (r < 0)
+                return r;
+        if (r == 0) /* Chunk size not propagated to the seeds yet. Let's wait until then */
+                return CA_SYNC_POLL;
+
         for (;;) {
                 CaSeed *seed;
 
                 seed = ca_sync_current_seed(s);
                 if (!seed)
-                        return CA_SEED_READY;
+                        break;
 
                 r = ca_seed_step(seed);
-                if (r != CA_SEED_READY)
+                if (r < 0)
                         return r;
+                switch (r) {
+
+                case CA_SEED_READY:
+                        break;
+
+                case CA_SEED_STEP:
+                        return CA_SYNC_STEP;
+
+                case CA_SEED_NEXT_FILE:
+                        return CA_SYNC_SEED_NEXT_FILE;
+
+                default:
+                        assert(false);
+                }
 
                 s->current_seed++;
         }
+
+        return CA_SYNC_POLL;
 }
 
 static size_t ca_sync_n_remotes(CaSync *s) {
@@ -1337,6 +1495,8 @@ static size_t ca_sync_n_remotes(CaSync *s) {
 
         n = s->n_remote_rstores;
 
+        if (s->remote_archive)
+                n++;
         if (s->remote_index)
                 n++;
         if (s->remote_wstore && s->remote_wstore != s->remote_index)
@@ -1352,6 +1512,12 @@ static CaRemote *ca_sync_current_remote(CaSync *s) {
 
         s->current_remote %= ca_sync_n_remotes(s);
         c = s->current_remote;
+
+        if (s->remote_archive) {
+                if (c == 0)
+                        return s->remote_archive;
+                c--;
+        }
 
         if (s->remote_index) {
                 if (c == 0)
@@ -1547,6 +1713,32 @@ static int ca_sync_remote_step_one(CaSync *s, CaRemote *rr) {
                         return r;
 
                 break;
+
+        case CA_REMOTE_READ_ARCHIVE: {
+                const void *data;
+                size_t size;
+
+                r = ca_remote_read_archive(rr, &data, &size);
+                if (r < 0)
+                        return r;
+
+                r = ca_decoder_put_data(s->decoder, data, size);
+                if (r < 0)
+                        return r;
+
+                r = ca_sync_write_archive_digest(s, data, size);
+                if (r < 0)
+                        return r;
+
+                break;
+        }
+
+        case CA_REMOTE_READ_ARCHIVE_EOF:
+
+                r = ca_decoder_put_eof(s->decoder);
+                if (r < 0)
+                        return r;
+                break;
         }
 
         return step;
@@ -1568,11 +1760,34 @@ static int ca_sync_remote_step(CaSync *s) {
                 s->current_remote++;
 
                 r = ca_sync_remote_step_one(s, remote);
-                if (r != CA_REMOTE_POLL)
+                if (r < 0)
                         return r;
+
+                switch (r) {
+
+                case CA_REMOTE_POLL:
+                case CA_REMOTE_WRITE_INDEX:
+                case CA_REMOTE_WRITE_ARCHIVE:
+                        break;
+
+                case CA_REMOTE_STEP:
+                case CA_REMOTE_REQUEST:
+                case CA_REMOTE_CHUNK:
+                case CA_REMOTE_READ_INDEX:
+                case CA_REMOTE_READ_INDEX_EOF:
+                case CA_REMOTE_READ_ARCHIVE:
+                case CA_REMOTE_READ_ARCHIVE_EOF:
+                        return CA_SYNC_STEP;
+
+                case CA_REMOTE_FINISHED:
+                        return CA_SYNC_FINISHED;
+
+                default:
+                        assert(false);
+                }
         }
 
-        return CA_REMOTE_POLL;
+        return CA_SYNC_POLL;
 }
 
 static int ca_sync_propagate_chunk_size(CaSync *s) {
@@ -1582,21 +1797,17 @@ static int ca_sync_propagate_chunk_size(CaSync *s) {
 
         assert(s);
 
-        /* If we read the header of the index file, make sure to propagate the chunk size stored in it to the
-         * seed. Return > 0 if we successfully propagated the chunk size, and thus can start running the seeds. */
+        /* If we read the header of the index file, make sure to propagate the chunk size stored in it to the seed. */
 
-        if (s->direction != CA_SYNC_DECODE)
-                return 1;
-        if (!s->index)
-                return 1;
-        if (s->n_seeds == 0)
-                return 1;
-        if (s->chunk_size_propagated)
-                return 1;
+        r = ca_sync_chunk_size_propagated(s);
+        if (r < 0)
+                return r;
+        if (r > 0) /* The chunk size is already propagated */
+                return CA_SYNC_POLL;
 
         r = ca_index_get_chunk_size_min(s->index, &cmin);
-        if (r == -ENODATA)
-                return 0; /* haven't read enough from the index header yet */
+        if (r == -ENODATA) /* haven't read enough from the index header yet, let's wait */
+                return CA_SYNC_POLL;
         if (r < 0)
                 return r;
 
@@ -1624,7 +1835,7 @@ static int ca_sync_propagate_chunk_size(CaSync *s) {
         }
 
         s->chunk_size_propagated = true;
-        return 1;
+        return CA_SYNC_STEP;
 }
 
 int ca_sync_step(CaSync *s) {
@@ -1638,77 +1849,37 @@ int ca_sync_step(CaSync *s) {
                 return r;
 
         r = ca_sync_propagate_chunk_size(s);
-        if (r < 0)
+        if (r != CA_SYNC_POLL)
                 return r;
-        if (r > 0) {
-                r = ca_sync_seed_step(s);
-                if (r < 0)
-                        return r;
-                switch (r) {
 
-                case CA_SEED_READY:
-                        break;
-
-                case CA_SEED_STEP:
-                        return CA_SYNC_STEP;
-
-                case CA_SEED_NEXT_FILE:
-                        return CA_SYNC_SEED_NEXT_FILE;
-
-                default:
-                        assert(false);
-                }
-        }
+        r = ca_sync_seed_step(s);
+        if (r != CA_SYNC_POLL)
+                return r;
 
         r = ca_sync_remote_prefetch(s);
-        if (r < 0)
-                return r;
         if (r != CA_SYNC_POLL)
                 return r;
 
         r = ca_sync_remote_push_index(s);
-        if (r < 0)
-                return r;
         if (r != CA_SYNC_POLL)
                 return r;
 
         r = ca_sync_remote_push_chunk(s);
-        if (r < 0)
-                return r;
         if (r != CA_SYNC_POLL)
                 return r;
 
-        r = ca_sync_remote_step(s);
-        if (r < 0)
+        /* Try to decode as much as we already have received, before accepting new remote data */
+        r = ca_sync_step_decode(s);
+        if (r != CA_SYNC_POLL)
                 return r;
-        switch (r) {
 
-        case CA_REMOTE_POLL:
-        case CA_REMOTE_WRITE_INDEX:
-                break;
+        /* Then process any remote traffic and flush our own buffers */
+        r = ca_sync_remote_step(s);
+        if (r != CA_SYNC_POLL)
+                return r;
 
-        case CA_REMOTE_REQUEST:
-        case CA_REMOTE_CHUNK:
-        case CA_REMOTE_STEP:
-                return CA_SYNC_STEP;
-
-        case CA_REMOTE_READ_INDEX:
-        case CA_REMOTE_READ_INDEX_EOF:
-                return CA_SYNC_STEP;
-
-        case CA_REMOTE_FINISHED:
-                return CA_SYNC_FINISHED;
-
-        default:
-                assert(false);
-        }
-
-        if (s->direction == CA_SYNC_ENCODE)
-                return ca_sync_step_encode(s);
-        else {
-                assert(s->direction == CA_SYNC_DECODE);
-                return ca_sync_step_decode(s);
-        }
+        /* Finally, generate new data */
+        return ca_sync_step_encode(s);
 }
 
 int ca_sync_get_local(
@@ -1967,12 +2138,22 @@ int ca_sync_poll(CaSync *s, uint64_t timeout_usec) {
         if (!s)
                 return -EINVAL;
 
-        if (!s->remote_index &&
+        if (!s->remote_archive &&
+            !s->remote_index &&
             !s->remote_wstore &&
             s->n_remote_rstores == 0)
                 return -EUNATCH;
 
-        pollfd = newa(struct pollfd, !!s->remote_index + !!s->remote_wstore + s->n_remote_rstores);
+        pollfd = newa(struct pollfd,
+                      !!s->remote_archive +
+                      !!s->remote_index +
+                      !!s->remote_wstore +
+                      s->n_remote_rstores);
+
+        r = ca_sync_add_pollfd(s->remote_archive, pollfd);
+        if (r < 0)
+                return r;
+        n += r;
 
         r = ca_sync_add_pollfd(s->remote_index, pollfd);
         if (r < 0)

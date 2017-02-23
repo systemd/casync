@@ -13,6 +13,12 @@ const char *ca_protocol_type_name(uint64_t u) {
         case CA_PROTOCOL_INDEX_EOF:
                 return "index-eof";
 
+        case CA_PROTOCOL_ARCHIVE:
+                return "archive";
+
+        case CA_PROTOCOL_ARCHIVE_EOF:
+                return "archive-eof";
+
         case CA_PROTOCOL_REQUEST:
                 return "request";
 
