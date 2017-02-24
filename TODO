@@ -10,7 +10,7 @@
 * save/restore xattrs
 * save/restore acls
 * save/restore hardlinks?
-* check fs features, when saving/restoring
+* check fs features when restoring
 * encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
 * hardlink/reflink from seed
 * exclude patterns
@@ -27,8 +27,6 @@
 * casync-http: parallel http GETs
 * casync-http: try all configured stores one after the other before sending MISSING
 * add support for compressed index files and archive files
-* maybe honour "nodump" file flag á la tarsnap?
-* automatically exclude procfs, sysfs, ...
 * replace adler32 by something better
 * define mime types for our files
 * define http-based url protocol prefix for caibx+caidx
