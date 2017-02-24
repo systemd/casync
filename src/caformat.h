@@ -65,6 +65,8 @@ enum {
         /* CA_FORMAT_WITH_SELINUX           = 0x40000000, */
         /* CA_FORMAT_WITH_FCAPS             = 0x80000000, */
 
+        CA_FORMAT_RESPECT_FLAG_NODUMP    =  UINT64_C(0x8000000000000000),
+
         CA_FORMAT_WITH_BEST =
                 CA_FORMAT_WITH_32BIT_UIDS|
                 CA_FORMAT_WITH_USER_NAMES|
@@ -121,7 +123,7 @@ enum {
                 CA_FORMAT_WITH_FLAG_NOCOMP|
                 CA_FORMAT_WITH_FLAG_PROJINHERIT,
 
-        CA_FORMAT_FEATURE_FLAGS_MAX        = 0xFFFFFFFF,
+        CA_FORMAT_FEATURE_FLAGS_MAX        = 0xFFFFFFFF | CA_FORMAT_RESPECT_FLAG_NODUMP,
 };
 
 typedef struct CaFormatHeader {

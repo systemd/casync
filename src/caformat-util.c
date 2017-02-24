@@ -44,7 +44,7 @@ const char *ca_format_type_name(uint64_t u) {
 static const struct {
         const char *name;
         uint64_t feature;
-} feature_map[] = {
+} with_feature_map[] = {
         { "16bit-uids",       CA_FORMAT_WITH_16BIT_UIDS       },
         { "32bit-uids",       CA_FORMAT_WITH_32BIT_UIDS       },
         { "user-names",       CA_FORMAT_WITH_USER_NAMES       },
@@ -74,34 +74,34 @@ static const struct {
         { "chattr",           CA_FORMAT_WITH_CHATTR           },
 };
 
-int ca_feature_flags_parse_one(const char *name, uint64_t *ret) {
+int ca_with_feature_flags_parse_one(const char *name, uint64_t *ret) {
         size_t i;
 
-        for (i = 0; i < ELEMENTSOF(feature_map); i++)
-                if (streq(feature_map[i].name, name)) {
-                        *ret = feature_map[i].feature;
+        for (i = 0; i < ELEMENTSOF(with_feature_map); i++)
+                if (streq(with_feature_map[i].name, name)) {
+                        *ret = with_feature_map[i].feature;
                         return 0;
                 }
 
         return -ENXIO;
 }
 
-int ca_feature_flags_format(uint64_t features, char **ret) {
+int ca_with_feature_flags_format(uint64_t features, char **ret) {
         char *s = NULL;
         size_t i;
 
-        for (i = 0; i < ELEMENTSOF(feature_map); i++) {
+        for (i = 0; i < ELEMENTSOF(with_feature_map); i++) {
                 uint64_t f;
 
                 if (features == 0)
                         break;
 
-                f = feature_map[i].feature;
+                f = with_feature_map[i].feature;
 
                 if ((features & f) != f)
                         continue;
 
-                if (!strextend(&s, s ? " " : "", feature_map[i].name, NULL)) {
+                if (!strextend(&s, s ? " " : "", with_feature_map[i].name, NULL)) {
                         free(s);
                         return -ENOMEM;
                 }
@@ -137,6 +137,9 @@ int ca_feature_flags_normalize(uint64_t flags, uint64_t *ret) {
 
         if (flags & CA_FORMAT_WITH_PERMISSIONS)
                 flags &= ~CA_FORMAT_WITH_READ_ONLY;
+
+        if (flags & CA_FORMAT_RESPECT_FLAG_NODUMP)
+                flags &= ~CA_FORMAT_WITH_FLAG_NODUMP;
 
         *ret = flags;
         return 0;

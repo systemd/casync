@@ -27,6 +27,7 @@ static enum {
         _WHAT_INVALID = -1,
 } arg_what = _WHAT_INVALID;
 static bool arg_verbose = false;
+static bool arg_respect_nodump = true;
 static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
@@ -47,7 +48,8 @@ static void help(void) {
                "     --extra-store=PATH      Additional chunk store to look for chunks in\n"
                "     --chunk-size-avg=SIZE   The average number of bytes for a chunk file\n"
                "     --seed=PATH             Additional file or directory to use as seed\n"
-               "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n\n"
+               "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n"
+               "     --respect-nodump=no     Don't respect chattr(1)'s -d 'nodump' flag\n\n"
                "Input/output selector:\n"
                "     --what=archive          Operate on archive file\n"
                "     --what=archive-index    Operate on archive index file\n"
@@ -98,6 +100,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_WITH,
                 ARG_WITHOUT,
                 ARG_WHAT,
+                ARG_RESPECT_NODUMP,
         };
 
         static const struct option options[] = {
@@ -111,6 +114,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "with",           required_argument, NULL, ARG_WITH           },
                 { "without",        required_argument, NULL, ARG_WITHOUT        },
                 { "what",           required_argument, NULL, ARG_WHAT           },
+                { "respect-nodump", required_argument, NULL, ARG_RESPECT_NODUMP },
                 {}
         };
 
@@ -190,7 +194,7 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_WITH: {
                         uint64_t u;
 
-                        r = ca_feature_flags_parse_one(optarg, &u);
+                        r = ca_with_feature_flags_parse_one(optarg, &u);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to parse --with= feature flag: %s\n", optarg);
                                 return -EINVAL;
@@ -203,7 +207,7 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_WITHOUT: {
                         uint64_t u;
 
-                        r = ca_feature_flags_parse_one(optarg, &u);
+                        r = ca_with_feature_flags_parse_one(optarg, &u);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to parse --without= feature flag: %s\n", optarg);
                                 return -EINVAL;
@@ -229,6 +233,16 @@ static int parse_argv(int argc, char *argv[]) {
                                 return -EINVAL;
                         }
 
+                        break;
+
+                case ARG_RESPECT_NODUMP:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --respect-nodump= parameter: %s\n", optarg);
+                                return -EINVAL;
+                        }
+
+                        arg_respect_nodump = r;
                         break;
 
                 case '?':
@@ -332,6 +346,9 @@ static int load_feature_flags(CaSync *s) {
 
         flags = (arg_with == 0 ? CA_FORMAT_WITH_BEST : arg_with) & ~arg_without;
 
+        if (arg_respect_nodump)
+                flags |= CA_FORMAT_RESPECT_FLAG_NODUMP;
+
         r = ca_sync_set_feature_flags(s, flags);
         if (r == -ENOTTY) /* sync object does not have an encoder */
                 return 0;
@@ -403,13 +420,15 @@ static int verbose_print_feature_flags(CaSync *s) {
                 return r;
         }
 
-        r = ca_feature_flags_format(flags, &t);
+        r = ca_with_feature_flags_format(flags, &t);
         if (r < 0) {
                 fprintf(stderr, "Failed to format feature flags: %s\n", strerror(-r));
                 return r;
         }
 
         fprintf(stderr, "Using feature flags: %s\n", t);
+        fprintf(stderr, "Respecting chattr(1) -d flag: %s\n", yes_no(flags & CA_FORMAT_RESPECT_FLAG_NODUMP));
+
         free(t);
 
         printed = true;

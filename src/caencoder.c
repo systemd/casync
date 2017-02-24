@@ -27,6 +27,7 @@
 typedef struct CaEncoderNode {
         int fd;
         struct stat stat;
+        statfs_f_type_t magic;
 
         /* For S_ISDIR */
         struct dirent **dirents;
@@ -162,6 +163,7 @@ int ca_encoder_get_feature_flags(CaEncoder *e, uint64_t *ret) {
 
 int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
         struct stat st;
+        struct statfs sfs;
 
         if (!e)
                 return -EINVAL;
@@ -172,6 +174,8 @@ int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
 
         if (fstat(fd, &st) < 0)
                 return -errno;
+        if (fstatfs(fd, &sfs) < 0)
+                return -errno;
 
         if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode) && !S_ISBLK(st.st_mode))
                 return -ENOTTY;
@@ -180,6 +184,7 @@ int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
                 .fd = fd,
                 .stat = st,
                 .device_size = UINT64_MAX,
+                .magic = sfs.f_type,
         };
 
         e->n_nodes = 1;
@@ -347,7 +352,7 @@ static int ca_encoder_node_read_chattr(
         if (n->fd < 0)
                 return -EBADFD;
 
-        if ((e->feature_flags & CA_FORMAT_WITH_CHATTR) == 0)
+        if ((e->feature_flags & (CA_FORMAT_WITH_CHATTR|CA_FORMAT_RESPECT_FLAG_NODUMP)) == 0)
                 return 0;
 
         if (child->fd < 0) {
@@ -598,6 +603,21 @@ static int ca_encoder_open_child(CaEncoder *e, const struct dirent *de) {
                 }
         }
 
+        if (child->stat.st_dev == n->stat.st_dev)
+                child->magic = n->magic;
+        else {
+                if (child->fd < 0)
+                        child->magic = n->magic;
+                else {
+                        struct statfs sfs;
+
+                        if (fstatfs(child->fd, &sfs) < 0)
+                                return -errno;
+
+                        child->magic = sfs.f_type;
+                }
+        }
+
         r = ca_encoder_node_read_symlink(n, de, child);
         if (r < 0)
                 return r;
@@ -640,6 +660,55 @@ static int ca_encoder_leave_child(CaEncoder *e) {
 
         e->node_idx--;
         return 1;
+}
+
+static int ca_encoder_shall_store_child_node(CaEncoder *e) {
+        CaEncoderNode *child;
+
+        assert(e);
+
+        /* Check whether this node is one we should care for or skip */
+
+        child = ca_encoder_current_child_node(e);
+        if (!child)
+                return -EUNATCH;
+
+        if ((e->feature_flags & CA_FORMAT_RESPECT_FLAG_NODUMP) &&
+            (child->chattr_flags & FS_NODUMP_FL))
+                return false;
+
+        return true;
+}
+
+static int ca_encoder_shall_enumerate_child_node(CaEncoder *e) {
+        CaEncoderNode *child;
+
+        assert(e);
+
+        /* Checks whether we shall enter the current child node, and hence enumerate the dirents inside it. */
+
+        child = ca_encoder_current_child_node(e);
+        if (!child)
+                return -EUNATCH;
+
+        if (!S_ISDIR(child->stat.st_mode)) /* We only care for directories here */
+                return true;
+
+        /* Exclude all virtual API file systems */
+        if (IN_SET(child->magic,
+                   CGROUP_SUPER_MAGIC,
+                   DEBUGFS_MAGIC,
+                   DEVPTS_SUPER_MAGIC,
+                   EFIVARFS_MAGIC,
+                   HUGETLBFS_MAGIC,
+                   PROC_SUPER_MAGIC,
+                   PSTOREFS_MAGIC,
+                   SELINUX_MAGIC,
+                   SMACK_MAGIC,
+                   SYSFS_MAGIC))
+                return false;
+
+        return true;
 }
 
 static int ca_encoder_node_get_payload_size(CaEncoderNode *n, uint64_t *ret) {
@@ -722,12 +791,18 @@ static int ca_encoder_step_directory(CaEncoder *e, CaEncoderNode *n) {
 
                 if (S_ISDIR(child->stat.st_mode) || S_ISREG(child->stat.st_mode)) {
 
-                        r = ca_encoder_enter_child(e);
+                        r = ca_encoder_shall_enumerate_child_node(e);
                         if (r < 0)
                                 return r;
 
-                        ca_encoder_enter_state(e, CA_ENCODER_INIT);
-                        return ca_encoder_step(e);
+                        if (r > 0) {
+                                r = ca_encoder_enter_child(e);
+                                if (r < 0)
+                                        return r;
+
+                                ca_encoder_enter_state(e, CA_ENCODER_INIT);
+                                return ca_encoder_step(e);
+                        }
                 }
         }
 
@@ -741,15 +816,27 @@ static int ca_encoder_step_directory(CaEncoder *e, CaEncoderNode *n) {
         case CA_ENCODER_HELLO: {
                 const struct dirent *de;
 
-                de = ca_encoder_node_current_dirent(n);
-                if (!de) {
-                        ca_encoder_enter_state(e, CA_ENCODER_GOODBYE);
-                        return CA_ENCODER_DATA;
-                }
+                for (;;) {
+                        de = ca_encoder_node_current_dirent(n);
+                        if (!de) {
+                                ca_encoder_enter_state(e, CA_ENCODER_GOODBYE);
+                                return CA_ENCODER_DATA;
+                        }
 
-                r = ca_encoder_open_child(e, de);
-                if (r < 0)
-                        return r;
+                        r = ca_encoder_open_child(e, de);
+                        if (r < 0)
+                                return r;
+
+                        /* Check if this child is relevant to us */
+                        r = ca_encoder_shall_store_child_node(e);
+                        if (r < 0)
+                                return r;
+                        if (r > 0) /* Yay, this one's relevant */
+                                break;
+
+                        /* Nope, not relevant to us, let's try the next one */
+                        n->dirent_idx++;
+                }
 
                 ca_encoder_enter_state(e, CA_ENCODER_ENTRY);
                 return CA_ENCODER_NEXT_FILE;

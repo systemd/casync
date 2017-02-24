@@ -510,4 +510,8 @@ static inline bool is_temporary_fs(const struct statfs *s) {
 
 #define IS_POWER_OF_TWO(x) (__builtin_popcount(x) == 1)
 
+static inline const char *yes_no(bool b) {
+        return b ? "yes" : "no";
+}
+
 #endif
