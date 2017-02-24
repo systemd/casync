@@ -1,4 +1,5 @@
 #include <linux/fs.h>
+#include <linux/msdos_fs.h>
 
 #include "caformat.h"
 #include "caformat-util.h"
@@ -58,6 +59,9 @@ static const struct {
         { "device-nodes",     CA_FORMAT_WITH_DEVICE_NODES     },
         { "fifos",            CA_FORMAT_WITH_FIFOS            },
         { "sockets",          CA_FORMAT_WITH_SOCKETS          },
+        { "flag-hidden",      CA_FORMAT_WITH_FLAG_HIDDEN      },
+        { "flag-system",      CA_FORMAT_WITH_FLAG_SYSTEM      },
+        { "flag-archive",     CA_FORMAT_WITH_FLAG_ARCHIVE     },
         { "flag-append",      CA_FORMAT_WITH_FLAG_APPEND      },
         { "flag-noatime",     CA_FORMAT_WITH_FLAG_NOATIME     },
         { "flag-compr",       CA_FORMAT_WITH_FLAG_COMPR       },
@@ -207,6 +211,38 @@ unsigned ca_feature_flags_to_chattr(uint64_t flags) {
         return f;
 }
 
+static const struct {
+        uint64_t feature_flag;
+        uint32_t fat_flag;
+} fat_attrs_map[] = {
+        { CA_FORMAT_WITH_FLAG_HIDDEN,  ATTR_HIDDEN },
+        { CA_FORMAT_WITH_FLAG_SYSTEM,  ATTR_SYS    },
+        { CA_FORMAT_WITH_FLAG_ARCHIVE, ATTR_ARCH   },
+};
+
+uint64_t ca_feature_flags_from_fat_attrs(uint32_t flags) {
+        uint64_t f = 0;
+        size_t i;
+
+        for (i = 0; i < ELEMENTSOF(fat_attrs_map); i++)
+                if (flags & fat_attrs_map[i].fat_flag)
+                        f |= fat_attrs_map[i].feature_flag;
+
+        return f;
+}
+
+uint32_t ca_feature_flags_to_fat_attrs(uint64_t flags) {
+        uint32_t f = 0;
+        size_t i;
+
+        for (i = 0; i < ELEMENTSOF(fat_attrs_map); i++) {
+                if (flags & fat_attrs_map[i].feature_flag)
+                        f |= fat_attrs_map[i].fat_flag;
+        }
+
+        return f;
+}
+
 uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
 
         /* Returns the set of features we know a specific file system type provides. Ideally the kernel would let us
@@ -217,7 +253,10 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
         case MSDOS_SUPER_MAGIC:
                 return
                         CA_FORMAT_WITH_2SEC_TIME|
-                        CA_FORMAT_WITH_READ_ONLY;
+                        CA_FORMAT_WITH_READ_ONLY|
+                        CA_FORMAT_WITH_FLAG_HIDDEN|
+                        CA_FORMAT_WITH_FLAG_SYSTEM|
+                        CA_FORMAT_WITH_FLAG_ARCHIVE;
 
         case EXT2_SUPER_MAGIC:
                 return

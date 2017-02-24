@@ -39,9 +39,9 @@ enum {
         CA_FORMAT_WITH_SOCKETS           = 0x1000,
 
         /* DOS file flags */
-        /* CA_FORMAT_WITH_FLAG_HIDDEN       = 0x2000, */
-        /* CA_FORMAT_WITH_FLAG_SYSTEM       = 0x4000, */
-        /* CA_FORMAT_WITH_FLAG_ARCHIVE      = 0x8000, */
+        CA_FORMAT_WITH_FLAG_HIDDEN       = 0x2000,
+        CA_FORMAT_WITH_FLAG_SYSTEM       = 0x4000,
+        CA_FORMAT_WITH_FLAG_ARCHIVE      = 0x8000,
 
         /* chattr() flags */
         CA_FORMAT_WITH_FLAG_APPEND       = 0x10000,
@@ -76,9 +76,9 @@ enum {
                 CA_FORMAT_WITH_DEVICE_NODES|
                 CA_FORMAT_WITH_FIFOS|
                 CA_FORMAT_WITH_SOCKETS|
-                /* CA_FORMAT_WITH_FLAG_HIDDEN| */
-                /* CA_FORMAT_WITH_FLAG_SYSTEM| */
-                /* CA_FORMAT_WITH_FLAG_ARCHIVE| */
+                CA_FORMAT_WITH_FLAG_HIDDEN|
+                CA_FORMAT_WITH_FLAG_SYSTEM|
+                CA_FORMAT_WITH_FLAG_ARCHIVE|
                 CA_FORMAT_WITH_FLAG_APPEND|
                 CA_FORMAT_WITH_FLAG_NOATIME|
                 CA_FORMAT_WITH_FLAG_COMPR|
@@ -106,10 +106,10 @@ enum {
 
         CA_FORMAT_WITH_FAT = /* FAT file properties */
                 CA_FORMAT_WITH_2SEC_TIME|
-                CA_FORMAT_WITH_READ_ONLY,
-                /* CA_FORMAT_WITH_FLAG_HIDDEN| */
-                /* CA_FORMAT_WITH_FLAG_SYSTEM| */
-                /* CA_FORMAT_WITH_FLAG_ARCHIVE, */
+                CA_FORMAT_WITH_READ_ONLY|
+                CA_FORMAT_WITH_FLAG_HIDDEN|
+                CA_FORMAT_WITH_FLAG_SYSTEM|
+                CA_FORMAT_WITH_FLAG_ARCHIVE,
 
         CA_FORMAT_WITH_CHATTR = /* All chattr file attributes */
                 CA_FORMAT_WITH_FLAG_APPEND|
@@ -122,6 +122,11 @@ enum {
                 CA_FORMAT_WITH_FLAG_SYNC|
                 CA_FORMAT_WITH_FLAG_NOCOMP|
                 CA_FORMAT_WITH_FLAG_PROJINHERIT,
+
+        CA_FORMAT_WITH_FAT_ATTRS = /* All FAT file attributes */
+                CA_FORMAT_WITH_FLAG_HIDDEN|
+                CA_FORMAT_WITH_FLAG_SYSTEM|
+                CA_FORMAT_WITH_FLAG_ARCHIVE,
 
         CA_FORMAT_FEATURE_FLAGS_MAX        = 0xFFFFFFFF | CA_FORMAT_RESPECT_FLAG_NODUMP,
 };

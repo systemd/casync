@@ -15,6 +15,7 @@
 
 #include <linux/fs.h>
 #include <linux/magic.h>
+#include <linux/msdos_fs.h>
 
 #include "caencoder.h"
 #include "caformat-util.h"
@@ -42,6 +43,9 @@ typedef struct CaEncoderNode {
 
         /* chattr(1) flags */
         unsigned chattr_flags;
+
+        /* FAT_IOCTL_GET_ATTRIBUTES flags */
+        uint32_t fat_attrs;
 } CaEncoderNode;
 
 typedef enum CaEncoderState {
@@ -388,6 +392,27 @@ static int ca_encoder_node_read_chattr(
         return 0;
 }
 
+static int ca_encoder_node_read_fat_attrs(
+                CaEncoder *e,
+                CaEncoderNode *n) {
+
+        assert(n);
+
+        if (n->fd < 0)
+                return -EBADFD;
+
+        if ((e->feature_flags & CA_FORMAT_WITH_FAT_ATTRS) == 0)
+                return 0;
+
+        if (n->magic == MSDOS_SUPER_MAGIC) {
+                if (ioctl(n->fd, FAT_IOCTL_GET_ATTRIBUTES, &n->fat_attrs) < 0)
+                        return -errno;
+        } else
+                n->fat_attrs = 0;
+
+        return 0;
+}
+
 static int uid_to_name(CaEncoder *e, uid_t uid, char **ret) {
         long bufsize;
         int r;
@@ -635,6 +660,10 @@ static int ca_encoder_open_child(CaEncoder *e, const struct dirent *de) {
                 return r;
 
         r = ca_encoder_node_read_user_group_names(e, child);
+        if (r < 0)
+                return r;
+
+        r = ca_encoder_node_read_fat_attrs(e, child);
         if (r < 0)
                 return r;
 
@@ -1067,6 +1096,9 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 flags = ca_feature_flags_from_chattr(child->chattr_flags) & e->feature_flags;
         else
                 flags = 0;
+
+        if ((e->feature_flags & CA_FORMAT_WITH_FAT_ATTRS) != 0)
+                flags |= ca_feature_flags_from_fat_attrs(child->fat_attrs) & e->feature_flags;
 
         size = offsetof(CaFormatEntry, name) + strlen(de->d_name) + 1;
 

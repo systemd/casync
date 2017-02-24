@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <linux/fs.h>
+#include <linux/msdos_fs.h>
 
 #include "cadecoder.h"
 #include "caformat-util.h"
@@ -43,6 +44,9 @@ typedef struct CaDecoderNode {
         char *group_name;
         char *symlink_target; /* Only for S_ISLNK() */
         dev_t rdev;           /* Only for S_ISCHR() and S_ISBLK() */
+
+        struct stat stat;
+        statfs_f_type_t magic;
 } CaDecoderNode;
 
 typedef enum CaDecoderState {
@@ -157,6 +161,7 @@ int ca_decoder_get_feature_flags(CaDecoder *d, uint64_t *ret) {
 
 int ca_decoder_set_base_fd(CaDecoder *d, int fd) {
         struct stat st;
+        struct statfs sfs;
 
         if (!d)
                 return -EINVAL;
@@ -167,6 +172,8 @@ int ca_decoder_set_base_fd(CaDecoder *d, int fd) {
 
         if (fstat(fd, &st) < 0)
                 return -errno;
+        if (fstatfs(fd, &sfs) < 0)
+                return -errno;
 
         if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode) && !S_ISBLK(st.st_mode))
                 return -ENOTTY;
@@ -175,6 +182,7 @@ int ca_decoder_set_base_fd(CaDecoder *d, int fd) {
                 .fd = fd,
                 .mode = st.st_mode,
                 .size = UINT64_MAX,
+                .magic = sfs.f_type,
         };
 
         d->n_nodes = 1;
@@ -399,6 +407,12 @@ static bool validate_uid_gid(CaDecoder *d, uint64_t u) {
         return u == 0;
 }
 
+static bool validate_entry_flags(CaDecoder *d, uint64_t f) {
+        assert(d);
+
+        return (f & ~(d->feature_flags & (CA_FORMAT_WITH_FAT_ATTRS|CA_FORMAT_WITH_CHATTR))) == 0;
+}
+
 static bool validate_major(uint64_t m) {
         /* On Linux major numbers are 12bit */
         return m < (UINT64_C(1) << 12);
@@ -500,6 +514,8 @@ static const CaFormatEntry* validate_format_entry(CaDecoder *d, const void *p) {
                 return NULL;
 
         if (!validate_mode(d, read_le64(&e->mode)))
+                return NULL;
+        if (!validate_entry_flags(d, read_le64(&e->flags)))
                 return NULL;
         if (!validate_uid_gid(d, read_le64(&e->uid)))
                 return NULL;
@@ -1191,7 +1207,6 @@ static int name_to_gid(CaDecoder *d, const char *name, gid_t *ret) {
 }
 
 static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *child) {
-        struct stat st;
         int r;
 
         assert(d);
@@ -1209,20 +1224,32 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         assert(child->entry);
 
         if (child->fd >= 0)
-                r = fstat(child->fd, &st);
+                r = fstat(child->fd, &child->stat);
         else
-                r = fstatat(n->fd, child->entry->name, &st, AT_SYMLINK_NOFOLLOW);
+                r = fstatat(n->fd, child->entry->name, &child->stat, AT_SYMLINK_NOFOLLOW);
         if (r < 0)
                 return -errno;
 
-        if (((le64toh(child->entry->mode) ^ st.st_mode) & S_IFMT) != 0)
+        if (child->stat.st_dev == n->stat.st_dev ||
+            child->fd < 0)
+                child->magic = n->magic;
+        else {
+                struct statfs sfs;
+
+                if (fstatfs(child->fd, &sfs) < 0)
+                        return -errno;
+
+                child->magic = sfs.f_type;
+        }
+
+        if (((le64toh(child->entry->mode) ^ child->stat.st_mode) & S_IFMT) != 0)
                 return -EEXIST;
 
-        if ((S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode)) &&
-            st.st_rdev != child->rdev)
+        if ((S_ISCHR(child->stat.st_mode) || S_ISBLK(child->stat.st_mode)) &&
+            child->stat.st_rdev != child->rdev)
                 return -EEXIST;
 
-        if (S_ISLNK(st.st_mode)) {
+        if (S_ISLNK(child->stat.st_mode)) {
                 size_t l;
                 ssize_t z;
                 char *buf;
@@ -1259,7 +1286,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 } else
                         gid = le64toh(child->entry->gid);
 
-                if (st.st_uid != uid || st.st_gid != gid) {
+                if (child->stat.st_uid != uid || child->stat.st_gid != gid) {
 
                         if (child->fd >= 0)
                                 r = fchown(child->fd, uid, gid);
@@ -1272,15 +1299,15 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
         if (d->feature_flags & CA_FORMAT_WITH_READ_ONLY) {
 
-                if ((st.st_mode & 0400) == 0 || /* not readable? */
-                    (S_ISDIR(st.st_mode) && (st.st_mode & 0100) == 0) || /* a dir, but not executable? */
-                    !(le64toh(child->entry->mode) & 0222) != !(st.st_mode & 0200)) { /* writable bit doesn't match what it should be? */
+                if ((child->stat.st_mode & 0400) == 0 || /* not readable? */
+                    (S_ISDIR(child->stat.st_mode) && (child->stat.st_mode & 0100) == 0) || /* a dir, but not executable? */
+                    !(le64toh(child->entry->mode) & 0222) != !(child->stat.st_mode & 0200)) { /* writable bit doesn't match what it should be? */
 
                         mode_t new_mode;
 
-                        new_mode = (st.st_mode & 0444) | 0400;
+                        new_mode = (child->stat.st_mode & 0444) | 0400;
 
-                        if (S_ISDIR(st.st_mode))
+                        if (S_ISDIR(child->stat.st_mode))
                                 new_mode |= 0100;
 
                         if (le64toh(child->entry->mode) & 0222)
@@ -1300,7 +1327,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
         } else if (d->feature_flags & CA_FORMAT_WITH_PERMISSIONS) {
 
-                if ((st.st_mode & 07777) != (le64toh(child->entry->mode) & 07777)) {
+                if ((child->stat.st_mode & 07777) != (le64toh(child->entry->mode) & 07777)) {
 
                         if (child->fd >= 0)
                                 r = fchmod(child->fd, le64toh(child->entry->mode) & 07777);
@@ -1363,6 +1390,30 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 if (cfd != child->fd)
                         safe_close(cfd);
+        }
+
+        if ((d->feature_flags & CA_FORMAT_WITH_FAT_ATTRS) != 0 && child->fd >= 0) {
+                uint32_t new_attr;
+
+                new_attr = ca_feature_flags_to_fat_attrs(le64toh(child->entry->flags) & d->feature_flags);
+
+                if (child->magic == MSDOS_SUPER_MAGIC) {
+                        uint32_t old_attr;
+
+                        if (ioctl(child->fd, FAT_IOCTL_GET_ATTRIBUTES, &old_attr) < 0)
+                                return -errno;
+
+                        if ((old_attr & (ATTR_HIDDEN|ATTR_SYS|ATTR_ARCH)) != (new_attr & (ATTR_HIDDEN|ATTR_SYS|ATTR_ARCH))) {
+
+                                new_attr |= old_attr & ~(ATTR_HIDDEN|ATTR_SYS|ATTR_ARCH);
+
+                                if (ioctl(child->fd, FAT_IOCTL_SET_ATTRIBUTES, &new_attr) < 0)
+                                        return -errno;
+                        }
+                } else {
+                        if (new_attr != 0)
+                                return -EOPNOTSUPP;
+                }
         }
 
         return 0;
