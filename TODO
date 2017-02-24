@@ -5,7 +5,6 @@
 * fuse mount logic
 * nbd expose logic
 * store/extract file properties of the "root" directory
-* save/restore dos file flags
 * save/restore btrfs file/subvol flags
 * save/restore xattrs
 * save/restore acls
