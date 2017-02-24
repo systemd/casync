@@ -614,19 +614,16 @@ static int ca_encoder_open_child(CaEncoder *e, const struct dirent *de) {
                 }
         }
 
-        if (child->stat.st_dev == n->stat.st_dev)
+        if (child->stat.st_dev == n->stat.st_dev ||
+            child->fd < 0)
                 child->magic = n->magic;
         else {
-                if (child->fd < 0)
-                        child->magic = n->magic;
-                else {
-                        struct statfs sfs;
+                struct statfs sfs;
 
-                        if (fstatfs(child->fd, &sfs) < 0)
-                                return -errno;
+                if (fstatfs(child->fd, &sfs) < 0)
+                        return -errno;
 
-                        child->magic = sfs.f_type;
-                }
+                child->magic = sfs.f_type;
         }
 
         r = ca_encoder_node_read_symlink(n, de, child);
@@ -1067,7 +1064,7 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 mode &= S_IFMT;
 
         if ((e->feature_flags & CA_FORMAT_WITH_CHATTR) != 0)
-                flags = ca_feature_flags_from_chattr(n->chattr_flags) & e->feature_flags;
+                flags = ca_feature_flags_from_chattr(child->chattr_flags) & e->feature_flags;
         else
                 flags = 0;
 
