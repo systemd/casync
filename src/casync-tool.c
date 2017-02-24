@@ -1375,6 +1375,7 @@ static int digest(int argc, char *argv[]) {
         } DigestOperation;
 
         DigestOperation operation = _DIGEST_OPERATION_INVALID;
+        bool set_base_mode_ifreg = false;
         int r, input_fd = -1;
         char *input = NULL;
         CaSync *s = NULL;
@@ -1498,7 +1499,8 @@ static int digest(int argc, char *argv[]) {
                         goto finish;
         }
 
-        if (operation == DIGEST_DIRECTORY)
+        if (operation == DIGEST_DIRECTORY ||
+            (operation == DIGEST_BLOB && input_fd >= 0))
                 s = ca_sync_new_encode();
         else
                 s = ca_sync_new_decode();
@@ -1511,20 +1513,23 @@ static int digest(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
-        if (operation == DIGEST_DIRECTORY)
+        if (operation == DIGEST_DIRECTORY ||
+            (operation == DIGEST_BLOB && input_fd >= 0))
                 r = ca_sync_set_base_fd(s, input_fd);
         else if (operation == DIGEST_INDEX) {
                 if (input_fd >= 0)
                         r = ca_sync_set_index_fd(s, input_fd);
                 else
                         r = ca_sync_set_index_auto(s, input);
+
+                set_base_mode_ifreg = true;
+
         } else {
                 assert(operation == DIGEST_BLOB);
 
-                if (input_fd >= 0)
-                        r = ca_sync_set_archive_fd(s, input_fd);
-                else
-                        r = ca_sync_set_archive_auto(s, input);
+                set_base_mode_ifreg = true;
+
+                r = ca_sync_set_archive_auto(s, input);
         }
         if (r < 0) {
                 fprintf(stderr, "Failed to set sync input: %s", strerror(-r));
@@ -1532,7 +1537,7 @@ static int digest(int argc, char *argv[]) {
         }
         input_fd = -1;
 
-        if (IN_SET(operation, DIGEST_INDEX, DIGEST_BLOB)) {
+        if (set_base_mode_ifreg) {
                 r = ca_sync_set_base_mode(s, S_IFREG);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set base mode to regular file: %s\n", strerror(-r));
