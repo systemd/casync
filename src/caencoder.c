@@ -357,7 +357,7 @@ static int ca_encoder_node_read_chattr(
         } else
                 fd = child->fd;
 
-        r = ioctl(fd, FS_IOC_GETFLAGS, &n->chattr_flags);
+        r = ioctl(fd, FS_IOC_GETFLAGS, &child->chattr_flags);
         if (fd != child->fd)
                 safe_close(fd);
 
@@ -366,7 +366,7 @@ static int ca_encoder_node_read_chattr(
                 if (!IN_SET(errno, ENOTTY, EBADF, EOPNOTSUPP))
                         return -errno;
 
-                n->chattr_flags = 0;
+                child->chattr_flags = 0;
         }
 
         return 0;
