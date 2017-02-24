@@ -641,6 +641,10 @@ static const CaFormatHello *validate_format_hello(CaDecoder *d, const void *p) {
             (flags & CA_FORMAT_WITH_PERMISSIONS))
                 return NULL;
 
+        if ((flags & CA_FORMAT_RESPECT_FLAG_NODUMP) &&
+            (flags & CA_FORMAT_WITH_FLAG_NODUMP))
+                return NULL;
+
         if (d->feature_flags == UINT64_MAX)
                 /* The first HELLO object decides the flags for the whole archive */
                 d->feature_flags = flags;
