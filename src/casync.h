@@ -24,6 +24,7 @@ int ca_sync_set_rate_limit_bps(CaSync *s, size_t rate_limit_bps);
 
 int ca_sync_set_feature_flags(CaSync *s, uint64_t flags);
 int ca_sync_get_feature_flags(CaSync *s, uint64_t *ret);
+int ca_sync_get_covering_feature_flags(CaSync *s, uint64_t *ret);
 
 /* Mode mask to use for created archive or index files */
 int ca_sync_set_make_mode(CaSync *sync, mode_t mode);

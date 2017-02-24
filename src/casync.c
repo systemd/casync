@@ -257,6 +257,16 @@ int ca_sync_get_feature_flags(CaSync *s, uint64_t *ret) {
         return 0;
 }
 
+int ca_sync_get_covering_feature_flags(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+
+        if (!s->encoder)
+                return -ENODATA;
+
+        return ca_encoder_get_covering_feature_flags(s->encoder, ret);
+}
+
 static int ca_sync_allocate_index(CaSync *s) {
         assert(s);
 

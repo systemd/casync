@@ -109,7 +109,7 @@ int ca_with_feature_flags_format(uint64_t features, char **ret) {
                 features &= ~f;
         }
 
-        if (features != 0) {
+        if ((features & ~CA_FORMAT_RESPECT_FLAG_NODUMP) != 0) {
                 free(s);
                 return -EINVAL;
         }
@@ -205,4 +205,104 @@ unsigned ca_feature_flags_to_chattr(uint64_t flags) {
         }
 
         return f;
+}
+
+uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
+
+        /* Returns the set of features we know a specific file system type provides. Ideally the kernel would let us
+         * know this, but this is Linux and hence we have crappy interfaces. */
+
+        switch (magic) {
+
+        case MSDOS_SUPER_MAGIC:
+                return
+                        CA_FORMAT_WITH_2SEC_TIME|
+                        CA_FORMAT_WITH_READ_ONLY;
+
+        case EXT2_SUPER_MAGIC:
+                return
+                        CA_FORMAT_WITH_16BIT_UIDS|
+                        CA_FORMAT_WITH_32BIT_UIDS|
+                        CA_FORMAT_WITH_USER_NAMES|
+                        CA_FORMAT_WITH_SEC_TIME|
+                        CA_FORMAT_WITH_USEC_TIME|
+                        CA_FORMAT_WITH_NSEC_TIME|
+                        CA_FORMAT_WITH_2SEC_TIME|
+                        CA_FORMAT_WITH_READ_ONLY|
+                        CA_FORMAT_WITH_PERMISSIONS|
+                        CA_FORMAT_WITH_SYMLINKS|
+                        CA_FORMAT_WITH_DEVICE_NODES|
+                        CA_FORMAT_WITH_FIFOS|
+                        CA_FORMAT_WITH_SOCKETS|
+                        CA_FORMAT_WITH_FLAG_APPEND|
+                        CA_FORMAT_WITH_FLAG_NOATIME|
+                        CA_FORMAT_WITH_FLAG_NODUMP|
+                        CA_FORMAT_WITH_FLAG_DIRSYNC|
+                        CA_FORMAT_WITH_FLAG_IMMUTABLE|
+                        CA_FORMAT_WITH_FLAG_SYNC;
+
+        case XFS_SUPER_MAGIC:
+                return
+                        CA_FORMAT_WITH_16BIT_UIDS|
+                        CA_FORMAT_WITH_32BIT_UIDS|
+                        CA_FORMAT_WITH_USER_NAMES|
+                        CA_FORMAT_WITH_SEC_TIME|
+                        CA_FORMAT_WITH_USEC_TIME|
+                        CA_FORMAT_WITH_NSEC_TIME|
+                        CA_FORMAT_WITH_2SEC_TIME|
+                        CA_FORMAT_WITH_READ_ONLY|
+                        CA_FORMAT_WITH_PERMISSIONS|
+                        CA_FORMAT_WITH_SYMLINKS|
+                        CA_FORMAT_WITH_DEVICE_NODES|
+                        CA_FORMAT_WITH_FIFOS|
+                        CA_FORMAT_WITH_SOCKETS|
+                        CA_FORMAT_WITH_FLAG_APPEND|
+                        CA_FORMAT_WITH_FLAG_NOATIME|
+                        CA_FORMAT_WITH_FLAG_NODUMP|
+                        CA_FORMAT_WITH_FLAG_IMMUTABLE|
+                        CA_FORMAT_WITH_FLAG_SYNC;
+
+        case BTRFS_SUPER_MAGIC:
+                return
+                        CA_FORMAT_WITH_16BIT_UIDS|
+                        CA_FORMAT_WITH_32BIT_UIDS|
+                        CA_FORMAT_WITH_USER_NAMES|
+                        CA_FORMAT_WITH_SEC_TIME|
+                        CA_FORMAT_WITH_USEC_TIME|
+                        CA_FORMAT_WITH_NSEC_TIME|
+                        CA_FORMAT_WITH_2SEC_TIME|
+                        CA_FORMAT_WITH_READ_ONLY|
+                        CA_FORMAT_WITH_PERMISSIONS|
+                        CA_FORMAT_WITH_SYMLINKS|
+                        CA_FORMAT_WITH_DEVICE_NODES|
+                        CA_FORMAT_WITH_FIFOS|
+                        CA_FORMAT_WITH_SOCKETS|
+                        CA_FORMAT_WITH_FLAG_APPEND|
+                        CA_FORMAT_WITH_FLAG_NOATIME|
+                        CA_FORMAT_WITH_FLAG_COMPR|
+                        CA_FORMAT_WITH_FLAG_NOCOW|
+                        CA_FORMAT_WITH_FLAG_NODUMP|
+                        CA_FORMAT_WITH_FLAG_DIRSYNC|
+                        CA_FORMAT_WITH_FLAG_IMMUTABLE|
+                        CA_FORMAT_WITH_FLAG_SYNC|
+                        CA_FORMAT_WITH_FLAG_NOCOMP;
+
+        case TMPFS_MAGIC:
+        default:
+                /* For now, let's assume that tmpfs defines the baseline of what Linux file systems support */
+                return
+                        CA_FORMAT_WITH_16BIT_UIDS|
+                        CA_FORMAT_WITH_32BIT_UIDS|
+                        CA_FORMAT_WITH_USER_NAMES|
+                        CA_FORMAT_WITH_SEC_TIME|
+                        CA_FORMAT_WITH_USEC_TIME|
+                        CA_FORMAT_WITH_NSEC_TIME|
+                        CA_FORMAT_WITH_2SEC_TIME|
+                        CA_FORMAT_WITH_READ_ONLY|
+                        CA_FORMAT_WITH_PERMISSIONS|
+                        CA_FORMAT_WITH_SYMLINKS|
+                        CA_FORMAT_WITH_DEVICE_NODES|
+                        CA_FORMAT_WITH_FIFOS|
+                        CA_FORMAT_WITH_SOCKETS;
+        }
 }

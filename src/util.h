@@ -514,4 +514,8 @@ static inline const char *yes_no(bool b) {
         return b ? "yes" : "no";
 }
 
+#ifndef XFS_SUPER_MAGIC
+#define XFS_SUPER_MAGIC 0x58465342
+#endif
+
 #endif

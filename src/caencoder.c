@@ -57,6 +57,7 @@ struct CaEncoder {
         CaEncoderState state;
 
         uint64_t feature_flags;
+        uint64_t covering_feature_flags; /* feature flags the used file systems actually support */
 
         uint64_t time_granularity;
 
@@ -158,6 +159,16 @@ int ca_encoder_get_feature_flags(CaEncoder *e, uint64_t *ret) {
                 return -EINVAL;
 
         *ret = e->feature_flags;
+        return 0;
+}
+
+int ca_encoder_get_covering_feature_flags(CaEncoder *e, uint64_t *ret) {
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        *ret = e->covering_feature_flags;
         return 0;
 }
 
@@ -711,6 +722,19 @@ static int ca_encoder_shall_enumerate_child_node(CaEncoder *e) {
         return true;
 }
 
+static int ca_encoder_collect_covering_feature_flags(CaEncoder *e) {
+        CaEncoderNode *child;
+
+        child = ca_encoder_current_child_node(e);
+        if (!child)
+                return -EUNATCH;
+
+        /* Collect all feature flags that cover the complete feature set of the underlying file systems */
+        e->covering_feature_flags |= ca_feature_flags_from_magic(child->magic);
+
+        return 0;
+}
+
 static int ca_encoder_node_get_payload_size(CaEncoderNode *n, uint64_t *ret) {
         int r;
 
@@ -837,6 +861,10 @@ static int ca_encoder_step_directory(CaEncoder *e, CaEncoderNode *n) {
                         /* Nope, not relevant to us, let's try the next one */
                         n->dirent_idx++;
                 }
+
+                r = ca_encoder_collect_covering_feature_flags(e);
+                if (r < 0)
+                        return r;
 
                 ca_encoder_enter_state(e, CA_ENCODER_ENTRY);
                 return CA_ENCODER_NEXT_FILE;

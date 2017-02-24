@@ -338,13 +338,17 @@ static int load_seeds_and_extra_stores(CaSync *s) {
         return 0;
 }
 
+static uint64_t combined_with_flags(void) {
+        return (arg_with == 0 ? CA_FORMAT_WITH_BEST : arg_with) & ~arg_without;
+}
+
 static int load_feature_flags(CaSync *s) {
         uint64_t flags;
         int r;
 
         assert(s);
 
-        flags = (arg_with == 0 ? CA_FORMAT_WITH_BEST : arg_with) & ~arg_without;
+        flags = combined_with_flags();
 
         if (arg_respect_nodump)
                 flags |= CA_FORMAT_RESPECT_FLAG_NODUMP;
@@ -492,6 +496,46 @@ static int verbose_print_size(CaSync *s) {
 
         if (size > 0 && n_chunks > 0)
                 fprintf(stderr, "Effective average chunk size: %s\n", format_bytes(buffer, sizeof(buffer), size/n_chunks));
+
+        return 1;
+}
+
+static int verbose_print_done(CaSync *s) {
+        uint64_t selected, covering, too_much;
+        int r;
+
+        assert(s);
+
+        if (!arg_verbose)
+                return 0;
+
+        r = ca_sync_get_covering_feature_flags(s, &covering);
+        if (r == -ENODATA)
+                return 0;
+        if (r < 0) {
+                fprintf(stderr, "Failed to determine covering flags: %s\n", strerror(-r));
+                return r;
+        }
+
+        r = ca_sync_get_feature_flags(s, &selected);
+        if (r < 0) {
+                fprintf(stderr, "Failed to determine used flags: %s\n", strerror(-r));
+                return r;
+        }
+
+        too_much = selected & ~covering;
+        if (too_much != 0) {
+                char *t;
+
+                r = ca_with_feature_flags_format(too_much, &t);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to format feature flags: %s\n", strerror(-r));
+                        return r;
+                }
+
+                fprintf(stderr, "Specified feature flags not covered by backing file systems: %s\n", t);
+                free(t);
+        }
 
         return 1;
 }
@@ -718,6 +762,7 @@ static int make(int argc, char *argv[]) {
                         char t[CA_CHUNK_ID_FORMAT_MAX];
 
                         verbose_print_size(s);
+                        verbose_print_done(s);
 
                         assert_se(ca_sync_get_digest(s, &digest) >= 0);
                         printf("%s\n", ca_chunk_id_format(&digest, t));
@@ -1005,6 +1050,7 @@ static int extract(int argc, char *argv[]) {
                 switch (r) {
 
                 case CA_SYNC_FINISHED:
+                        verbose_print_done(s);
                         r = 0;
                         goto finish;
 
@@ -1254,6 +1300,8 @@ static int list(int argc, char *argv[]) {
                 switch (r) {
 
                 case CA_SYNC_FINISHED:
+                        verbose_print_done(s);
+
                         r = 0;
                         goto finish;
 
@@ -1524,6 +1572,8 @@ static int digest(int argc, char *argv[]) {
                 case CA_SYNC_FINISHED: {
                         CaChunkID digest;
                         char t[CA_CHUNK_ID_FORMAT_MAX];
+
+                        verbose_print_done(s);
 
                         assert_se(ca_sync_get_digest(s, &digest) >= 0);
                         printf("%s\n", ca_chunk_id_format(&digest, t));
