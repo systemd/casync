@@ -4,7 +4,6 @@
 * seeks
 * fuse mount logic
 * nbd expose logic
-* store/extract file properties of the "root" directory
 * save/restore btrfs file/subvol flags
 * save/restore xattrs
 * save/restore acls
@@ -12,6 +11,7 @@
 * check fs features when restoring
 * encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
 * hardlink/reflink from seed
+* restore zeroes as sparse files
 * exclude patterns
 * permit shifting UID/GIDs
 * delete old files in destination after sync
@@ -26,8 +26,9 @@
 * casync-http: parallel http GETs
 * casync-http: try all configured stores one after the other before sending MISSING
 * add support for compressed index files and archive files
-* replace adler32 by something better
+* replace adler32 by something better (buzhash)
 * define mime types for our files
 * define http-based url protocol prefix for caibx+caidx
 * support accessing base trees through native protocol
 * implicitly generate index + chunks when accessing base trees or archives through native protocol
+* rework caindex to read multiple chunks per read (use reallocbuffer like elsewhere)
