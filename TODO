@@ -5,7 +5,6 @@
 * fuse mount logic
 * nbd expose logic
 * save/restore btrfs file/subvol flags
-* save/restore xattrs
 * save/restore acls
 * save/restore hardlinks?
 * check fs features when restoring
@@ -32,3 +31,4 @@
 * support accessing base trees through native protocol
 * implicitly generate index + chunks when accessing base trees or archives through native protocol
 * rework caindex to read multiple chunks per read (use reallocbuffer like elsewhere)
+* when restoring xattrs, remove unlisted
