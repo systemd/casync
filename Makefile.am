@@ -75,7 +75,8 @@ protocol_PROGRAMS = \
 
 noinst_PROGRAMS = \
 	$(tests) \
-	test-caindex
+	test-caindex \
+	test-caformat
 
 TESTS = \
 	$(tests) \
@@ -173,6 +174,21 @@ test_caencoder_CFLAGS = \
 	$(LIBGCRYPT_CFLAGS)
 
 test_caencoder_LDADD = \
+	$(LIBLZMA_LIBS) \
+	$(LIBGCRYPT_LIBS)
+
+## test-caformat
+
+test_caformat_SOURCES = \
+	test/test-caformat.c \
+	$(lib_SOURCES)
+
+test_caformat_CFLAGS = \
+	$(AM_CFLAGS) \
+	$(LIBLZMA_CFLAGS) \
+	$(LIBGCRYPT_CFLAGS)
+
+test_caformat_LDADD = \
 	$(LIBLZMA_LIBS) \
 	$(LIBGCRYPT_LIBS)
 

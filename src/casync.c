@@ -20,8 +20,8 @@
 #include "realloc-buffer.h"
 #include "util.h"
 
-/* #undef EBADMSG */
-/* #define EBADMSG __LINE__ */
+/* #undef EINVAL */
+/* #define EINVAL __LINE__ */
 
 typedef enum CaDirection {
         CA_SYNC_ENCODE,

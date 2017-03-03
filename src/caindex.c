@@ -221,7 +221,6 @@ static int ca_index_write_head(CaIndex *i) {
         } head = {
                 .index.header.size = sizeof(CaFormatIndex),
                 .index.header.type = htole64(CA_FORMAT_INDEX),
-                .index.uuid_part2 = htole64(CA_FORMAT_INDEX_UUID_PART2),
                 .table.size = htole64(UINT64_MAX),
                 .table.type = htole64(CA_FORMAT_TABLE),
         };
@@ -310,8 +309,7 @@ static int ca_index_read_head(CaIndex *i) {
                 return -EPIPE;
 
         if (head.index.header.size != sizeof(CaFormatIndex) ||
-            head.index.header.type != htole64(CA_FORMAT_INDEX) ||
-            head.index.uuid_part2 != htole64(CA_FORMAT_INDEX_UUID_PART2))
+            head.index.header.type != htole64(CA_FORMAT_INDEX))
                 return -EBADMSG;
 
         if (head.index.feature_flags != 0)

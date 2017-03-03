@@ -42,6 +42,7 @@
 /test-cachunk
 /test-cachunker
 /test-caencoder
+/test-caformat
 /test-caindex
 /test-casync
 /test-cautil

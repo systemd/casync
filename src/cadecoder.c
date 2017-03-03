@@ -17,6 +17,9 @@
 #include "realloc-buffer.h"
 #include "util.h"
 
+/* #undef EINVAL */
+/* #define EINVAL __LINE__ */
+
 /* #undef EBADMSG */
 /* #define EBADMSG __LINE__ */
 
@@ -35,6 +38,8 @@
 
 typedef struct CaDecoderNode {
         int fd;
+
+        char *name;
         CaFormatEntry *entry;
 
         mode_t mode;          /* Only set if entry == NULL */
@@ -44,17 +49,15 @@ typedef struct CaDecoderNode {
         char *group_name;
         char *symlink_target; /* Only for S_ISLNK() */
         dev_t rdev;           /* Only for S_ISCHR() and S_ISBLK() */
-
-        struct stat stat;
-        statfs_f_type_t magic;
 } CaDecoderNode;
 
 typedef enum CaDecoderState {
         CA_DECODER_INIT,
-        CA_DECODER_READ_HELLO,
-        CA_DECODER_READING_ENTRY,
-        CA_DECODER_READ_ENTRY,
-        CA_DECODER_READ_GOODBYE,
+        CA_DECODER_ENTERED,
+        CA_DECODER_ENTRY,
+        CA_DECODER_IN_PAYLOAD,
+        CA_DECODER_IN_DIRECTORY,
+        CA_DECODER_GOODBYE,
         CA_DECODER_EOF,
 } CaDecoderState;
 
@@ -88,6 +91,10 @@ struct CaDecoder {
 
         char *cached_user_name;
         char *cached_group_name;
+
+        /* A cached pair of st_dev and magic, so that we don't have to call statfs() for each file */
+        dev_t cached_st_dev;
+        statfs_f_type_t cached_magic;
 };
 
 static mode_t ca_decoder_node_mode(CaDecoderNode *n) {
@@ -119,6 +126,7 @@ static void ca_decoder_node_free(CaDecoderNode *n) {
         else
                 n->fd = -1;
 
+        n->name = mfree(n->name);
         n->entry = mfree(n->entry);
         n->user_name = mfree(n->user_name);
         n->group_name = mfree(n->group_name);
@@ -182,10 +190,12 @@ int ca_decoder_set_base_fd(CaDecoder *d, int fd) {
                 .fd = fd,
                 .mode = st.st_mode,
                 .size = UINT64_MAX,
-                .magic = sfs.f_type,
         };
 
         d->n_nodes = 1;
+
+        d->cached_magic = sfs.f_type;
+        d->cached_st_dev = st.st_dev;
 
         return 0;
 }
@@ -218,6 +228,15 @@ static CaDecoderNode* ca_decoder_current_node(CaDecoder *d) {
                 return NULL;
 
         return d->nodes + d->node_idx;
+}
+
+static CaDecoderNode* ca_decoder_current_parent_node(CaDecoder *d) {
+        assert(d);
+
+        if (d->node_idx == 0)
+                return NULL;
+
+        return d->nodes + d->node_idx - 1;
 }
 
 static CaDecoderNode* ca_decoder_current_child_node(CaDecoder *d) {
@@ -257,18 +276,12 @@ static CaDecoderNode* ca_decoder_init_child(CaDecoder *d) {
 }
 
 static int ca_decoder_enter_child(CaDecoder *d) {
-        mode_t mode;
-
         assert(d);
 
         if (d->node_idx+1 >= d->n_nodes)
                 return -EINVAL;
-        if (!d->nodes[d->node_idx+1].entry)
+        if (!d->nodes[d->node_idx+1].name)
                 return -EINVAL;
-
-        mode = (mode_t) read_le64(&d->nodes[d->node_idx+1].entry->mode);
-        if (!S_ISREG(mode) && !S_ISDIR(mode))
-                return -ENOTTY;
 
         d->node_idx++;
 
@@ -502,17 +515,58 @@ static bool validate_symlink_target(const char *target, size_t n) {
         return true;
 }
 
+static bool validate_feature_flags(CaDecoder *d, uint64_t flags) {
+        assert(d);
+
+        /* We use all bits on in the flags field as a special value, don't permit this in files */
+        if (flags == UINT64_MAX)
+                return false;
+
+        if ((flags & CA_FORMAT_WITH_NSEC_TIME) &&
+            (flags & (CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_2SEC_TIME)))
+                return false;
+
+        if ((flags & CA_FORMAT_WITH_USEC_TIME) &&
+            (flags & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_2SEC_TIME)))
+                return false;
+
+        if ((flags & CA_FORMAT_WITH_SEC_TIME) &&
+            (flags & CA_FORMAT_WITH_2SEC_TIME))
+                return false;
+
+        if ((flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) == (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS))
+                return false;
+
+        if ((flags & CA_FORMAT_WITH_READ_ONLY) &&
+            (flags & CA_FORMAT_WITH_PERMISSIONS))
+                return false;
+
+        if ((flags & CA_FORMAT_RESPECT_FLAG_NODUMP) &&
+            (flags & CA_FORMAT_WITH_FLAG_NODUMP))
+                return false;
+
+        if (d->feature_flags == UINT64_MAX)
+                /* The first ENTRY record decides the flags for the whole archive */
+                d->feature_flags = flags;
+        else if (d->feature_flags != flags)
+                return false;
+
+        return true;
+}
+
 static const CaFormatEntry* validate_format_entry(CaDecoder *d, const void *p) {
         const CaFormatEntry *e = p;
 
         assert(d);
         assert(e);
 
-        if (read_le64(&e->header.size) < offsetof(CaFormatEntry, name) + 1)
+        if (read_le64(&e->header.size) < sizeof(CaFormatEntry))
                 return NULL;
         if (read_le64(&e->header.type) != CA_FORMAT_ENTRY)
                 return NULL;
 
+        if (!validate_feature_flags(d, read_le64(&e->feature_flags)))
+                return NULL;
         if (!validate_mode(d, read_le64(&e->mode)))
                 return NULL;
         if (!validate_entry_flags(d, read_le64(&e->flags)))
@@ -522,9 +576,6 @@ static const CaFormatEntry* validate_format_entry(CaDecoder *d, const void *p) {
         if (!validate_uid_gid(d, read_le64(&e->gid)))
                 return NULL;
         if (!validate_nsec(d, read_le64(&e->mtime)))
-                return NULL;
-
-        if (!validate_filename(e->name, read_le64(&e->header.size) - offsetof(CaFormatEntry, name)))
                 return NULL;
 
         return e;
@@ -620,54 +671,18 @@ static const CaFormatPayload* validate_format_payload(CaDecoder *d, const void *
         return p;
 }
 
-static const CaFormatHello *validate_format_hello(CaDecoder *d, const void *p) {
-        const CaFormatHello *h = p;
-        uint64_t flags;
+static const CaFormatFilename* validate_format_filename(CaDecoder *d, const void *p) {
+        const CaFormatFilename *f = p;
 
-        if (read_le64(&h->header.size) != sizeof(CaFormatHello))
+        if (read_le64(&f->header.size) < offsetof(CaFormatFilename, name) + 1)
                 return NULL;
-        if (read_le64(&h->header.type) != CA_FORMAT_HELLO)
-                return NULL;
-
-        if (read_le64(&h->uuid_part2) != CA_FORMAT_HELLO_UUID_PART2)
+        if (read_le64(&f->header.type) != CA_FORMAT_FILENAME)
                 return NULL;
 
-        flags = read_le64(&h->feature_flags);
-
-        /* We use all bits on in the flags field as a special value, don't permit this in files */
-        if (flags == UINT64_MAX)
+        if (!validate_filename(f->name, read_le64(&f->header.size) - offsetof(CaFormatFilename, name)))
                 return NULL;
 
-        if ((flags & CA_FORMAT_WITH_NSEC_TIME) &&
-            (flags & (CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_2SEC_TIME)))
-                return NULL;
-
-        if ((flags & CA_FORMAT_WITH_USEC_TIME) &&
-            (flags & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_2SEC_TIME)))
-                return NULL;
-
-        if ((flags & CA_FORMAT_WITH_SEC_TIME) &&
-            (flags & CA_FORMAT_WITH_2SEC_TIME))
-                return NULL;
-
-        if ((flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) == (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS))
-                return NULL;
-
-        if ((flags & CA_FORMAT_WITH_READ_ONLY) &&
-            (flags & CA_FORMAT_WITH_PERMISSIONS))
-                return NULL;
-
-        if ((flags & CA_FORMAT_RESPECT_FLAG_NODUMP) &&
-            (flags & CA_FORMAT_WITH_FLAG_NODUMP))
-                return NULL;
-
-        if (d->feature_flags == UINT64_MAX)
-                /* The first HELLO object decides the flags for the whole archive */
-                d->feature_flags = flags;
-        else if (d->feature_flags != flags)
-                return NULL;
-
-        return h;
+        return f;
 }
 
 static const CaFormatGoodbye *validate_format_goodbye(CaDecoder *d, const void *p) {
@@ -686,32 +701,32 @@ static const CaFormatGoodbye *validate_format_goodbye(CaDecoder *d, const void *
         return g;
 }
 
-static int ca_decoder_parse_entry(CaDecoder *d) {
+static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         const CaFormatEntry *entry = NULL;
         const CaFormatUser *user = NULL;
         const CaFormatGroup *group = NULL;
         const CaFormatSymlink *symlink = NULL;
         const CaFormatPayload *payload = NULL;
-        const CaFormatHello *hello = NULL;
         const CaFormatDevice *device = NULL;
+        const CaFormatFilename *filename = NULL;
         const CaFormatGoodbye *goodbye = NULL;
-        CaDecoderNode *child;
         uint64_t offset = 0;
         bool done = false;
         mode_t mode;
-        size_t n;
+        size_t sz;
         void *p;
         int r;
 
         assert(d);
+        assert(n);
 
         p = realloc_buffer_data(&d->buffer);
-        n = realloc_buffer_size(&d->buffer);
+        sz = realloc_buffer_size(&d->buffer);
         for (;;) {
                 const CaFormatHeader *h;
                 uint64_t t, l;
 
-                if (n < sizeof(CaFormatHeader)) /* Not read enough yet */
+                if (sz < sizeof(CaFormatHeader)) /* Not read enough yet */
                         return CA_DECODER_REQUEST;
 
                 h = p;
@@ -732,14 +747,12 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                 switch (t) {
 
                 case CA_FORMAT_ENTRY:
-                        if (entry) {
-                                done = true;
-                                break;
-                        }
-                        if (l > CA_FORMAT_ENTRY_SIZE_MAX)
+                        if (entry)
+                                return -EBADMSG;
+                        if (l != sizeof(CaFormatEntry))
                                 return -EBADMSG;
 
-                        r = ca_decoder_object_is_complete(p, n);
+                        r = ca_decoder_object_is_complete(p, sz);
                         if (r < 0)
                                 return r;
                         if (r == 0)
@@ -748,6 +761,10 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                         entry = validate_format_entry(d, p);
                         if (!entry)
                                 return -EBADMSG;
+
+                        /* Is this file too new for us? */
+                        if ((entry->feature_flags & ~CA_FORMAT_FEATURE_FLAGS_MAX) != 0)
+                                return -EPROTONOSUPPORT;
 
                         offset += l;
                         break;
@@ -762,7 +779,7 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                         if (l > CA_FORMAT_USER_SIZE_MAX)
                                 return -EBADMSG;
 
-                        r = ca_decoder_object_is_complete(p, n);
+                        r = ca_decoder_object_is_complete(p, sz);
                         if (r < 0)
                                 return r;
                         if (r == 0)
@@ -778,14 +795,12 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                 case CA_FORMAT_GROUP:
                         if (!entry)
                                 return -EBADMSG;
-                        if (!user)
-                                return -EBADMSG;
                         if (group)
                                 return -EBADMSG;
                         if (l > CA_FORMAT_GROUP_SIZE_MAX)
                                 return -EBADMSG;
 
-                        r = ca_decoder_object_is_complete(p, n);
+                        r = ca_decoder_object_is_complete(p, sz);
                         if (r < 0)
                                 return r;
                         if (r == 0)
@@ -798,7 +813,7 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                         offset += l;
                         break;
 
-                case CA_FORMAT_SYMLINK: {
+                case CA_FORMAT_SYMLINK:
                         if (!entry)
                                 return -EBADMSG;
                         if (!S_ISLNK(read_le64(&entry->mode)))
@@ -806,7 +821,7 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                         if (l > CA_FORMAT_SYMLINK_SIZE_MAX)
                                 return -EBADMSG;
 
-                        r = ca_decoder_object_is_complete(p, n);
+                        r = ca_decoder_object_is_complete(p, sz);
                         if (r < 0)
                                 return r;
                         if (r == 0)
@@ -819,9 +834,8 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                         offset += l;
                         done = true;
                         break;
-                }
 
-                case CA_FORMAT_DEVICE: {
+                case CA_FORMAT_DEVICE:
                         if (!entry)
                                 return -EBADMSG;
                         if (!S_ISCHR(read_le64(&entry->mode)) && !S_ISBLK(read_le64(&entry->mode)))
@@ -829,7 +843,7 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                         if (l != sizeof(CaFormatDevice))
                                 return -EBADMSG;
 
-                        r = ca_decoder_object_is_complete(p, n);
+                        r = ca_decoder_object_is_complete(p, sz);
                         if (r < 0)
                                 return r;
                         if (r == 0)
@@ -842,7 +856,6 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                         offset += l;
                         done = true;
                         break;
-                }
 
                 case CA_FORMAT_PAYLOAD:
                         if (!entry)
@@ -861,36 +874,37 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                         done = true;
                         break;
 
-                case CA_FORMAT_HELLO:
+                case CA_FORMAT_FILENAME:
                         if (!entry)
                                 return -EBADMSG;
-                        if (!S_ISDIR(read_le64(&entry->mode)))
-                                return -EBADMSG;
-                        if (l != sizeof(CaFormatHello))
+                        if (l < offsetof(CaFormatFilename, name) + 1)
                                 return -EBADMSG;
 
-                        r = ca_decoder_object_is_complete(p, n);
+                        r = ca_decoder_object_is_complete(p, sz);
                         if (r < 0)
                                 return r;
                         if (r == 0)
                                 return CA_DECODER_REQUEST;
 
-                        hello = validate_format_hello(d, p);
-                        if (!hello)
+                        filename = validate_format_filename(d, p);
+                        if (!filename)
                                 return -EBADMSG;
 
-                        /* Note that we don't increase "offset" here, as we want to process it as part of the child directory */
+                        /* Note that we don't increase "offset" here, as we want to process it as part of the next
+                         * state. */
 
                         done = true;
                         break;
 
                 case CA_FORMAT_GOODBYE:
-                        if (entry)
+                        if (!entry)
+                                return -EBADMSG;
+                        if (!S_ISDIR(read_le64(&entry->mode)))
                                 return -EBADMSG;
                         if (l < offsetof(CaFormatGoodbye, table) + sizeof(le64_t))
                                 return -EBADMSG;
 
-                        r = ca_decoder_object_is_complete(p, n);
+                        r = ca_decoder_object_is_complete(p, sz);
                         if (r < 0)
                                 return r;
                         if (r == 0)
@@ -900,13 +914,14 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                         if (!goodbye)
                                 return -EBADMSG;
 
-                        offset += l;
-                        done = true;
+                        /* Note that we don't increase "offset" here, as we want to process it as part of the next
+                         * state */
 
+                        done = true;
                         break;
 
                 default:
-                        fprintf(stderr, "Got bad object: %016" PRIx64 "\n", t);
+                        fprintf(stderr, "Got unexpected object: %016" PRIx64 "\n", t);
                         return -EBADMSG;
                 }
 
@@ -914,18 +929,11 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
                         break;
 
                 p = (uint8_t*) p + l;
-                n -= l;
+                sz -= l;
         }
 
-        if (!entry) {
-                if (goodbye) {
-                        ca_decoder_enter_state(d, CA_DECODER_READ_GOODBYE);
-                        d->step_size = offset;
-                        return CA_DECODER_STEP;
-                }
-
+        if (!entry)
                 return -EBADMSG;
-        }
 
         if (user && !(d->feature_flags & CA_FORMAT_WITH_USER_NAMES))
                 return -EBADMSG;
@@ -939,89 +947,149 @@ static int ca_decoder_parse_entry(CaDecoder *d) {
 
         mode = (mode_t) read_le64(&entry->mode);
 
-        if (S_ISLNK(mode) && !symlink)
-                return -EBADMSG;
         if (S_ISREG(mode) && !payload)
                 return -EBADMSG;
-        if (S_ISDIR(mode) && !hello)
+        if (S_ISDIR(mode) && !(filename || goodbye))
+                return -EBADMSG;
+        if (S_ISLNK(mode) && !symlink)
                 return -EBADMSG;
         if ((S_ISBLK(mode) || S_ISCHR(mode)) && !device)
                 return -EBADMSG;
 
-        child = ca_decoder_init_child(d);
-        if (!child)
-                return -E2BIG;
+        /* Both FAT and chattr(1) flags are only defined for regular files and directories */
+        if (read_le64(&entry->flags) != 0 && !S_ISREG(mode) && !S_ISDIR(mode))
+                return -EBADMSG;
 
-        child->entry = memdup(entry, offsetof(CaFormatEntry, name) + strlen(entry->name) + 1);
-        if (!child->entry) {
-                r = -ENOMEM;
-                goto fail;
-        }
+        /* The top-level node must be a directory */
+        if (d->node_idx == 0 && !S_ISDIR(mode))
+                return -EBADMSG;
+
+        assert(!n->entry);
+        assert(!n->user_name);
+        assert(!n->group_name);
+        assert(!n->symlink_target);
+
+        n->entry = memdup(entry, sizeof(CaFormatEntry));
+        if (!n->entry)
+                return -ENOMEM;
 
         if (user) {
-                child->user_name = strdup(user->name);
-                if (!child->user_name) {
-                        r = -ENOMEM;
-                        goto fail;
-                }
+                n->user_name = strdup(user->name);
+                if (!n->user_name)
+                        return -ENOMEM;
         }
 
         if (group) {
-                child->group_name = strdup(group->name);
-                if (!child->group_name) {
-                        r = -ENOMEM;
-                        goto fail;
-                }
+                n->group_name = strdup(group->name);
+                if (!n->group_name)
+                        return -ENOMEM;
         }
 
         if (symlink) {
-                child->symlink_target = strdup(symlink->target);
-                if (!child->symlink_target) {
-                        r = -ENOMEM;
-                        goto fail;
-                }
+                n->symlink_target = strdup(symlink->target);
+                if (!n->symlink_target)
+                        return -ENOMEM;
         }
 
         if (device)
-                child->rdev = makedev(read_le64(&device->major), read_le64(&device->minor));
+                n->rdev = makedev(read_le64(&device->major), read_le64(&device->minor));
 
         if (payload)
-                child->size = read_le64(&payload->header.size) - offsetof(CaFormatPayload, data);
+                n->size = read_le64(&payload->header.size) - offsetof(CaFormatPayload, data);
 
-        ca_decoder_enter_state(d, CA_DECODER_READ_ENTRY);
+        ca_decoder_enter_state(d, CA_DECODER_ENTRY);
         d->step_size = offset;
 
         return CA_DECODER_NEXT_FILE;
-
-fail:
-        ca_decoder_forget_children(d);
-        return r;
 }
 
-static int ca_decoder_parse_hello(CaDecoder *d) {
-        const CaFormatHello *h;
+static int ca_decoder_parse_filename(CaDecoder *d) {
+        const CaFormatFilename *filename = NULL;
+        const CaFormatGoodbye *goodbye = NULL;
+        const CaFormatHeader *h;
+        uint64_t l, t;
+        size_t sz;
+        int r;
 
         assert(d);
-        assert(d->state == CA_DECODER_INIT);
 
-        if (realloc_buffer_size(&d->buffer) < sizeof(CaFormatHello)) /* Not read enough yet */
+        sz = realloc_buffer_size(&d->buffer);
+        if (sz < sizeof(CaFormatHeader))
                 return CA_DECODER_REQUEST;
 
-        h = validate_format_hello(d, realloc_buffer_data(&d->buffer));
-        if (!h)
+        h = realloc_buffer_data(&d->buffer);
+        l = read_le64(&h->size);
+        if (l < sizeof(CaFormatHeader))
+                return -EBADMSG;
+        if (l == 0)
                 return -EBADMSG;
 
-        if ((d->feature_flags & ~CA_FORMAT_FEATURE_FLAGS_MAX) != 0)
-                return -EOPNOTSUPP;
+        t = read_le64(&h->type);
 
-        ca_decoder_enter_state(d, CA_DECODER_READ_HELLO);
-        d->step_size = sizeof(CaFormatHello);
+        switch (t) {
 
-        return CA_DECODER_STEP;
+        case CA_FORMAT_FILENAME: {
+                CaDecoderNode *child;
+
+                if (l < offsetof(CaFormatFilename, name) + 1)
+                        return -EBADMSG;
+
+                r = ca_decoder_object_is_complete(h, sz);
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        return CA_DECODER_REQUEST;
+
+                filename = validate_format_filename(d, h);
+                if (!filename)
+                        return -EBADMSG;
+
+                child = ca_decoder_init_child(d);
+                if (!child)
+                        return -EFBIG;
+
+                child->name = strdup(filename->name);
+                if (!child->name)
+                        return -ENOMEM;
+
+                r = ca_decoder_enter_child(d);
+                if (r < 0)
+                        return r;
+
+                ca_decoder_enter_state(d, CA_DECODER_ENTERED);
+                d->step_size = l;
+
+                return CA_DECODER_STEP;
+        }
+
+        case CA_FORMAT_GOODBYE:
+                if (l < offsetof(CaFormatGoodbye, table) + sizeof(le64_t))
+                        return -EBADMSG;
+
+                r = ca_decoder_object_is_complete(h, sz);
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        return CA_DECODER_REQUEST;
+
+                goodbye = validate_format_goodbye(d, h);
+                if (!goodbye)
+                        return -EBADMSG;
+
+                ca_decoder_enter_state(d, CA_DECODER_GOODBYE);
+                d->step_size = l;
+
+                return CA_DECODER_STEP;
+
+        default:
+                fprintf(stderr, "Got unexpected object: %016" PRIx64 "\n", t);
+                return -EBADMSG;
+        }
 }
 
-static int ca_decoder_make_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *child) {
+static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *child) {
         mode_t mode;
+        int r;
 
         assert(d);
         assert(n);
@@ -1033,34 +1101,44 @@ static int ca_decoder_make_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *
                 return 0;
 
         assert(child->entry);
+        assert(child->name);
 
         mode = le64toh(child->entry->mode);
 
         switch (mode & S_IFMT) {
 
         case S_IFDIR:
-                if (mkdirat(n->fd, child->entry->name, 0700) < 0) {
+                if (mkdirat(n->fd, child->name, 0700) < 0) {
 
                         if (errno != EEXIST)
                                 return -errno;
                 }
 
-                child->fd = openat(n->fd, child->entry->name, O_CLOEXEC|O_NOCTTY|O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+                child->fd = openat(n->fd, child->name, O_CLOEXEC|O_NOCTTY|O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
                 if (child->fd < 0)
                         return -errno;
 
                 break;
 
         case S_IFREG:
-                child->fd = openat(n->fd, child->entry->name, O_CLOEXEC|O_NOCTTY|O_WRONLY|O_NOFOLLOW|O_CREAT|O_TRUNC);
-                if (child->fd < 0)
-                        return -errno;
+                child->fd = openat(n->fd, child->name, O_CLOEXEC|O_NOCTTY|O_WRONLY|O_NOFOLLOW|O_CREAT|O_TRUNC, 0600 | mode);
+                if (child->fd < 0) {
+                        r = -errno;
+                        if (r == -EACCES) {
+                                /* If the file exists and is read-only, the open() will fail, in that case, remove it try again */
+                                if (unlinkat(n->fd, child->name, 0) >= 0)
+                                        child->fd = openat(n->fd, child->name, O_CLOEXEC|O_NOCTTY|O_WRONLY|O_NOFOLLOW|O_CREAT|O_TRUNC, 0600 | mode);
+                        }
+
+                        if (child->fd < 0)
+                                return r;
+                }
 
                 break;
 
         case S_IFLNK:
 
-                if (symlinkat(child->symlink_target, n->fd, child->entry->name) < 0) {
+                if (symlinkat(child->symlink_target, n->fd, child->name) < 0) {
                         if (errno != EEXIST)
                                 return -errno;
                 }
@@ -1068,7 +1146,7 @@ static int ca_decoder_make_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *
 
         case S_IFIFO:
 
-                if (mkfifoat(n->fd, child->entry->name, mode) < 0) {
+                if (mkfifoat(n->fd, child->name, mode) < 0) {
                         if (errno != EEXIST)
                                 return -errno;
                 }
@@ -1077,7 +1155,7 @@ static int ca_decoder_make_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *
         case S_IFBLK:
         case S_IFCHR:
 
-                if (mknodat(n->fd, child->entry->name, mode, child->rdev) < 0) {
+                if (mknodat(n->fd, child->name, mode, child->rdev) < 0) {
                         if (errno != EEXIST)
                                 return -errno;
                 }
@@ -1085,7 +1163,7 @@ static int ca_decoder_make_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *
 
         case S_IFSOCK:
 
-                if (mknodat(n->fd, child->entry->name, mode, 0) < 0) {
+                if (mknodat(n->fd, child->name, mode, 0) < 0) {
                         if (errno != EEXIST)
                                 return -errno;
                 }
@@ -1207,58 +1285,64 @@ static int name_to_gid(CaDecoder *d, const char *name, gid_t *ret) {
 }
 
 static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *child) {
+        statfs_f_type_t magic = 0;
+        struct stat st;
         int r;
 
         assert(d);
-        assert(n);
+        assert(child);
 
-        if (n->fd < 0)
-                return 0;
+        /* Finalizes the file attributes on the specified child node. 'n' specifies it's parent, except for the special
+         * case where we are processing the root direction of the serialization, where it is NULL. */
 
-        if (!child) {
-                child = ca_decoder_current_child_node(d);
-                if (!child)
-                        return 0;
-        }
+        if ((!n || n->fd < 0) && child->fd < 0)
+                return 0; /* Nothing to do if no fds are opened */
 
         assert(child->entry);
 
         if (child->fd >= 0)
-                r = fstat(child->fd, &child->stat);
-        else
-                r = fstatat(n->fd, child->entry->name, &child->stat, AT_SYMLINK_NOFOLLOW);
+                r = fstat(child->fd, &st);
+        else {
+                if (!n)
+                        return -EINVAL;
+
+                r = fstatat(n->fd, child->name, &st, AT_SYMLINK_NOFOLLOW);
+        }
         if (r < 0)
                 return -errno;
 
-        if (child->stat.st_dev == n->stat.st_dev ||
-            child->fd < 0)
-                child->magic = n->magic;
-        else {
+        if (st.st_dev == d->cached_st_dev)
+                magic = d->cached_st_dev;
+        else if (child->fd >= 0) {
                 struct statfs sfs;
 
                 if (fstatfs(child->fd, &sfs) < 0)
                         return -errno;
 
-                child->magic = sfs.f_type;
+                magic = d->cached_magic = sfs.f_type;
+                d->cached_st_dev = st.st_dev;
         }
 
-        if (((le64toh(child->entry->mode) ^ child->stat.st_mode) & S_IFMT) != 0)
+        if (((le64toh(child->entry->mode) ^ st.st_mode) & S_IFMT) != 0)
                 return -EEXIST;
 
-        if ((S_ISCHR(child->stat.st_mode) || S_ISBLK(child->stat.st_mode)) &&
-            child->stat.st_rdev != child->rdev)
+        if ((S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode)) &&
+            st.st_rdev != child->rdev)
                 return -EEXIST;
 
-        if (S_ISLNK(child->stat.st_mode)) {
+        if (S_ISLNK(st.st_mode)) {
                 size_t l;
                 ssize_t z;
                 char *buf;
+
+                if (!n)
+                        return -EINVAL;
 
                 l = strlen(child->symlink_target);
 
                 buf = newa(char, l+2);
 
-                z = readlinkat(n->fd, child->entry->name, buf, l+1);
+                z = readlinkat(n->fd, child->name, buf, l+1);
                 if (z < 0)
                         return -errno;
                 if ((size_t) z != l)
@@ -1286,12 +1370,16 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 } else
                         gid = le64toh(child->entry->gid);
 
-                if (child->stat.st_uid != uid || child->stat.st_gid != gid) {
+                if (st.st_uid != uid || st.st_gid != gid) {
 
                         if (child->fd >= 0)
                                 r = fchown(child->fd, uid, gid);
-                        else
-                                r = fchownat(n->fd, child->entry->name, uid, gid, AT_SYMLINK_NOFOLLOW);
+                        else {
+                                if (!n)
+                                        return -EINVAL;
+
+                                r = fchownat(n->fd, child->name, uid, gid, AT_SYMLINK_NOFOLLOW);
+                        }
                         if (r < 0)
                                 return -errno;
                 }
@@ -1299,15 +1387,15 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
         if (d->feature_flags & CA_FORMAT_WITH_READ_ONLY) {
 
-                if ((child->stat.st_mode & 0400) == 0 || /* not readable? */
-                    (S_ISDIR(child->stat.st_mode) && (child->stat.st_mode & 0100) == 0) || /* a dir, but not executable? */
-                    !(le64toh(child->entry->mode) & 0222) != !(child->stat.st_mode & 0200)) { /* writable bit doesn't match what it should be? */
+                if ((st.st_mode & 0400) == 0 || /* not readable? */
+                    (S_ISDIR(st.st_mode) && (st.st_mode & 0100) == 0) || /* a dir, but not executable? */
+                    !(le64toh(child->entry->mode) & 0222) != !(st.st_mode & 0200)) { /* writable bit doesn't match what it should be? */
 
                         mode_t new_mode;
 
-                        new_mode = (child->stat.st_mode & 0444) | 0400;
+                        new_mode = (st.st_mode & 0444) | 0400;
 
-                        if (S_ISDIR(child->stat.st_mode))
+                        if (S_ISDIR(st.st_mode))
                                 new_mode |= 0100;
 
                         if (le64toh(child->entry->mode) & 0222)
@@ -1319,20 +1407,28 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                         if (child->fd >= 0)
                                 r = fchmod(child->fd, new_mode);
-                        else
-                                r = fchmodat(child->fd, child->entry->name, new_mode, AT_SYMLINK_NOFOLLOW);
+                        else {
+                                if (!n)
+                                        return -EINVAL;
+
+                                r = fchmodat(n->fd, child->name, new_mode, AT_SYMLINK_NOFOLLOW);
+                        }
                         if (r < 0)
                                 return -errno;
                 }
 
         } else if (d->feature_flags & CA_FORMAT_WITH_PERMISSIONS) {
 
-                if ((child->stat.st_mode & 07777) != (le64toh(child->entry->mode) & 07777)) {
+                if ((st.st_mode & 07777) != (le64toh(child->entry->mode) & 07777)) {
 
                         if (child->fd >= 0)
                                 r = fchmod(child->fd, le64toh(child->entry->mode) & 07777);
-                        else
-                                r = fchmodat(child->fd, child->entry->name, le64toh(child->entry->mode) & 07777, AT_SYMLINK_NOFOLLOW);
+                        else {
+                                if (!n)
+                                        return -EINVAL;
+
+                                r = fchmodat(n->fd, child->name, le64toh(child->entry->mode) & 07777, AT_SYMLINK_NOFOLLOW);
+                        }
                         if (r < 0)
                                 return -errno;
                 }
@@ -1347,8 +1443,12 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 if (child->fd >= 0)
                         r = futimens(child->fd, ts);
-                else
-                        r = utimensat(n->fd, child->entry->name, ts, AT_SYMLINK_NOFOLLOW);
+                else {
+                        if (!n)
+                                return -EINVAL;
+
+                        r = utimensat(n->fd, child->name, ts, AT_SYMLINK_NOFOLLOW);
+                }
                 if (r < 0)
                         return -errno;
         }
@@ -1362,7 +1462,10 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 if (child->fd >= 0)
                         cfd = child->fd;
                 else {
-                        cfd = openat(n->fd, child->entry->name, O_CLOEXEC|O_NOFOLLOW|O_PATH);
+                        if (!n)
+                                return -EINVAL;
+
+                        cfd = openat(n->fd, child->name, O_CLOEXEC|O_NOFOLLOW|O_PATH);
                         if (cfd < 0)
                                 return -errno;
                 }
@@ -1397,7 +1500,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 new_attr = ca_feature_flags_to_fat_attrs(le64toh(child->entry->flags) & d->feature_flags);
 
-                if (child->magic == MSDOS_SUPER_MAGIC) {
+                if (magic == MSDOS_SUPER_MAGIC) {
                         uint32_t old_attr;
 
                         if (ioctl(child->fd, FAT_IOCTL_GET_ATTRIBUTES, &old_attr) < 0)
@@ -1419,7 +1522,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         return 0;
 }
 
-static int ca_decoder_step_directory(CaDecoder *d, CaDecoderNode *n) {
+static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
         mode_t mode;
         int r;
 
@@ -1427,69 +1530,82 @@ static int ca_decoder_step_directory(CaDecoder *d, CaDecoderNode *n) {
         assert(n);
 
         mode = ca_decoder_node_mode(n);
-        assert(S_ISDIR(mode));
-
-        if (realloc_buffer_size(&d->buffer) == 0 && d->eof)
-                return -EPIPE;
 
         switch (d->state) {
 
         case CA_DECODER_INIT:
-                return ca_decoder_parse_hello(d);
+        case CA_DECODER_ENTERED:
+                return ca_decoder_parse_entry(d, n);
 
-        case CA_DECODER_READ_HELLO:
-                r = realloc_buffer_advance(&d->buffer, d->step_size);
-                if (r < 0)
-                        return r;
-                d->archive_offset += d->step_size;
+        case CA_DECODER_ENTRY: {
+                CaDecoderNode *parent;
 
-                ca_decoder_enter_state(d, CA_DECODER_READING_ENTRY);
-                return CA_DECODER_STEP;
-
-        case CA_DECODER_READING_ENTRY:
-                return ca_decoder_parse_entry(d);
-
-        case CA_DECODER_READ_ENTRY: {
-                CaDecoderNode *child;
-
-                r = realloc_buffer_advance(&d->buffer, d->step_size);
-                if (r < 0)
-                        return r;
-                d->archive_offset += d->step_size;
-
-                child = ca_decoder_current_child_node(d);
-                if (!child)
-                        return -ENOTTY;
-
-                r = ca_decoder_make_child(d, n, child);
-                if (r < 0)
-                        return r;
-
-                mode = ca_decoder_node_mode(child);
-
-                if (S_ISDIR(mode) || S_ISREG(mode)) {
-                        r = ca_decoder_enter_child(d);
+                parent = ca_decoder_current_parent_node(d);
+                if (parent) {
+                        r = ca_decoder_realize_child(d, parent, n);
                         if (r < 0)
                                 return r;
-
-                        ca_decoder_enter_state(d, CA_DECODER_INIT);
-                        return CA_DECODER_STEP;
                 }
 
-                r = ca_decoder_finalize_child(d, n, child);
-                if (r < 0)
-                        return r;
+                if (S_ISREG(mode)) {
+                        ca_decoder_enter_state(d, CA_DECODER_IN_PAYLOAD);
+                        return ca_decoder_step_node(d, n);
+                }
 
-                ca_decoder_enter_state(d, CA_DECODER_READING_ENTRY);
-                return CA_DECODER_STEP;
+                if (S_ISDIR(mode)) {
+                        ca_decoder_enter_state(d, CA_DECODER_IN_DIRECTORY);
+                        return ca_decoder_step_node(d, n);
+                }
+
+                ca_decoder_enter_state(d, CA_DECODER_FINISHED);
+                return CA_DECODER_FINISHED;
         }
 
-        case CA_DECODER_READ_GOODBYE:
-                r = realloc_buffer_advance(&d->buffer, d->step_size);
-                if (r < 0)
-                        return r;
-                d->archive_offset += d->step_size;
+        case CA_DECODER_IN_PAYLOAD:
+                assert(S_ISREG(mode) || S_ISBLK(mode));
 
+                /* If the size of this payload is known, and we reached it, we are done */
+                if (n->size != UINT64_MAX) {
+                        assert(d->payload_offset <= n->size);
+
+                        if (d->payload_offset == n->size) {
+                                ca_decoder_enter_state(d, CA_DECODER_EOF);
+                                return CA_DECODER_FINISHED;
+                        }
+                }
+
+                if (realloc_buffer_size(&d->buffer) > 0) {
+                        if (n->size == UINT64_MAX)
+                                d->step_size = realloc_buffer_size(&d->buffer);
+                        else
+                                d->step_size = MIN(realloc_buffer_size(&d->buffer), n->size - d->payload_offset);
+
+                        return CA_DECODER_PAYLOAD;
+                }
+
+                if (d->eof) {
+                        /* EOF before the object was supposed to end? */
+                        if (n->size != UINT64_MAX)
+                                return -EPIPE;
+
+                        /* There are still parent nodes around that wait for the GOODBYE object, and we got EOF inside this
+                         * file? */
+                        if (d->node_idx > 0)
+                                return -EPIPE;
+
+                        /* If we don't know the length and get an EOF, we are happy and just consider this the end of the payload */
+                        ca_decoder_enter_state(d, CA_DECODER_EOF);
+                        return CA_DECODER_FINISHED;
+                }
+
+                return CA_DECODER_REQUEST;
+
+        case CA_DECODER_IN_DIRECTORY:
+                assert(S_ISDIR(mode));
+
+                return ca_decoder_parse_filename(d);
+
+        case CA_DECODER_GOODBYE:
                 ca_decoder_enter_state(d, CA_DECODER_EOF);
                 return CA_DECODER_FINISHED;
 
@@ -1500,19 +1616,16 @@ static int ca_decoder_step_directory(CaDecoder *d, CaDecoderNode *n) {
         return 0;
 }
 
-static int ca_decoder_step_regular(CaDecoder *d, CaDecoderNode *n) {
-        mode_t mode;
+static int ca_decoder_advance_buffer(CaDecoder *d, CaDecoderNode *n) {
         int r;
 
         assert(d);
         assert(n);
 
-        mode = ca_decoder_node_mode(n);
-        assert(S_ISREG(mode) || S_ISBLK(mode));
+        if (d->step_size <= 0)
+                return 0;
 
-        assert(d->state == CA_DECODER_INIT);
-
-        if (d->step_size > 0) {
+        if (d->state == CA_DECODER_IN_PAYLOAD) {
 
                 if (n->fd >= 0) {
                         r = loop_write(n->fd, realloc_buffer_data(&d->buffer), d->step_size);
@@ -1520,89 +1633,67 @@ static int ca_decoder_step_regular(CaDecoder *d, CaDecoderNode *n) {
                                 return r;
                 }
 
-                r = realloc_buffer_advance(&d->buffer, d->step_size);
-                if (r < 0)
-                        return r;
+                d->payload_offset += d->step_size;
         }
 
-        d->payload_offset += d->step_size;
+        r = realloc_buffer_advance(&d->buffer, d->step_size);
+        if (r < 0)
+                return r;
+
         d->archive_offset += d->step_size;
         d->step_size = 0;
 
-        if (n->size != UINT64_MAX &&
-            d->payload_offset >= n->size)
-                return CA_DECODER_FINISHED;
-
-        if (realloc_buffer_size(&d->buffer) > 0) {
-
-                if (n->size == UINT64_MAX)
-                        d->step_size = realloc_buffer_size(&d->buffer);
-                else
-                        d->step_size = MIN(realloc_buffer_size(&d->buffer), n->size - d->payload_offset);
-
-                return CA_DECODER_PAYLOAD;
-        }
-
-        if (d->eof) {
-                /* EOF before the object was supposed to end? */
-                if (n->size != UINT64_MAX)
-                        return -EPIPE;
-
-                /* There are still parent nodes around that wait for the GOODBYE object, and we got EOF inside this
-                 * file? */
-                if (d->node_idx > 0)
-                        return -EPIPE;
-
-                return CA_DECODER_FINISHED;
-        }
-
-        return CA_DECODER_REQUEST;
+        return 0;
 }
 
 int ca_decoder_step(CaDecoder *d) {
-        CaDecoderNode *n;
-        mode_t mode;
+        CaDecoderNode *n, *saved_child;
         int r;
 
         if (!d)
                 return -EINVAL;
 
+        if (d->state == CA_DECODER_EOF)
+                return CA_DECODER_FINISHED;
+
         n = ca_decoder_current_node(d);
         if (!n)
                 return -EUNATCH;
 
-        mode = ca_decoder_node_mode(n);
+        r = ca_decoder_advance_buffer(d, n);
+        if (r < 0)
+                return r;
 
-        if (S_ISREG(mode) || S_ISBLK(mode))
-                r = ca_decoder_step_regular(d, n);
-        else if (S_ISDIR(mode))
-                r = ca_decoder_step_directory(d, n);
-        else
-                return -ENOTTY;
+        r = ca_decoder_step_node(d, n);
+        if (r != CA_DECODER_FINISHED)
+                return r;
 
-        if (r == CA_DECODER_FINISHED) {
-                CaDecoderNode *child = n;
+        saved_child = n;
 
-                r = ca_decoder_leave_child(d);
+        r = ca_decoder_leave_child(d);
+        if (r < 0)
+                return r;
+        if (r > 0) {
+                n = ca_decoder_current_node(d);
+                if (!n)
+                        return -EUNATCH;
+
+                r = ca_decoder_finalize_child(d, n, saved_child);
                 if (r < 0)
                         return r;
-                if (r > 0) {
-                        n = ca_decoder_current_node(d);
-                        if (!n)
-                                return -EUNATCH;
 
-                        r = ca_decoder_finalize_child(d, n, child);
-                        if (r < 0)
-                                return r;
-
-                        ca_decoder_enter_state(d, CA_DECODER_READING_ENTRY);
-                        return CA_DECODER_STEP;
-                }
-
-                ca_decoder_forget_children(d);
+                ca_decoder_enter_state(d, CA_DECODER_IN_DIRECTORY);
+                return CA_DECODER_STEP;
         }
 
-        return r;
+        /* Also fix up the top-level entry */
+        r = ca_decoder_finalize_child(d, NULL, n);
+        if (r < 0)
+                return r;
+
+        ca_decoder_forget_children(d);
+
+        return CA_DECODER_FINISHED;
 }
 
 int ca_decoder_get_request_offset(CaDecoder *d, uint64_t *ret) {
@@ -1739,7 +1830,7 @@ int ca_decoder_current_path(CaDecoder *d, char **ret) {
                 node = d->nodes + i;
                 assert(node->entry);
 
-                k = strlen(node->entry->name);
+                k = strlen(node->name);
                 nn = n + (n > 0) + k;
 
                 np = realloc(p, nn+1);
@@ -1752,13 +1843,16 @@ int ca_decoder_current_path(CaDecoder *d, char **ret) {
                 if (n > 0)
                         *(q++) = '/';
 
-                strcpy(q, node->entry->name);
+                strcpy(q, node->name);
                 p = np;
                 n = nn;
         }
 
-        if (!p)
-                return -ENOTDIR;
+        if (!p) {
+                p = strdup("");
+                if (!p)
+                        return -ENOMEM;
+        }
 
         *ret = p;
         return 0;

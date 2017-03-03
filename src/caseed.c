@@ -423,11 +423,13 @@ int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *
 
                                 if (!ca_chunk_id_equal(chunk_id, &test_id)) {
 
-                                        /* fprintf(stderr, "FROM SEED (%" PRIu64 ":\n", size); */
+                                        /* fprintf(stderr, "SEED CHUNK CORRUPTED (%" PRIu64 "):\n", size); */
                                         /* hexdump(stderr, p, MIN(1024U, size)); */
 
                                         return -ESTALE;
                                 }
+
+                                /* fprintf(stderr, "SEED CHUNK GOOD\n"); */
 
                                 *ret = p;
                                 *ret_size = size;

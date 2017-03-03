@@ -8,9 +8,6 @@ const char *ca_format_type_name(uint64_t u) {
 
         switch (u) {
 
-        case CA_FORMAT_HELLO:
-                return "hello";
-
         case CA_FORMAT_ENTRY:
                 return "entry";
 
@@ -28,6 +25,9 @@ const char *ca_format_type_name(uint64_t u) {
 
         case CA_FORMAT_PAYLOAD:
                 return "payload";
+
+        case CA_FORMAT_FILENAME:
+                return "filename";
 
         case CA_FORMAT_GOODBYE:
                 return "goodbye";

@@ -1,8 +1,9 @@
-#include <unistd.h>
 #include <assert.h>
+#include <unistd.h>
 
-#include "util.h"
+#include "def.h"
 #include "realloc-buffer.h"
+#include "util.h"
 
 void* realloc_buffer_acquire(ReallocBuffer *b, size_t size) {
         size_t ns, na, ne;
@@ -211,4 +212,27 @@ int realloc_buffer_truncate(ReallocBuffer *b, size_t sz) {
 
         b->end = b->start + sz;
         return 0;
+}
+
+int realloc_buffer_read(ReallocBuffer *b, int fd) {
+        ssize_t l;
+        void *p;
+
+        if (!b)
+                return -EINVAL;
+        if (fd < 0)
+                return -EINVAL;
+
+        p = realloc_buffer_extend(b, BUFFER_SIZE);
+        if (!p)
+                return -ENOMEM;
+
+        l = read(fd, p, BUFFER_SIZE);
+        if (l < 0) {
+                realloc_buffer_shorten(b, BUFFER_SIZE);
+                return -errno;
+        }
+
+        realloc_buffer_shorten(b, BUFFER_SIZE - l);
+        return l > 0;
 }

@@ -9,17 +9,17 @@
 /* Describes the location of some data in a directory hierarchy */
 
 typedef enum CaLocationDesignator {
-        CA_LOCATION_PAYLOAD = 'p',
-        CA_LOCATION_HELLO = 'h',
         CA_LOCATION_ENTRY = 'e',
+        CA_LOCATION_PAYLOAD = 'p',
+        CA_LOCATION_FILENAME = 'n',
         CA_LOCATION_GOODBYE = 'g',
 } CaLocationDesignator;
 
 static inline bool CA_LOCATION_DESIGNATOR_VALID(CaLocationDesignator d) {
         return IN_SET(d,
-                      CA_LOCATION_PAYLOAD,
-                      CA_LOCATION_HELLO,
                       CA_LOCATION_ENTRY,
+                      CA_LOCATION_PAYLOAD,
+                      CA_LOCATION_FILENAME,
                       CA_LOCATION_GOODBYE);
 }
 

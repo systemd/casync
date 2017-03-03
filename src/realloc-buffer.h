@@ -64,4 +64,6 @@ int realloc_buffer_advance(ReallocBuffer *b, size_t sz);
 int realloc_buffer_shorten(ReallocBuffer *b, size_t sz);
 int realloc_buffer_truncate(ReallocBuffer *b, size_t sz);
 
+int realloc_buffer_read(ReallocBuffer *b, int fd);
+
 #endif

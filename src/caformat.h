@@ -6,20 +6,43 @@
 #include "util.h"
 #include "cachunkid.h"
 
+/* The format is like this: every archive begins items in the following order:
+ *
+ * ENTRY      -- containing general stat() data and related bits
+ * USER       -- user name as text, if enabled
+ * GROUP      -- group name as text, if enabled
+ * PAYLOAD    -- file contents, if it is one
+ * SYMLINK    -- symlink target, if it is one
+ * DEVICE     -- device major/minor, if it is a block/char device
+ *
+ * If we are serializing a directory, then this is followed by:
+ *
+ * FILENAME   -- name of the first directory entry (strictly ordered!)
+ * <archive>  -- serialization of the first directory entry's metadata and contents,
+ *               following the exact same archive format
+ * FILENAME   -- name of the second directory entry (strictly ordered!)
+ * <archive>  -- serialization of the second directory entry
+ * …
+ * GOODBYE    -- marker for the end of a list of directory entries
+ *
+ * And that's already it.
+ *
+ */
+
 enum {
         /* The archive file format */
-        CA_FORMAT_HELLO   = UINT64_C(0x3bdd0b541f4b4d71),
-        CA_FORMAT_ENTRY   = UINT64_C(0x1396fabcea5bbb51),
-        CA_FORMAT_USER    = UINT64_C(0xf453131aaeeaccb3),
-        CA_FORMAT_GROUP   = UINT64_C(0x25eb6ac969396a52),
-        CA_FORMAT_SYMLINK = UINT64_C(0x664a6fb6830e0d6c),
-        CA_FORMAT_DEVICE  = UINT64_C(0xac3dace369dfe643),
-        CA_FORMAT_PAYLOAD = UINT64_C(0x8b9e1d93d6dcffc9),
-        CA_FORMAT_GOODBYE = UINT64_C(0xdfd35c5e8327c403),
+        CA_FORMAT_ENTRY    = UINT64_C(0x1396fabcea5bbb51),
+        CA_FORMAT_USER     = UINT64_C(0xf453131aaeeaccb3),
+        CA_FORMAT_GROUP    = UINT64_C(0x25eb6ac969396a52),
+        CA_FORMAT_SYMLINK  = UINT64_C(0x664a6fb6830e0d6c),
+        CA_FORMAT_DEVICE   = UINT64_C(0xac3dace369dfe643),
+        CA_FORMAT_PAYLOAD  = UINT64_C(0x8b9e1d93d6dcffc9),
+        CA_FORMAT_FILENAME = UINT64_C(0x6dbb6ebcb3161f0b),
+        CA_FORMAT_GOODBYE  = UINT64_C(0xdfd35c5e8327c403),
 
         /* The index file format */
-        CA_FORMAT_INDEX   = UINT64_C(0x96824d9c7b129ff9),
-        CA_FORMAT_TABLE   = UINT64_C(0xe75b9e112f17417d),
+        CA_FORMAT_INDEX    = UINT64_C(0x96824d9c7b129ff9),
+        CA_FORMAT_TABLE    = UINT64_C(0xe75b9e112f17417d),
 };
 
 /* Feature flags */
@@ -136,27 +159,15 @@ typedef struct CaFormatHeader {
         le64_t type;
 } CaFormatHeader;
 
-typedef struct CaFormatHello {
-        CaFormatHeader header;
-        le64_t uuid_part2; /* always CA_FORMAT_HELLO_UUID_PART2, see below */
-        le64_t feature_flags;
-} CaFormatHello;
-
-/* The header's type field together with the uuid_part2 field shall be considered a 128bit UUID */
-#define CA_FORMAT_HELLO_UUID_PART2 UINT64_C(0x9a213af1f35eb539)
-
 typedef struct CaFormatEntry {
         CaFormatHeader header;
+        le64_t feature_flags;
         le64_t mode;
         le64_t flags;
         le64_t uid;
         le64_t gid;
         le64_t mtime; /* nsec */
-        char name[];
 } CaFormatEntry;
-
-/* NAME_MAX on Linux is 255 + NUL byte */
-#define CA_FORMAT_ENTRY_SIZE_MAX (offsetof(CaFormatEntry, name) + 256)
 
 typedef struct CaFormatUser {
         CaFormatHeader header;
@@ -192,6 +203,14 @@ typedef struct CaFormatDevice {
         uint64_t minor;
 } CaFormatDevice;
 
+typedef struct CaFormatFilename {
+        CaFormatHeader header;
+        char name[];
+} CaFormatFilename;
+
+/* NAME_MAX on Linux is 255 + NUL byte */
+#define CA_FORMAT_FILENAME_SIZE_MAX (offsetof(CaFormatFilename, name) + 256)
+
 typedef struct CaFormatGoodbye {
         CaFormatHeader header;
         /* entry bisection table here */
@@ -203,15 +222,11 @@ typedef struct CaFormatGoodbye {
 
 typedef struct CaFormatIndex {
         CaFormatHeader header;
-        le64_t uuid_part2; /* always CA_FORMAT_INDEX_UUID_PART2, see below */
         le64_t feature_flags;
         le64_t chunk_size_min;
         le64_t chunk_size_avg;
         le64_t chunk_size_max;
 } CaFormatIndex;
-
-/* The header's type field together with the uuid_part2 field shall be considered a 128bit UUID */
-#define CA_FORMAT_INDEX_UUID_PART2 UINT64_C(0xce85c5466c13d709)
 
 typedef struct CaFormatTableItem {
         le64_t offset;

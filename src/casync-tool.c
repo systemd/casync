@@ -892,14 +892,11 @@ static int extract(int argc, char *argv[]) {
                 }
         }
 
-        if (!output || streq(output, "-"))
+        if (!output || streq(output, "-")) {
                 output_fd = STDOUT_FILENO;
-        else {
+                output = NULL;
+        } else {
                 CaLocatorClass output_class;
-
-                r = ca_sync_add_seed_path(s, output);
-                if (r < 0 && r != -ENOENT)
-                        fprintf(stderr, "Failed to add existing file as seed %s, ignoring: %s\n", output, strerror(-r));
 
                 output_class = ca_classify_locator(output);
                 if (output_class < 0) {
@@ -970,6 +967,10 @@ static int extract(int argc, char *argv[]) {
                 r = set_default_store(input);
                 if (r < 0)
                         goto finish;
+
+                r = ca_sync_add_seed_path(s, output);
+                if (r < 0 && r != -ENOENT)
+                        fprintf(stderr, "Failed to add existing file as seed %s, ignoring: %s\n", output, strerror(-r));
         }
 
         if (arg_rate_limit_bps != UINT64_MAX) {
@@ -1005,7 +1006,7 @@ static int extract(int argc, char *argv[]) {
                 if (input_fd >= 0)
                         r = ca_sync_set_archive_fd(s, input_fd);
                 else
-                        r = ca_sync_set_archive_path(s, input);
+                        r = ca_sync_set_archive_auto(s, input);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set sync archive: %s\n", strerror(-r));
                         goto finish;
