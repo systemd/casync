@@ -898,7 +898,7 @@ static int ca_sync_start(CaSync *s) {
                                                 return r;
                                 }
 
-                                s->base_fd = open(s->temporary_base_path, O_WRONLY|O_CLOEXEC|O_NOCTTY|O_CREAT|O_EXCL, 0777);
+                                s->base_fd = open(s->temporary_base_path, O_WRONLY|O_CLOEXEC|O_NOCTTY|O_CREAT|O_EXCL, 0666);
                                 if (s->base_fd < 0) {
                                         s->temporary_base_path = mfree(s->temporary_base_path);
                                         return -errno;

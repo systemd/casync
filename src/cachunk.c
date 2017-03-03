@@ -562,7 +562,7 @@ int ca_chunk_file_open(int chunk_fd, const char *prefix, const CaChunkID *chunki
                 *slash = '/';
         }
 
-        fd = openat(chunk_fd, path, flags, 0777);
+        fd = openat(chunk_fd, path, flags, 0666);
         if (fd < 0) {
                 r = -errno;
 
