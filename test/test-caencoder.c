@@ -183,6 +183,7 @@ finish:
 int main(int argc, char *argv[]) {
         char t[] = "/var/tmp/castream-test.XXXXXX";
         int fd = -1, dfd = -1, r;
+        bool do_unlink = false;
 
         dfd = open(argc > 1 ? argv[1] : ".", O_CLOEXEC|O_RDONLY|O_NOCTTY);
         if (dfd < 0) {
@@ -195,6 +196,8 @@ int main(int argc, char *argv[]) {
                 r = -errno;
                 goto finish;
         }
+
+        do_unlink = true;
 
         fprintf(stderr, "Writing to: %s\n", t);
 
@@ -220,6 +223,9 @@ finish:
 
         if (dfd >= 0)
                 (void) close(dfd);
+
+        if (do_unlink)
+                assert_se(unlink(t) >= 0);
 
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }
