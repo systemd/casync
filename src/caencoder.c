@@ -734,12 +734,18 @@ static int ca_encoder_shall_enumerate_child_node(CaEncoder *e) {
         /* Exclude all virtual API file systems */
         if (IN_SET(child->magic,
                    CGROUP_SUPER_MAGIC,
+                   CONFIGFS_MAGIC,
                    DEBUGFS_MAGIC,
                    DEVPTS_SUPER_MAGIC,
                    EFIVARFS_MAGIC,
+                   FUSE_CTL_SUPER_MAGIC,
                    HUGETLBFS_MAGIC,
+                   MQUEUE_MAGIC,
+                   NFSD_MAGIC,
                    PROC_SUPER_MAGIC,
                    PSTOREFS_MAGIC,
+                   RPCAUTH_GSSMAGIC,
+                   SECURITYFS_MAGIC,
                    SELINUX_MAGIC,
                    SMACK_MAGIC,
                    SYSFS_MAGIC))

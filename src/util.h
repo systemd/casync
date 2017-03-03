@@ -518,4 +518,24 @@ static inline const char *yes_no(bool b) {
 #define XFS_SUPER_MAGIC 0x58465342
 #endif
 
+#ifndef CONFIGFS_MAGIC
+#define CONFIGFS_MAGIC 0x62656570
+#endif
+
+#ifndef MQUEUE_MAGIC
+#define MQUEUE_MAGIC 0x19800202
+#endif
+
+#ifndef RPCAUTH_GSSMAGIC
+#define RPCAUTH_GSSMAGIC 0x67596969
+#endif
+
+#ifndef NFSD_MAGIC
+#define NFSD_MAGIC 0x6e667364
+#endif
+
+#ifndef FUSE_CTL_SUPER_MAGIC
+#define FUSE_CTL_SUPER_MAGIC 0x65735543
+#endif
+
 #endif
