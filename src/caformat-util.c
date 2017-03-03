@@ -17,6 +17,12 @@ const char *ca_format_type_name(uint64_t u) {
         case CA_FORMAT_GROUP:
                 return "group";
 
+        case CA_FORMAT_XATTR:
+                return "xattr";
+
+        case CA_FORMAT_FCAPS:
+                return "fcaps";
+
         case CA_FORMAT_SYMLINK:
                 return "symlink";
 
@@ -72,6 +78,8 @@ static const struct {
         { "flag-sync",        CA_FORMAT_WITH_FLAG_SYNC        },
         { "flag-nocomp",      CA_FORMAT_WITH_FLAG_NOCOMP      },
         { "flag-projinherit", CA_FORMAT_WITH_FLAG_PROJINHERIT },
+        { "xattr",            CA_FORMAT_WITH_XATTR            },
+        { "fcaps",            CA_FORMAT_WITH_FCAPS            },
         { "best",             CA_FORMAT_WITH_BEST             },
         { "unix",             CA_FORMAT_WITH_UNIX             },
         { "fat",              CA_FORMAT_WITH_FAT              },
@@ -278,7 +286,9 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FLAG_NODUMP|
                         CA_FORMAT_WITH_FLAG_DIRSYNC|
                         CA_FORMAT_WITH_FLAG_IMMUTABLE|
-                        CA_FORMAT_WITH_FLAG_SYNC;
+                        CA_FORMAT_WITH_FLAG_SYNC|
+                        CA_FORMAT_WITH_XATTR|
+                        CA_FORMAT_WITH_FCAPS;
 
         case XFS_SUPER_MAGIC:
                 return
@@ -299,7 +309,9 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FLAG_NOATIME|
                         CA_FORMAT_WITH_FLAG_NODUMP|
                         CA_FORMAT_WITH_FLAG_IMMUTABLE|
-                        CA_FORMAT_WITH_FLAG_SYNC;
+                        CA_FORMAT_WITH_FLAG_SYNC|
+                        CA_FORMAT_WITH_XATTR|
+                        CA_FORMAT_WITH_FCAPS;
 
         case BTRFS_SUPER_MAGIC:
                 return
@@ -324,7 +336,9 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FLAG_DIRSYNC|
                         CA_FORMAT_WITH_FLAG_IMMUTABLE|
                         CA_FORMAT_WITH_FLAG_SYNC|
-                        CA_FORMAT_WITH_FLAG_NOCOMP;
+                        CA_FORMAT_WITH_FLAG_NOCOMP|
+                        CA_FORMAT_WITH_XATTR|
+                        CA_FORMAT_WITH_FCAPS;
 
         case TMPFS_MAGIC:
         default:
@@ -344,4 +358,29 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FIFOS|
                         CA_FORMAT_WITH_SOCKETS;
         }
+}
+
+bool ca_xattr_name_is_valid(const char *s) {
+        const char *dot;
+
+        /* Can't be empty */
+        if (isempty(s))
+                return false;
+
+        /* Must contain dot */
+        dot = strchr(s, '.');
+        if (!dot)
+                return false;
+
+        /* Dot may not be at beginning or end */
+        if (dot == s)
+                return false;
+        if (dot[1] == 0)
+                return false;
+
+        /* Overall lengths must be <= 255, according to xattr(7) */
+        if (strlen(s) > 255)
+                return false;
+
+        return true;
 }

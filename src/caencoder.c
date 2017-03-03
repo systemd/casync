@@ -11,6 +11,7 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #include <linux/fs.h>
@@ -27,6 +28,12 @@
 
 /* #undef EINVAL */
 /* #define EINVAL __LINE__ */
+
+typedef struct CaEncoderExtendedAttribute {
+        char *name;
+        void *data;
+        size_t data_size;
+} CaEncoderExtendedAttribute;
 
 typedef struct CaEncoderNode {
         int fd;
@@ -51,6 +58,14 @@ typedef struct CaEncoderNode {
         /* FAT_IOCTL_GET_ATTRIBUTES flags */
         uint32_t fat_attrs;
         bool fat_attrs_valid;
+
+        /* xattrs */
+        CaEncoderExtendedAttribute *xattrs;
+        size_t n_xattrs;
+        bool xattrs_valid;
+
+        void *fcaps;
+        size_t fcaps_size;
 } CaEncoderNode;
 
 typedef enum CaEncoderState {
@@ -78,6 +93,8 @@ struct CaEncoder {
         size_t node_idx;
 
         ReallocBuffer buffer;
+        ReallocBuffer xattr_list_buffer;
+        ReallocBuffer xattr_value_buffer;
 
         uint64_t archive_offset;
         uint64_t payload_offset;
@@ -119,6 +136,14 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
 
         n->symlink_target = mfree(n->symlink_target);
 
+        for (i = 0; i < n->n_xattrs; i++) {
+                free(n->xattrs[i].name);
+                free(n->xattrs[i].data);
+        }
+
+        n->xattrs = mfree(n->xattrs);
+        n->fcaps = mfree(n->fcaps);
+
         n->device_size = UINT64_MAX;
 
         n->stat.st_mode = 0;
@@ -137,6 +162,9 @@ CaEncoder *ca_encoder_unref(CaEncoder *e) {
         free(e->cached_group_name);
 
         realloc_buffer_free(&e->buffer);
+        realloc_buffer_free(&e->xattr_list_buffer);
+        realloc_buffer_free(&e->xattr_value_buffer);
+
         free(e);
 
         return NULL;
@@ -244,6 +272,20 @@ static CaEncoderNode *ca_encoder_node_child_of(CaEncoder *e, CaEncoderNode *n) {
                 return NULL;
 
         return e->nodes + idx + 1;
+}
+
+static CaEncoderNode *ca_encoder_node_parent_of(CaEncoder *e, CaEncoderNode *n) {
+
+        size_t idx;
+
+        assert(n >= e->nodes);
+        idx = n - e->nodes;
+        assert(idx < e->n_nodes);
+
+        if (idx == 0)
+                return NULL;
+
+        return e->nodes + idx - 1;
 }
 
 static const struct dirent *ca_encoder_node_current_dirent(CaEncoderNode *n) {
@@ -391,6 +433,7 @@ static int ca_encoder_node_read_fat_attrs(
                 CaEncoder *e,
                 CaEncoderNode *n) {
 
+        assert(e);
         assert(n);
 
         if (!S_ISDIR(n->stat.st_mode) && !S_ISREG(n->stat.st_mode))
@@ -411,6 +454,261 @@ static int ca_encoder_node_read_fat_attrs(
         n->fat_attrs_valid = true;
 
         return 0;
+}
+
+static bool store_xattr(const char *name) {
+
+        /* We only store xattrs from the "user." and "trusted." namespaces. The other namespaces have special
+         * semantics, and we'll support them with explicit records instead. */
+
+        if (!ca_xattr_name_is_valid(name))
+                return false; /* silently ignore xattrs with invalid names */
+
+        return startswith(name, "user.") ||
+                startswith(name, "trusted.");
+}
+
+static int compare_xattr(const void *a, const void *b) {
+        const CaEncoderExtendedAttribute *x = a, *y = b;
+
+        assert(x);
+        assert(y);
+        assert(x->name);
+        assert(y->name);
+
+        return strcmp(x->name, y->name);
+}
+
+static int ca_encoder_node_read_xattrs(
+                CaEncoder *e,
+                CaEncoderNode *n) {
+
+        CaEncoderNode *parent;
+        size_t space = 256, left, count = 0;
+        bool has_fcaps = false;
+        int path_fd = -1, r;
+        char *q;
+
+        assert(e);
+        assert(n);
+
+        if ((e->feature_flags & (CA_FORMAT_WITH_XATTR|CA_FORMAT_WITH_FCAPS)) == 0)
+                return 0;
+
+        if (n->xattrs_valid)
+                return 0;
+
+        if (S_ISLNK(n->stat.st_mode))
+                return 0;
+
+        assert(!n->xattrs);
+        assert(n->n_xattrs == 0);
+        assert(!n->fcaps);
+        assert(n->fcaps_size == 0);
+
+        if (n->fd < 0) {
+                const struct dirent *de;
+
+                parent = ca_encoder_node_parent_of(e, n);
+                if (!parent) {
+                        r = -EUNATCH;
+                        goto finish;
+                }
+
+                de = ca_encoder_node_current_dirent(parent);
+                if (!de) {
+                        r = -EUNATCH;
+                        goto finish;
+                }
+
+                /* There's not listxattrat() unfortunately, we fake it via openat() with O_PATH */
+                path_fd = openat(parent->fd, de->d_name, O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_PATH);
+                if (path_fd < 0) {
+                        r = -errno;
+                        goto finish;
+                }
+        }
+
+        for (;;) {
+                ssize_t l;
+                char *p;
+
+                p = realloc_buffer_acquire(&e->xattr_list_buffer, space);
+                if (!p) {
+                        r = -ENOMEM;
+                        goto finish;
+                }
+
+                l = flistxattr(n->fd < 0 ? path_fd : n->fd, p, space);
+                if (l < 0) {
+                        /* If xattrs aren't supported there are none. EOPNOTSUPP is returned by file systems that do
+                         * not support xattrs, and EBADF is returned on nodes that cannot carry xattrs (such as
+                         * symlinks). */
+                        if (IN_SET(errno, EOPNOTSUPP, EBADF)) {
+                                n->xattrs_valid = true;
+                                r = 0;
+                                goto finish;
+                        }
+                        if (errno != ERANGE) {
+                                r = -errno;
+                                goto finish;
+                        }
+                } else {
+                        realloc_buffer_truncate(&e->xattr_list_buffer, l);
+                        break;
+                }
+
+                if (space*2 <= space) {
+                        r = -ENOMEM;
+                        goto finish;
+                }
+
+                space *= 2;
+        }
+
+        q = realloc_buffer_data(&e->xattr_list_buffer);
+        left = realloc_buffer_size(&e->xattr_list_buffer);
+
+        /* Count the number of relevant extended attributes */
+        while (left > 1) {
+                size_t k;
+
+                k = strlen(q);
+                assert(left >= k + 1);
+
+                if (store_xattr(q))
+                        count ++;
+                else if (streq(q, "security.capability") && S_ISREG(n->stat.st_mode))
+                        has_fcaps = true;
+
+                q += k + 1;
+                left -= k + 1;
+        }
+
+        if (count == 0 && !has_fcaps) { /* None set */
+                n->xattrs_valid = true;
+                r = 0;
+                goto finish;
+        }
+
+        if (count > 0) {
+                n->xattrs = new0(CaEncoderExtendedAttribute, count);
+                if (!n->xattrs) {
+                        r = -ENOMEM;
+                        goto finish;
+                }
+        }
+
+        q = realloc_buffer_data(&e->xattr_list_buffer);
+        left = realloc_buffer_size(&e->xattr_list_buffer);
+
+        while (left > 1) {
+                size_t  k;
+
+                k = strlen(q);
+                assert(left >= k + 1);
+
+                if (store_xattr(q) ||
+                    (streq(q, "security.capability") && S_ISREG(n->stat.st_mode))) {
+                        bool good = false;
+
+                        space = 256;
+
+                        for (;;) {
+                                ssize_t l;
+                                char *p;
+
+                                p = realloc_buffer_acquire(&e->xattr_value_buffer, space);
+                                if (!p) {
+                                        r = -ENOMEM;
+                                        goto finish;
+                                }
+
+                                l = fgetxattr(n->fd < 0 ? path_fd : n->fd, q, p, space);
+                                if (l < 0) {
+                                        if (errno == ENODATA) /* Went missing? That's fine */
+                                                break;
+
+                                        if (errno != ERANGE) {
+                                                r = -errno;
+                                                goto finish;
+                                        }
+                                } else {
+                                        realloc_buffer_truncate(&e->xattr_value_buffer, l);
+                                        good = true;
+                                        break;
+                                }
+
+                                if (space*2 <= space) {
+                                        r = -ENOMEM;
+                                        goto finish;
+                                }
+
+                                space *= 2;
+                        }
+
+                        if (good) {
+                                if (streq(q, "security.capability") && S_ISREG(n->stat.st_mode)) {
+                                        size_t z;
+
+                                        assert(!n->fcaps);
+                                        assert(n->fcaps_size == 0);
+
+                                        z = realloc_buffer_size(&e->xattr_value_buffer);
+                                        n->fcaps = realloc_buffer_steal(&e->xattr_value_buffer);
+                                        if (!n->fcaps) {
+                                                r = -ENOMEM;
+                                                goto finish;
+                                        }
+
+                                        n->fcaps_size = z;
+
+                                } else {
+                                        char *name;
+                                        size_t z;
+                                        void *d;
+
+                                        assert(n->xattrs);
+                                        assert(n->n_xattrs < count);
+
+                                        name = strdup(q);
+                                        if (!name) {
+                                                r = -ENOMEM;
+                                                goto finish;
+                                        }
+
+                                        z = realloc_buffer_size(&e->xattr_value_buffer);
+                                        d = realloc_buffer_steal(&e->xattr_value_buffer);
+                                        if (!d) {
+                                                free(name);
+                                                r = -ENOMEM;
+                                                goto finish;
+                                        }
+
+                                        n->xattrs[n->n_xattrs++] = (CaEncoderExtendedAttribute) {
+                                                .name = name,
+                                                .data = d,
+                                                .data_size = z,
+                                        };
+                                }
+                        }
+                }
+
+                q += k + 1;
+                left -= k + 1;
+        }
+
+        /* Bring extended attributes in a defined order */
+        if (n->n_xattrs > 1)
+                qsort(n->xattrs, n->n_xattrs, sizeof(CaEncoderExtendedAttribute), compare_xattr);
+
+        n->xattrs_valid = true;
+
+        r = 0;
+finish:
+        safe_close(path_fd);
+
+        return r;
 }
 
 static int uid_to_name(CaEncoder *e, uid_t uid, char **ret) {
@@ -1047,7 +1345,7 @@ static int ca_encoder_get_filename_data(CaEncoder *e, const struct dirent *de) {
 static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         uint64_t mtime, mode, uid, gid, flags = 0, fsize;
         CaFormatEntry *entry;
-        size_t size;
+        size_t size, i;
         void *p;
         int r;
 
@@ -1063,6 +1361,10 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 return r;
 
         r = ca_encoder_node_read_fat_attrs(e, n);
+        if (r < 0)
+                return r;
+
+        r = ca_encoder_node_read_xattrs(e, n);
         if (r < 0)
                 return r;
 
@@ -1146,6 +1448,14 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 size += offsetof(CaFormatGroup, name) +
                         strlen(e->cached_group_name) + 1;
 
+        for (i = 0; i < n->n_xattrs; i++)
+                size += offsetof(CaFormatXAttr, name_and_value) +
+                        strlen(n->xattrs[i].name) + 1 +
+                        n->xattrs[i].data_size;
+
+        if (n->fcaps)
+                size += offsetof(CaFormatFCaps, data) + n->fcaps_size;
+
         if (S_ISREG(n->stat.st_mode))
                 size += offsetof(CaFormatPayload, data);
         else if (S_ISLNK(n->stat.st_mode))
@@ -1191,6 +1501,29 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
 
                 p = mempcpy(p, &header, sizeof(header));
                 p = stpcpy(p, e->cached_group_name) + 1;
+        }
+
+        for (i = 0; i < n->n_xattrs; i++) {
+                CaFormatHeader header = {
+                        .type = htole64(CA_FORMAT_XATTR),
+                        .size = htole64(offsetof(CaFormatXAttr, name_and_value) +
+                                        strlen(n->xattrs[i].name) + 1 +
+                                        n->xattrs[i].data_size),
+                };
+
+                p = mempcpy(p, &header, sizeof(header));
+                p = stpcpy(p, n->xattrs[i].name) + 1;
+                p = mempcpy(p, n->xattrs[i].data, n->xattrs[i].data_size);
+        }
+
+        if (n->fcaps) {
+                CaFormatHeader header = {
+                        .type = htole64(CA_FORMAT_FCAPS),
+                        .size = htole64(offsetof(CaFormatFCaps, data) + n->fcaps_size),
+                };
+
+                p = mempcpy(p, &header, sizeof(header));
+                p = mempcpy(p, n->fcaps, n->fcaps_size);
         }
 
         if (S_ISREG(n->stat.st_mode)) {

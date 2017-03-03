@@ -5,6 +5,7 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #include <linux/fs.h>
@@ -36,6 +37,11 @@
          FS_NOCOMP_FL|                          \
          FS_PROJINHERIT_FL)
 
+typedef struct CaDecoderExtendedAttribute {
+        struct CaDecoderExtendedAttribute *next;
+        CaFormatXAttr format;
+} CaDecoderExtendedAttribute;
+
 typedef struct CaDecoderNode {
         int fd;
 
@@ -49,6 +55,12 @@ typedef struct CaDecoderNode {
         char *group_name;
         char *symlink_target; /* Only for S_ISLNK() */
         dev_t rdev;           /* Only for S_ISCHR() and S_ISBLK() */
+
+        CaDecoderExtendedAttribute *xattrs;
+
+        bool have_fcaps;
+        void *fcaps;
+        size_t fcaps_size;
 } CaDecoderNode;
 
 typedef enum CaDecoderState {
@@ -118,6 +130,17 @@ CaDecoder *ca_decoder_new(void) {
         return d;
 }
 
+static void ca_decoder_node_free_xattrs(CaDecoderNode *n) {
+        assert(n);
+
+        while (n->xattrs) {
+                CaDecoderExtendedAttribute *next;
+                next = n->xattrs->next;
+                free(n->xattrs);
+                n->xattrs = next;
+        }
+}
+
 static void ca_decoder_node_free(CaDecoderNode *n) {
         assert(n);
 
@@ -134,6 +157,11 @@ static void ca_decoder_node_free(CaDecoderNode *n) {
         n->size = UINT64_MAX;
         n->mode = 0;
         n->rdev = 0;
+        n->fcaps = mfree(n->fcaps);
+        n->fcaps_size = 0;
+        n->have_fcaps = false;
+
+        ca_decoder_node_free_xattrs(n);
 }
 
 CaDecoder *ca_decoder_unref(CaDecoder *d) {
@@ -621,9 +649,50 @@ static const CaFormatGroup* validate_format_group(CaDecoder *d, const void *p) {
         return g;
 }
 
+static const CaFormatXAttr* validate_format_xattr(CaDecoder *d, const void *p) {
+        const CaFormatXAttr *x = p;
+        char *n;
+
+        assert(d);
+        assert(x);
+
+        if (read_le64(&x->header.size) < offsetof(CaFormatXAttr, name_and_value) + 4) /* namespace + "." + name + 0 */
+                return NULL;
+        if (read_le64(&x->header.type) != CA_FORMAT_XATTR)
+                return NULL;
+
+        if (!(d->feature_flags & CA_FORMAT_WITH_XATTR))
+                return NULL;
+
+        /* Make sure there's a NUL byte in the first 256 bytes, so that we have a properly bounded name */
+        n = memchr(x->name_and_value, 0, MIN(256U, read_le64(&x->header.size) - offsetof(CaFormatXAttr, name_and_value)));
+        if (!n)
+                return NULL;
+
+        if (!ca_xattr_name_is_valid((char*) x->name_and_value))
+                return NULL;
+
+        return x;
+}
+
+static const CaFormatFCaps* validate_format_fcaps(CaDecoder *d, const void *p) {
+        const CaFormatFCaps *f = p;
+
+        assert(d);
+        assert(f);
+
+        if (read_le64(&f->header.size) < offsetof(CaFormatFCaps, data))
+                return NULL;
+        if (read_le64(&f->header.type) != CA_FORMAT_FCAPS)
+                return NULL;
+
+        return f;
+}
+
 static const CaFormatSymlink* validate_format_symlink(CaDecoder *d, const void *p) {
         const CaFormatSymlink *s = p;
 
+        assert(d);
         assert(s);
 
         if (read_le64(&s->header.size) < offsetof(CaFormatSymlink, target) + 1)
@@ -710,6 +779,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         const CaFormatDevice *device = NULL;
         const CaFormatFilename *filename = NULL;
         const CaFormatGoodbye *goodbye = NULL;
+        const CaFormatFCaps *fcaps = NULL;
         uint64_t offset = 0;
         bool done = false;
         mode_t mode;
@@ -719,6 +789,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
 
         assert(d);
         assert(n);
+
+        ca_decoder_node_free_xattrs(n);
 
         p = realloc_buffer_data(&d->buffer);
         sz = realloc_buffer_size(&d->buffer);
@@ -776,6 +848,10 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (group)
                                 return -EBADMSG;
+                        if (n->xattrs)
+                                return -EBADMSG;
+                        if (fcaps)
+                                return -EBADMSG;
                         if (l > CA_FORMAT_USER_SIZE_MAX)
                                 return -EBADMSG;
 
@@ -797,6 +873,10 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (group)
                                 return -EBADMSG;
+                        if (n->xattrs)
+                                return -EBADMSG;
+                        if (fcaps)
+                                return -EBADMSG;
                         if (l > CA_FORMAT_GROUP_SIZE_MAX)
                                 return -EBADMSG;
 
@@ -808,6 +888,66 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
 
                         group = validate_format_group(d, p);
                         if (!group)
+                                return -EBADMSG;
+
+                        offset += l;
+                        break;
+
+                case CA_FORMAT_XATTR: {
+                        const struct CaFormatXAttr *x;
+                        CaDecoderExtendedAttribute *u;
+
+                        if (!entry)
+                                return -EBADMSG;
+                        if (fcaps)
+                                return -EBADMSG;
+                        if (l > CA_FORMAT_XATTR_SIZE_MAX)
+                                return -EBADMSG;
+
+                        r = ca_decoder_object_is_complete(p, sz);
+                        if (r < 0)
+                                return r;
+                        if (r == 0)
+                                return CA_DECODER_REQUEST;
+
+                        x = validate_format_xattr(d, p);
+                        if (!x)
+                                return -EBADMSG;
+
+                        /* Check whether things are properly ordered */
+                        if (n->xattrs && strcmp((char*) x->name_and_value, (char*) n->xattrs->format.name_and_value) <= 0)
+                                return -EBADMSG;
+
+                        /* Add to list of extended attributes */
+                        u = malloc(offsetof(CaDecoderExtendedAttribute, format) + read_le64(&x->header.size));
+                        if (!u)
+                                return -ENOMEM;
+
+                        memcpy(&u->format, x, l);
+                        u->next = n->xattrs;
+                        n->xattrs = u;
+
+                        offset += l;
+
+                        break;
+                }
+
+                case CA_FORMAT_FCAPS:
+                        if (!entry)
+                                return -EBADMSG;
+                        if (fcaps)
+                                return -EBADMSG;
+                        if (l > CA_FORMAT_FCAPS_SIZE_MAX)
+                                return -EBADMSG;
+
+                        r = ca_decoder_object_is_complete(p, sz);
+                        if (r < 0)
+                                return r;
+                        if (r == 0)
+                                return CA_DECODER_REQUEST;
+
+                        fcaps = validate_format_fcaps(d, p);
+                        if (!fcaps)
                                 return -EBADMSG;
 
                         offset += l;
@@ -955,6 +1095,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                 return -EBADMSG;
         if ((S_ISBLK(mode) || S_ISCHR(mode)) && !device)
                 return -EBADMSG;
+        if (!S_ISREG(mode) && fcaps)
+                return -EBADMSG;
 
         /* Both FAT and chattr(1) flags are only defined for regular files and directories */
         if (read_le64(&entry->flags) != 0 && !S_ISREG(mode) && !S_ISDIR(mode))
@@ -983,6 +1125,15 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                 n->group_name = strdup(group->name);
                 if (!n->group_name)
                         return -ENOMEM;
+        }
+
+        if (fcaps) {
+                n->fcaps = memdup(fcaps->data, read_le64(&fcaps->header.size) - offsetof(CaFormatFCaps, data));
+                if (!n->fcaps)
+                        return -ENOMEM;
+
+                n->fcaps_size = read_le64(&fcaps->header.size) - offsetof(CaFormatFCaps, data);
+                n->have_fcaps = true;
         }
 
         if (symlink) {
@@ -1431,6 +1582,50 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         }
                         if (r < 0)
                                 return -errno;
+                }
+        }
+
+        if ((d->feature_flags & CA_FORMAT_WITH_XATTR) && !S_ISLNK(st.st_mode)) {
+                CaDecoderExtendedAttribute *x;
+
+                x = child->xattrs;
+                while (x) {
+                        size_t k;
+
+                        k = strlen((char*) x->format.name_and_value);
+
+                        if (fsetxattr(child->fd, (char*) x->format.name_and_value,
+                                      x->format.name_and_value + k + 1,
+                                      read_le64(&x->format.header.size) - offsetof(CaFormatXAttr, name_and_value) - k - 1, 0) < 0)
+                                return -errno;
+
+                        x = x->next;
+                }
+
+                /* FIXME: remove existing, unlisted xattrs */
+        }
+
+        if ((d->feature_flags & CA_FORMAT_WITH_FCAPS) && S_ISREG(st.st_mode) && child->fd >= 0) {
+
+                if (child->have_fcaps) {
+                        if (fsetxattr(child->fd, "security.capability", child->fcaps, child->fcaps_size, 0) < 0)
+                                return -errno;
+                } else {
+                        char v;
+
+                        /* Before removing the caps we'll check if they aren't set anyway. That has the benefit that we
+                         * don't run into EPERM here if we lack perms but the xattr isn't set anyway. */
+
+                        if (fgetxattr(child->fd, "security.capability", &v, sizeof(v)) < 0) {
+
+                                /* If the underlying file system doesn't do xattrs or caps, that's OK, if we shall set
+                                 * them as empty anyway. */
+                                if (!IN_SET(errno, EOPNOTSUPP, ENODATA))
+                                        return -errno;
+                        } else {
+                                if (fremovexattr(child->fd, "security.capability") < 0)
+                                        return -errno;
+                        }
                 }
         }
 

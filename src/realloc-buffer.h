@@ -66,4 +66,6 @@ int realloc_buffer_truncate(ReallocBuffer *b, size_t sz);
 
 int realloc_buffer_read(ReallocBuffer *b, int fd);
 
+void* realloc_buffer_steal(ReallocBuffer *b);
+
 #endif

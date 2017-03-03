@@ -170,6 +170,23 @@ int main(int argc, char *argv[]) {
                         break;
                 }
 
+                case CA_FORMAT_XATTR: {
+                        CaFormatXAttr *xattr;
+
+                        frame_size = read_le64(&h->size);
+                        if (sz < frame_size)
+                                continue;
+
+                        xattr = (CaFormatXAttr*) h;
+
+                        printf("\tXAttr: %s\n", (char*) xattr->name_and_value);
+
+                        realloc_buffer_advance(&buffer, frame_size);
+                        frame_size = 0;
+                        break;
+                }
+
+                case CA_FORMAT_FCAPS:
                 case CA_FORMAT_GOODBYE:
                 case CA_FORMAT_DEVICE:
 

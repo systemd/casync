@@ -21,4 +21,6 @@ uint32_t ca_feature_flags_to_fat_attrs(uint64_t flags);
 
 uint64_t ca_feature_flags_from_magic(statfs_f_type_t type);
 
+bool ca_xattr_name_is_valid(const char *s);
+
 #endif

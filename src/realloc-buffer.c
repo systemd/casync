@@ -82,7 +82,7 @@ void *realloc_buffer_acquire0(ReallocBuffer *b, size_t size) {
         }
 
         na = b->allocated * 2;
-        if (na < b->allocated) /* overflow? */
+        if (na <= b->allocated) /* overflow? */
                 return NULL;
 
         ns = MAX(na, size);
@@ -235,4 +235,26 @@ int realloc_buffer_read(ReallocBuffer *b, int fd) {
 
         realloc_buffer_shorten(b, BUFFER_SIZE - l);
         return l > 0;
+}
+
+void* realloc_buffer_steal(ReallocBuffer *b) {
+        void *p;
+
+        if (!b)
+                return NULL;
+
+        if (b->start == 0) {
+                p = b->data;
+                b->data = NULL;
+        } else {
+                p = memdup(realloc_buffer_data(b), realloc_buffer_size(b));
+                if (!p)
+                        return NULL;
+
+                b->data = mfree(b->data);
+        }
+
+        b->start = b->end = b->allocated = 0;
+
+        return p;
 }

@@ -11,6 +11,9 @@
  * ENTRY      -- containing general stat() data and related bits
  * USER       -- user name as text, if enabled
  * GROUP      -- group name as text, if enabled
+ * XATTR      -- one extended attribute
+ * ..         -- more of these when there are multiple defined
+ * FCAPS      -- file capability in Linux disk format
  * PAYLOAD    -- file contents, if it is one
  * SYMLINK    -- symlink target, if it is one
  * DEVICE     -- device major/minor, if it is a block/char device
@@ -34,6 +37,8 @@ enum {
         CA_FORMAT_ENTRY    = UINT64_C(0x1396fabcea5bbb51),
         CA_FORMAT_USER     = UINT64_C(0xf453131aaeeaccb3),
         CA_FORMAT_GROUP    = UINT64_C(0x25eb6ac969396a52),
+        CA_FORMAT_XATTR    = UINT64_C(0xb8157091f80bc486),
+        CA_FORMAT_FCAPS    = UINT64_C(0xf7267db0afed0629),
         CA_FORMAT_SYMLINK  = UINT64_C(0x664a6fb6830e0d6c),
         CA_FORMAT_DEVICE   = UINT64_C(0xac3dace369dfe643),
         CA_FORMAT_PAYLOAD  = UINT64_C(0x8b9e1d93d6dcffc9),
@@ -83,10 +88,10 @@ enum {
         /* CA_FORMAT_WITH_FLAG_SUBVOLUME_RO = 0x8000000, */
 
         /* Extended Attribute metadata */
-        /* CA_FORMAT_WITH_XATTR             = 0x10000000, */
+        CA_FORMAT_WITH_XATTR             = 0x10000000,
         /* CA_FORMAT_WITH_ACL               = 0x20000000, */
         /* CA_FORMAT_WITH_SELINUX           = 0x40000000, */
-        /* CA_FORMAT_WITH_FCAPS             = 0x80000000, */
+        CA_FORMAT_WITH_FCAPS             = 0x80000000,
 
         CA_FORMAT_RESPECT_FLAG_NODUMP    =  UINT64_C(0x8000000000000000),
 
@@ -111,13 +116,13 @@ enum {
                 CA_FORMAT_WITH_FLAG_IMMUTABLE|
                 CA_FORMAT_WITH_FLAG_SYNC|
                 CA_FORMAT_WITH_FLAG_NOCOMP|
-                CA_FORMAT_WITH_FLAG_PROJINHERIT,
+                CA_FORMAT_WITH_FLAG_PROJINHERIT|
                 /* CA_FORMAT_WITH_FLAG_SUBVOLUME| */
                 /* CA_FORMAT_WITH_FLAG_SUBVOLUME_RO| */
-                /* CA_FORMAT_WITH_XATTR| */
+                CA_FORMAT_WITH_XATTR|
                 /* CA_FORMAT_WITH_ACL| */
-                /* CA_FORMAT_WITH_SELINUX| */
-                /* CA_FORMAT_WITH_FCAPS */
+                /* CA_FORMAT_WITH_SELINUX */
+                CA_FORMAT_WITH_FCAPS,
 
         CA_FORMAT_WITH_UNIX = /* Conservative UNIX file properties */
                 CA_FORMAT_WITH_16BIT_UIDS|
@@ -183,6 +188,20 @@ typedef struct CaFormatGroup {
 } CaFormatGroup;
 
 #define CA_FORMAT_GROUP_SIZE_MAX (offsetof(CaFormatGroup, name) + 256)
+
+typedef struct CaFormatXAttr {
+        CaFormatHeader header;
+        uint8_t name_and_value[]; /* a 0 char terminates the name, the value begins after that */
+} CaFormatXAttr;
+
+#define CA_FORMAT_XATTR_SIZE_MAX (offsetof(CaFormatXAttr, name_and_value) + 255 + 1 + (64 * 1024))
+
+typedef struct CaFormatFCaps {
+        CaFormatHeader header;
+        uint8_t data[]; /* struct vfs_cap_data, in any of the supported sizes */
+} CaFormatFCaps;
+
+#define CA_FORMAT_FCAPS_SIZE_MAX (offsetof(CaFormatFCaps, data) + (64*1024))
 
 typedef struct CaFormatSymlink {
         CaFormatHeader header;
