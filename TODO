@@ -18,9 +18,7 @@
 * optionally make seeds persistent
 * stop at mount points
 * acquire gpg signature along with caidx/caibx/catar
-* permit passing catar through native protocol
 * coalesce index frames sent over protocol
-* add per-file sha256 sum to serialization
 * rework uploading via ssh to use seed instead of cache store for providing chunks to server
 * casync-http: parallel http GETs
 * casync-http: try all configured stores one after the other before sending MISSING
@@ -31,4 +29,3 @@
 * support accessing base trees through native protocol
 * implicitly generate index + chunks when accessing base trees or archives through native protocol
 * rework caindex to read multiple chunks per read (use reallocbuffer like elsewhere)
-* when restoring xattrs, remove unlisted
