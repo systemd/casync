@@ -1438,6 +1438,7 @@ static int name_to_gid(CaDecoder *d, const char *name, gid_t *ret) {
 static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *child) {
         statfs_f_type_t magic = 0;
         struct stat st;
+        mode_t mode;
         int r;
 
         assert(d);
@@ -1448,6 +1449,11 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
         if ((!n || n->fd < 0) && child->fd < 0)
                 return 0; /* Nothing to do if no fds are opened */
+
+        /* If this is a top-level blob, then don't do anything */
+        mode = ca_decoder_node_mode(child);
+        if ((S_ISREG(mode) || S_ISBLK(mode)) && !n)
+                return 0;
 
         assert(child->entry);
 
@@ -1729,6 +1735,18 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
         switch (d->state) {
 
         case CA_DECODER_INIT:
+
+                if (S_ISREG(mode) || S_ISBLK(mode)) {
+                        assert(d->node_idx == 0);
+
+                        /* A regular file or block device and we are at the top level, process this as payload */
+
+                        ca_decoder_enter_state(d, CA_DECODER_IN_PAYLOAD);
+                        return ca_decoder_step_node(d, n);
+                }
+
+                /* fall through */
+
         case CA_DECODER_ENTERED:
                 return ca_decoder_parse_entry(d, n);
 
