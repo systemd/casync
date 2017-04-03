@@ -21,6 +21,7 @@
 #include "caencoder.h"
 #include "caformat-util.h"
 #include "caformat.h"
+#include "cautil.h"
 #include "def.h"
 #include "fssize.h"
 #include "realloc-buffer.h"
@@ -456,18 +457,6 @@ static int ca_encoder_node_read_fat_attrs(
         return 0;
 }
 
-static bool store_xattr(const char *name) {
-
-        /* We only store xattrs from the "user." and "trusted." namespaces. The other namespaces have special
-         * semantics, and we'll support them with explicit records instead. */
-
-        if (!ca_xattr_name_is_valid(name))
-                return false; /* silently ignore xattrs with invalid names */
-
-        return startswith(name, "user.") ||
-                startswith(name, "trusted.");
-}
-
 static int compare_xattr(const void *a, const void *b) {
         const CaEncoderExtendedAttribute *x = a, *y = b;
 
@@ -576,7 +565,7 @@ static int ca_encoder_node_read_xattrs(
                 k = strlen(q);
                 assert(left >= k + 1);
 
-                if (store_xattr(q))
+                if (ca_xattr_name_store(q))
                         count ++;
                 else if (streq(q, "security.capability") && S_ISREG(n->stat.st_mode))
                         has_fcaps = true;
@@ -608,7 +597,7 @@ static int ca_encoder_node_read_xattrs(
                 k = strlen(q);
                 assert(left >= k + 1);
 
-                if (store_xattr(q) ||
+                if (ca_xattr_name_store(q) ||
                     (streq(q, "security.capability") && S_ISREG(n->stat.st_mode))) {
                         bool good = false;
 

@@ -14,6 +14,7 @@
 #include "cadecoder.h"
 #include "caformat-util.h"
 #include "caformat.h"
+#include "cautil.h"
 #include "def.h"
 #include "realloc-buffer.h"
 #include "util.h"
@@ -1591,24 +1592,92 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 }
         }
 
-        if ((d->feature_flags & CA_FORMAT_WITH_XATTR) && !S_ISLNK(st.st_mode)) {
+        if ((d->feature_flags & CA_FORMAT_WITH_XATTR) && !S_ISLNK(st.st_mode) && child->fd >= 0) {
                 CaDecoderExtendedAttribute *x;
+                size_t space = 256;
+                ssize_t l;
+                char *p, *q;
 
-                x = child->xattrs;
-                while (x) {
+                p = new(char, space);
+                if (!p)
+                        return -ENOMEM;
+
+                for (;;) {
+                        l = flistxattr(child->fd, p, space);
+                        if (l < 0) {
+                                if (IN_SET(errno, EOPNOTSUPP, EBADF)) {
+                                        p = mfree(p);
+                                        l = 0;
+                                        break;
+                                }
+
+                                if (errno != ERANGE) {
+                                        free(p);
+                                        return -errno;
+                                }
+                        } else
+                                break;
+
+                        free(p);
+
+                        if (space*2 <= space)
+                                return -ENOMEM;
+
+                        space *= 2;
+                        p = new(char, space);
+                        if (!p)
+                                return -ENOMEM;
+                }
+
+                /* Remove xattrs set that don't appear in our list */
+                q = p;
+                for (;;) {
+                        bool found = false;
+                        size_t z;
+
+                        if (l == 0)
+                                break;
+
+                        z = strlen(q);
+                        assert(z + 1 <= (size_t) l);
+
+                        /* Don't bother with xattrs we can't store in our archives anyway */
+                        if (!ca_xattr_name_store(q))
+                                goto next;
+
+                        for (x = child->xattrs; x; x = x->next)
+                                if (streq((char*) x->format.name_and_value, q)) {
+                                        found = true;
+                                        break;
+                                }
+
+                        if (found)
+                                goto next;
+
+                        if (fremovexattr(child->fd, q) < 0) {
+                                r = -errno;
+                                free(p);
+                                return r;
+                        }
+
+                next:
+                        q += z + 1;
+                        l -= z + 1;
+                }
+
+                free(p);
+
+                for (x = child->xattrs; x; x = x->next) {
                         size_t k;
 
                         k = strlen((char*) x->format.name_and_value);
 
                         if (fsetxattr(child->fd, (char*) x->format.name_and_value,
                                       x->format.name_and_value + k + 1,
-                                      read_le64(&x->format.header.size) - offsetof(CaFormatXAttr, name_and_value) - k - 1, 0) < 0)
+                                      read_le64(&x->format.header.size) - offsetof(CaFormatXAttr, name_and_value) - k - 1,
+                                      0) < 0)
                                 return -errno;
-
-                        x = x->next;
                 }
-
-                /* FIXME: remove existing, unlisted xattrs */
         }
 
         if ((d->feature_flags & CA_FORMAT_WITH_FCAPS) && S_ISREG(st.st_mode) && child->fd >= 0) {

@@ -18,4 +18,7 @@ CaLocatorClass ca_classify_locator(const char *s);
 char *ca_strip_file_url(const char *p);
 bool ca_locator_has_suffix(const char *p, const char *suffix);
 
+bool ca_xattr_name_is_valid(const char *s);
+bool ca_xattr_name_store(const char *p);
+
 #endif

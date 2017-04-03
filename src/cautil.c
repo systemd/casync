@@ -190,3 +190,42 @@ bool ca_locator_has_suffix(const char *p, const char *suffix) {
 
         return q && q != e;
 }
+
+
+bool ca_xattr_name_is_valid(const char *s) {
+        const char *dot;
+
+        /* Can't be empty */
+        if (isempty(s))
+                return false;
+
+        /* Must contain dot */
+        dot = strchr(s, '.');
+        if (!dot)
+                return false;
+
+        /* Dot may not be at beginning or end */
+        if (dot == s)
+                return false;
+        if (dot[1] == 0)
+                return false;
+
+        /* Overall lengths must be <= 255, according to xattr(7) */
+        if (strlen(s) > 255)
+                return false;
+
+        return true;
+}
+
+bool ca_xattr_name_store(const char *name) {
+
+        /* We only store xattrs from the "user." and "trusted." namespaces. The other namespaces have special
+         * semantics, and we'll support them with explicit records instead. That's at least "security.capability" and
+         * "security.selinux". */
+
+        if (!ca_xattr_name_is_valid(name))
+                return false; /* silently ignore xattrs with invalid names */
+
+        return startswith(name, "user.") ||
+                startswith(name, "trusted.");
+}
