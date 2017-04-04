@@ -37,6 +37,7 @@ int main(int argc, char *argv[]) {
                 }
 
                 case CA_SYNC_STEP:
+                case CA_SYNC_PAYLOAD:
                 case CA_SYNC_NEXT_FILE:
                         break;
                 }
@@ -67,6 +68,7 @@ step2:
                 }
 
                 case CA_SYNC_STEP:
+                case CA_SYNC_PAYLOAD:
                 case CA_SYNC_NEXT_FILE:
                         break;
                 }

@@ -24,7 +24,7 @@ int ca_index_install(CaIndex *i);
 int ca_index_write_chunk(CaIndex *i, const CaChunkID *id, uint64_t size);
 int ca_index_write_eof(CaIndex *i);
 
-int ca_index_read_chunk(CaIndex *i, CaChunkID *id, uint64_t *ret_size);
+int ca_index_read_chunk(CaIndex *i, CaChunkID *id, uint64_t *ret_offset_end, uint64_t *ret_size);
 
 int ca_index_set_position(CaIndex *i, uint64_t position);
 int ca_index_get_position(CaIndex *i, uint64_t *ret);
@@ -45,5 +45,11 @@ int ca_index_set_chunk_size_max(CaIndex *i, size_t cmax);
 int ca_index_get_chunk_size_min(CaIndex *i, size_t *ret);
 int ca_index_get_chunk_size_avg(CaIndex *i, size_t *ret);
 int ca_index_get_chunk_size_max(CaIndex *i, size_t *ret);
+
+int ca_index_get_blob_size(CaIndex *i, uint64_t *ret);
+int ca_index_get_index_size(CaIndex *i, uint64_t *ret);
+int ca_index_get_total_chunks(CaIndex *i, uint64_t *ret);
+
+int ca_index_seek(CaIndex *i, uint64_t offset, uint64_t *ret_skip);
 
 #endif

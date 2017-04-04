@@ -43,4 +43,6 @@ int ca_decoder_current_path(CaDecoder *d, char **ret);
 int ca_decoder_current_mode(CaDecoder *d, mode_t *ret);
 int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret);
 
+int ca_decoder_seek_archive(CaDecoder *d, uint64_t offset);
+
 #endif

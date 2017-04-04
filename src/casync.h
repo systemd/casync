@@ -11,6 +11,7 @@ typedef struct CaSync CaSync;
 enum {
         CA_SYNC_FINISHED,        /* Synchronization is complete */
         CA_SYNC_STEP,            /* Did something, call me again soon! */
+        CA_SYNC_PAYLOAD,         /* Did something, and there's payload you might want to read */
         CA_SYNC_NEXT_FILE,       /* Started synchronizing a new file, find out which one with ca_sync_current_path() */
         CA_SYNC_SEED_NEXT_FILE,  /* Started indexing a new file as sed, find out which one with ca_sync_current_path() */
         CA_SYNC_POLL,            /* Can't proceed with remote feedback, please use ca_sync_poll() to wait for it */
@@ -67,6 +68,7 @@ int ca_sync_current_path(CaSync *sync, char **ret);
 int ca_sync_current_mode(CaSync *sync, mode_t *ret);
 
 int ca_sync_get_digest(CaSync *s, CaChunkID *ret);
+int ca_sync_get_archive_size(CaSync *s, uint64_t *ret);
 
 /* Low level chunk access */
 int ca_sync_get_local(CaSync *s, const CaChunkID *chunk_id, CaChunkCompression desired_compression, const void **ret, size_t *ret_size, CaChunkCompression *ret_effective_compression);
@@ -83,5 +85,9 @@ int ca_sync_get_chunk_size_max(CaSync *s, size_t *ret);
 
 int ca_sync_current_archive_chunks(CaSync *s, uint64_t *ret);
 int ca_sync_current_archive_offset(CaSync *s, uint64_t *ret);
+
+int ca_sync_seek(CaSync *s, uint64_t offset);
+
+int ca_sync_get_payload(CaSync *s, const void **ret, size_t *ret_size);
 
 #endif

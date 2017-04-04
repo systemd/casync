@@ -2180,3 +2180,33 @@ int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret) {
         *ret = d->payload_offset;
         return 0;
 }
+
+int ca_decoder_seek_archive(CaDecoder *d, uint64_t offset) {
+        CaDecoderNode *n;
+        mode_t mode;
+
+        if (!d)
+                return -EINVAL;
+        if (d->node_idx != 0)
+                return -EINVAL;
+
+        /* Only supported when we decode a naked file, i.e. not a directory tree serialization */
+
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
+
+        mode = ca_decoder_node_mode(n);
+        if (!S_ISREG(mode) && !S_ISBLK(mode))
+                return -EISDIR;
+
+        d->archive_offset = d->payload_offset = offset;
+        d->step_size = 0;
+        d->eof = false;
+
+        realloc_buffer_empty(&d->buffer);
+
+        ca_decoder_enter_state(d, CA_DECODER_IN_PAYLOAD);
+
+        return 0;
+}

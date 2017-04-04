@@ -87,6 +87,10 @@ typedef struct CaSync {
 
         uint64_t n_written_chunks;
         uint64_t n_prefetched_chunks;
+
+        uint64_t archive_size;
+
+        uint64_t chunk_skip;
 } CaSync;
 
 static CaSync *ca_sync_new(void) {
@@ -101,6 +105,8 @@ static CaSync *ca_sync_new(void) {
         s->make_mode = (mode_t) -1;
 
         s->chunker = (CaChunker) CA_CHUNKER_INIT;
+
+        s->archive_size = UINT64_MAX;
 
         return s;
 }
@@ -1288,7 +1294,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                 const void *p;
 
                 if (!s->next_chunk_valid) {
-                        r = ca_index_read_chunk(s->index, &s->next_chunk, &s->next_chunk_size);
+                        r = ca_index_read_chunk(s->index, &s->next_chunk, NULL, &s->next_chunk_size);
                         if (r == -EAGAIN) /* Not enough data */
                                 return CA_SYNC_POLL;
                         if (r < 0)
@@ -1323,6 +1329,18 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                         return -EBADMSG;
 
                 s->next_chunk_valid = false;
+
+                if (s->chunk_skip > 0) {
+                        /* If we just seeked, then we might have seeked to a location inside of a chunk, hence skip as
+                         * many bytes as necessary */
+                        if (s->chunk_skip >= chunk_size)
+                                return -EINVAL;
+
+                        p = (const uint8_t*) p + s->chunk_skip;
+                        chunk_size -= s->chunk_skip;
+
+                        s->chunk_skip = 0;
+                }
 
                 r = ca_decoder_put_data(s->decoder, p, chunk_size);
                 if (r < 0)
@@ -1419,8 +1437,10 @@ static int ca_sync_step_decode(CaSync *s) {
                 return CA_SYNC_NEXT_FILE;
 
         case CA_DECODER_STEP:
-        case CA_DECODER_PAYLOAD:
                 return CA_SYNC_STEP;
+
+        case CA_DECODER_PAYLOAD:
+                return CA_SYNC_PAYLOAD;
 
         case CA_DECODER_REQUEST:
                 return ca_sync_process_decoder_request(s);
@@ -1579,7 +1599,7 @@ static int ca_sync_remote_prefetch(CaSync *s) {
         for (;;) {
                 CaChunkID id;
 
-                r = ca_index_read_chunk(s->index, &id, NULL);
+                r = ca_index_read_chunk(s->index, &id, NULL, NULL);
                 if (r == 0 || r == -EAGAIN)
                         break;
                 if (r < 0)
@@ -2212,4 +2232,100 @@ int ca_sync_current_archive_offset(CaSync *s, uint64_t *ret) {
                 return -ENODATA;
 
         return ca_encoder_current_archive_offset(s->encoder, ret);
+}
+
+int ca_sync_seek(CaSync *s, uint64_t offset) {
+        uint64_t chunk_skip = 0;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+
+        r = ca_sync_start(s);
+        if (r < 0)
+                return r;
+
+        if (!s->decoder)
+                return -ENODATA;
+
+        if (s->index) {
+
+                r = ca_index_seek(s->index, offset, &chunk_skip);
+                if (r < 0)
+                        return r;
+
+        } else if (s->archive_fd >= 0) {
+                off_t f;
+
+                f = lseek(s->archive_fd, (off_t) offset, SEEK_SET);
+                if (f == (off_t) -1)
+                        return -errno;
+
+        } else
+                return -EOPNOTSUPP;
+
+        r = ca_decoder_seek_archive(s->decoder, offset);
+        if (r < 0)
+                return r;
+
+        s->archive_eof = false;
+        s->remote_index_eof = false;
+        s->next_chunk_valid = false;
+
+        s->chunk_skip = chunk_skip;
+
+        return 0;
+}
+
+int ca_sync_get_payload(CaSync *s, const void **ret, size_t *ret_size) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+        if (!ret_size)
+                return -EINVAL;
+
+        if (!s->decoder)
+                return -ENODATA;
+
+        return ca_decoder_get_payload(s->decoder, ret, ret_size);
+}
+
+int ca_sync_get_archive_size(CaSync *s, uint64_t *ret_size) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret_size)
+                return -EINVAL;
+
+        r = ca_sync_start(s);
+        if (r < 0)
+                return r;
+
+        if (!s->decoder)
+                return -EINVAL;
+
+        if (s->index)
+                return ca_index_get_blob_size(s->index, ret_size);
+
+        if (s->archive_fd >= 0) {
+                struct stat st;
+
+                if (s->archive_size != UINT64_MAX) {
+                        *ret_size = s->archive_size;
+                        return 0;
+                }
+
+                if (fstat(s->archive_fd, &st) < 0)
+                        return -errno;
+
+                if (!S_ISREG(st.st_mode))
+                        return -ESPIPE;
+
+                *ret_size = s->archive_size = st.st_size;
+                return 0;
+        }
+
+        return -ENOTTY;
 }

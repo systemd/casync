@@ -1,6 +1,7 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <sys/poll.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -27,6 +28,42 @@ int loop_write(int fd, const void *p, size_t l) {
                 w = write(fd, p, l);
                 if (w < 0)
                         return -errno;
+
+                assert((size_t) w <= l);
+
+                p = (const uint8_t*) p + w;
+                l -= w;
+        }
+
+        return 0;
+}
+
+int loop_write_block(int fd, const void *p, size_t l) {
+        if (fd < 0)
+                return -EBADF;
+        if (!p && l > 0)
+                return -EINVAL;
+
+        while (l > 0) {
+                ssize_t w;
+
+                w = write(fd, p, l);
+                if (w < 0) {
+                        if (errno == EAGAIN) {
+
+                                struct pollfd pollfd = {
+                                        .fd = fd,
+                                        .events = POLLOUT,
+                                };
+
+                                if (poll(&pollfd, 1, -1) < 0)
+                                        return -errno;
+
+                                continue;
+                        }
+
+                        return -errno;
+                }
 
                 assert((size_t) w <= l);
 

@@ -62,6 +62,7 @@ static inline int log_oom(void) {
 }
 
 int loop_write(int fd, const void *p, size_t l);
+int loop_write_block(int fd, const void *p, size_t l);
 ssize_t loop_read(int fd, void *p, size_t l);
 
 int skip_bytes(int fd, uint64_t bytes);
@@ -537,5 +538,10 @@ static inline const char *yes_no(bool b) {
 #ifndef FUSE_CTL_SUPER_MAGIC
 #define FUSE_CTL_SUPER_MAGIC 0x65735543
 #endif
+
+#define PTR_TO_INT(p) ((int) ((intptr_t) (p)))
+#define INT_TO_PTR(u) ((void *) ((intptr_t) (u)))
+#define PTR_TO_UINT(p) ((unsigned int) ((uintptr_t) (p)))
+#define UINT_TO_PTR(u) ((void *) ((uintptr_t) (u)))
 
 #endif

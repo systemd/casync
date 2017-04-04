@@ -21,7 +21,7 @@ int main(int argc, char*argv[]) {
                 size_t size;
                 char ids[CA_CHUNK_ID_FORMAT_MAX];
 
-                r = ca_index_read_chunk(index, &id, &size);
+                r = ca_index_read_chunk(index, &id, NULL, &size);
                 assert_se(r >= 0);
 
                 if (r == 0)

@@ -11,6 +11,7 @@
 #include "caformat-util.h"
 #include "caformat.h"
 #include "caindex.h"
+#include "canbd.h"
 #include "caprotocol.h"
 #include "caremote.h"
 #include "castore.h"
@@ -40,7 +41,8 @@ static void help(void) {
         printf("%1$s [OPTIONS...] make ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX PATH\n"
                "%1$s [OPTIONS...] extract ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX PATH\n"
                "%1$s [OPTIONS...] list ARCHIVE|ARCHIVE_INDEX|DIRECTORY\n"
-               "%1$s [OPTIONS...] digest ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY\n\n"
+               "%1$s [OPTIONS...] digest ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY\n"
+               "%1$s [OPTIONS...] mkdev BLOB|BLOB_INDEX\n\n"
                "Content-Addressable Data Synchronization Tool\n\n"
                "  -h --help                  Show this help\n"
                "  -v --verbose               Show terse status information during runtime\n"
@@ -783,6 +785,7 @@ static int make(int argc, char *argv[]) {
                         break;
 
                 case CA_SYNC_STEP:
+                case CA_SYNC_PAYLOAD:
                         break;
 
                 case CA_SYNC_POLL:
@@ -1061,6 +1064,7 @@ static int extract(int argc, char *argv[]) {
                         goto finish;
 
                 case CA_SYNC_STEP:
+                case CA_SYNC_PAYLOAD:
                         break;
 
                 case CA_SYNC_NEXT_FILE: {
@@ -1312,6 +1316,7 @@ static int list(int argc, char *argv[]) {
                         goto finish;
 
                 case CA_SYNC_STEP:
+                case CA_SYNC_PAYLOAD:
                         break;
 
                 case CA_SYNC_NEXT_FILE: {
@@ -1593,6 +1598,7 @@ static int digest(int argc, char *argv[]) {
                 }
 
                 case CA_SYNC_STEP:
+                case CA_SYNC_PAYLOAD:
                         break;
 
                 case CA_SYNC_NEXT_FILE:
@@ -1629,6 +1635,352 @@ static int digest(int argc, char *argv[]) {
 
 finish:
         ca_sync_unref(s);
+
+        if (input_fd >= 3)
+                (void) close(input_fd);
+
+        free(input);
+
+        return r;
+}
+
+static int mkdev(int argc, char *argv[]) {
+
+        typedef enum MkDevOperation {
+                MKDEV_BLOB,
+                MKDEV_BLOB_INDEX,
+                _MKDEV_OPERATION_INVALID = -1,
+        } MkDevOperation;
+        MkDevOperation operation = _MKDEV_OPERATION_INVALID;
+        ReallocBuffer buffer = {};
+        CaBlockDevice *nbd = NULL;
+        const char *path = NULL;
+        int r, input_fd = -1;
+        char *input = NULL;
+        CaSync *s = NULL;
+
+        if (argc > 2) {
+                fprintf(stderr, "A single input path/URL expected.\n");
+                return -EINVAL;
+        }
+
+        if (argc > 1) {
+                input = ca_strip_file_url(argv[1]);
+                if (!input) {
+                        r = log_oom();
+                        goto finish;
+                }
+        }
+
+        if (arg_what == WHAT_BLOB)
+                operation = MKDEV_BLOB;
+        else if (arg_what == WHAT_BLOB_INDEX)
+                operation = MKDEV_BLOB_INDEX;
+        else if (arg_what != _WHAT_INVALID) {
+                fprintf(stderr, "\"mkdev\" operation may only be combined with --what=blob and --what=blob-index.\n");
+                r = -EINVAL;
+                goto finish;
+        }
+
+        if (operation == _MKDEV_OPERATION_INVALID && input && !streq(input, "-")) {
+                if (ca_locator_has_suffix(input, ".caibx"))
+                        operation = MKDEV_BLOB_INDEX;
+        }
+
+        if (operation == _MKDEV_OPERATION_INVALID)
+                operation = MKDEV_BLOB;
+
+        s = ca_sync_new_decode();
+        if (!s) {
+                r = log_oom();
+                goto finish;
+        }
+
+        if (!input || streq(input, "-"))
+                input_fd = STDIN_FILENO;
+
+        if (operation == MKDEV_BLOB_INDEX) {
+                r = set_default_store(input);
+                if (r < 0)
+                        goto finish;
+        }
+
+        if (arg_rate_limit_bps != UINT64_MAX) {
+                r = ca_sync_set_rate_limit_bps(s, arg_rate_limit_bps);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
+                        goto finish;
+                }
+        }
+
+        if (operation == MKDEV_BLOB) {
+                if (input_fd >= 0)
+                        r = ca_sync_set_archive_fd(s, input_fd);
+                else
+                        r = ca_sync_set_archive_auto(s, input);
+
+        } else if (operation == MKDEV_BLOB_INDEX) {
+                if (input_fd >= 0)
+                        r = ca_sync_set_index_fd(s, input_fd);
+                else
+                        r = ca_sync_set_index_auto(s, input);
+        } else
+                assert(false);
+        if (r < 0) {
+                fprintf(stderr, "Failed to set sync input: %s\n", strerror(-r));
+                goto finish;
+        }
+
+        input_fd = -1;
+
+        r = ca_sync_set_base_mode(s, S_IFREG);
+        if (r < 0) {
+                fprintf(stderr, "Failed to set base mode to regular file: %s\n", strerror(-r));
+                goto finish;
+        }
+
+        if (arg_store) {
+                r = ca_sync_set_store_auto(s, arg_store);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
+                        goto finish;
+                }
+        }
+
+        r = load_seeds_and_extra_stores(s);
+        if (r < 0)
+                goto finish;
+
+        nbd = ca_block_device_new();
+        if (!nbd) {
+                r = log_oom();
+                goto finish;
+        }
+
+        /* First loop: process as enough so that we can figure out the size of the blob */
+        for (;;) {
+                uint64_t size;
+
+                r = ca_sync_get_archive_size(s, &size);
+                if (r >= 0) {
+                        r = ca_block_device_set_size(nbd, (size + 511) & ~511);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to set NBD size.\n");
+                                goto finish;
+                        }
+                        break;
+                }
+                if (r == -ESPIPE) {
+                        fprintf(stderr, "Seekable archive required.\n");
+                        goto finish;
+                }
+                if (r != -EAGAIN) {
+                        fprintf(stderr, "Failed to determine archive size: %s\n", strerror(-r));
+                        goto finish;
+                }
+
+                r = ca_sync_step(s);
+                if (r == -ENOMEDIUM) {
+                        fprintf(stderr, "File, URL or resource not found.\n");
+                        goto finish;
+                }
+                if (r < 0) {
+                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
+                        goto finish;
+                }
+
+                switch (r) {
+
+                case CA_SYNC_STEP:
+                case CA_SYNC_PAYLOAD:
+                case CA_SYNC_FINISHED:
+                        break;
+
+                case CA_SYNC_POLL:
+
+                        r = ca_sync_poll(s, UINT64_MAX);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
+                                goto finish;
+                        }
+                        break;
+
+                default:
+                        assert(false);
+                }
+        }
+
+        r = ca_block_device_open(nbd);
+        if (r < 0) {
+                fprintf(stderr, "Failed to open NBD device: %s\n", strerror(-r));
+                goto finish;
+        }
+
+        r = ca_block_device_get_path(nbd, &path);
+        if (r < 0) {
+                fprintf(stderr, "Failed to determine NBD device path: %s\n", strerror(-r));
+                goto finish;
+        }
+
+        printf("%s\n", path);
+
+        for (;;) {
+                uint64_t req_offset = 0, req_size = 0;
+
+                r = ca_block_device_step(nbd);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to read NBD request: %s\n", strerror(-r));
+                        goto finish;
+                }
+
+                if (r == CA_BLOCK_DEVICE_CLOSED)
+                        break;
+
+                if (r == CA_BLOCK_DEVICE_POLL) {
+                        r = ca_block_device_poll(nbd, UINT64_MAX);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to poll for NBD requests: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        continue;
+                }
+
+                assert(r == CA_BLOCK_DEVICE_REQUEST);
+
+                r = ca_block_device_get_request_offset(nbd, &req_offset);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to get NBD request offset: %s\n", strerror(-r));
+                        goto finish;
+                }
+
+                r = ca_block_device_get_request_size(nbd, &req_size);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to get NBD request size: %s\n", strerror(-r));
+                        goto finish;
+                }
+
+                r = ca_sync_seek(s, req_offset);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to seek: %s\n", strerror(-r));
+                        goto finish;
+                }
+
+                realloc_buffer_empty(&buffer);
+
+                for (;;) {
+                        bool done = false;
+
+                        r = ca_sync_step(s);
+                        if (r == -ENOMEDIUM) {
+                                fprintf(stderr, "File, URL or resource not found.\n");
+                                goto finish;
+                        }
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        switch (r) {
+
+                        case CA_SYNC_STEP:
+                                break;
+
+                        case CA_SYNC_FINISHED:
+                                /* We hit EOF but the reply is not yet completed, in this case, fill up with zeroes */
+
+                                assert(realloc_buffer_size(&buffer) < req_size);
+
+                                if (!realloc_buffer_extend0(&buffer, req_size - realloc_buffer_size(&buffer))) {
+                                        r = log_oom();
+                                        goto finish;
+                                }
+
+                                r = ca_block_device_put_data(nbd, req_offset, realloc_buffer_data(&buffer), req_size);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to send reply: %s\n", strerror(-r));
+                                        goto finish;
+                                }
+
+                                r = realloc_buffer_advance(&buffer, req_size);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to advance buffer: %s\n", strerror(-r));
+                                        goto finish;
+                                }
+
+                                done = true;
+                                break;
+
+                        case CA_SYNC_PAYLOAD: {
+                                const void *p;
+                                size_t sz;
+
+                                r = ca_sync_get_payload(s, &p, &sz);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to retrieve synchronizer payload: %s\n", strerror(-r));
+                                        goto finish;
+                                }
+
+                                if (realloc_buffer_size(&buffer) == 0 && sz >= req_size) {
+                                        /* If this is a full reply, then propagate this directly */
+
+                                        r = ca_block_device_put_data(nbd, req_offset, p, MIN(sz, req_size));
+                                        if (r < 0) {
+                                                fprintf(stderr, "Failed to send reply: %s\n", strerror(-r));
+                                                goto finish;
+                                        }
+
+                                        done = true;
+
+                                } else {
+
+                                        if (!realloc_buffer_append(&buffer, p, sz)) {
+                                                r = log_oom();
+                                                goto finish;
+                                        }
+
+                                        if (realloc_buffer_size(&buffer) >= req_size) {
+                                                r = ca_block_device_put_data(nbd, req_offset, realloc_buffer_data(&buffer), req_size);
+                                                if (r < 0) {
+                                                        fprintf(stderr, "Failed to send reply: %s\n", strerror(-r));
+                                                        goto finish;
+                                                }
+
+                                                r = realloc_buffer_advance(&buffer, req_size);
+                                                if (r < 0) {
+                                                        fprintf(stderr, "Failed to advance buffer: %s\n", strerror(-r));
+                                                        goto finish;
+                                                }
+
+                                                done = true;
+                                        }
+                                }
+
+                                break;
+                        }
+
+                        case CA_SYNC_POLL:
+                                r = ca_sync_poll(s, UINT64_MAX);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
+                                        goto finish;
+                                }
+                                break;
+
+                        default:
+                                assert(false);
+                        }
+
+                        if (done)
+                                break;
+                }
+        }
+
+finish:
+        realloc_buffer_free(&buffer);
+
+        ca_sync_unref(s);
+        ca_block_device_unref(nbd);
 
         if (input_fd >= 3)
                 (void) close(input_fd);
@@ -2089,7 +2441,7 @@ static int push(int argc, char *argv[]) {
                                 break;
                         }
 
-                        r = ca_index_read_chunk(index, &id, NULL);
+                        r = ca_index_read_chunk(index, &id, NULL, NULL);
                         if (r == -EAGAIN) /* Not read enough yet */
                                 break;
                         if (r < 0) {
@@ -2195,6 +2547,8 @@ static int dispatch_verb(int argc, char *argv[]) {
                 r = list(argc, argv);
         else if (streq(argv[0], "digest"))
                 r = digest(argc, argv);
+        else if (streq(argv[0], "mkdev"))
+                r = mkdev(argc, argv);
         else if (streq(argv[0], "pull")) /* "Secret" verb, only to be called by ssh-based remoting. */
                 r = pull(argc, argv);
         else if (streq(argv[0], "push")) /* Same here. */

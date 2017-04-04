@@ -100,6 +100,8 @@ lib_SOURCES = \
 	src/caindex.h \
 	src/calocation.c \
 	src/calocation.h \
+	src/canbd.c \
+	src/canbd.h \
 	src/caprotocol-util.c \
 	src/caprotocol-util.h \
 	src/caprotocol.h \
@@ -114,6 +116,8 @@ lib_SOURCES = \
 	src/cautil.c \
 	src/cautil.h \
 	src/def.h \
+	src/fssize.c \
+	src/fssize.h \
 	src/gcrypt-util.c \
 	src/gcrypt-util.h \
 	src/parse-util.c \
@@ -123,9 +127,7 @@ lib_SOURCES = \
 	src/rm-rf.c \
 	src/rm-rf.h \
 	src/util.c \
-	src/util.h \
-	src/fssize.h \
-	src/fssize.c
+	src/util.h
 
 ## casync
 

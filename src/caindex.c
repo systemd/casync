@@ -31,8 +31,8 @@ struct CaIndex {
         bool wrote_eof;
 
         uint64_t start_offset, cooked_offset, raw_offset;
-        uint64_t n_items;
-        uint64_t previous_chunk;
+        uint64_t item_position;
+        uint64_t previous_chunk_offset;
 
         CaChunkID digest;
         bool digest_valid;
@@ -41,7 +41,8 @@ struct CaIndex {
         uint64_t chunk_size_max;
         uint64_t chunk_size_avg;
 
-        uint64_t file_size;
+        uint64_t file_size; /* The size of the index file */
+        uint64_t blob_size; /* The size of the blob this index file describes */
 };
 
 static CaIndex* ca_index_new(void) {
@@ -54,6 +55,7 @@ static CaIndex* ca_index_new(void) {
         i->fd = -1;
         i->make_mode = (mode_t) -1;
         i->file_size = UINT64_MAX;
+        i->blob_size = UINT64_MAX;
 
         return i;
 }
@@ -408,8 +410,8 @@ int ca_index_write_chunk(CaIndex *i, const CaChunkID *id, uint64_t size) {
         if (size > i->chunk_size_max)
                 return -EINVAL;
 
-        end = i->previous_chunk + size;
-        if (end < i->previous_chunk)
+        end = i->previous_chunk_offset + size;
+        if (end < i->previous_chunk_offset)
                 return -E2BIG;
 
         /* { */
@@ -424,9 +426,9 @@ int ca_index_write_chunk(CaIndex *i, const CaChunkID *id, uint64_t size) {
         if (r < 0)
                 return r;
 
-        i->previous_chunk = end;
+        i->previous_chunk_offset = end;
         i->cooked_offset += sizeof(item);
-        i->n_items++;
+        i->item_position++;
 
         return 0;
 }
@@ -455,7 +457,7 @@ int ca_index_write_eof(CaIndex *i) {
         memcpy(&tail.marker_item.chunk, &i->digest, CA_CHUNK_ID_SIZE);
         write_le64(&tail.size,
                    offsetof(CaFormatTable, items) +
-                   (i->n_items * sizeof(CaFormatTableItem)) +
+                   (i->item_position * sizeof(CaFormatTableItem)) +
                    sizeof(tail));
 
         r = loop_write(i->fd, &tail, sizeof(tail));
@@ -469,14 +471,12 @@ int ca_index_write_eof(CaIndex *i) {
         return 0;
 }
 
-int ca_index_read_chunk(CaIndex *i, CaChunkID *ret_id, uint64_t *ret_size) {
+int ca_index_read_chunk(CaIndex *i, CaChunkID *ret_id, uint64_t *ret_offset_end, uint64_t *ret_size) {
         CaFormatTableItem item;
         ssize_t n;
         int r;
 
         if (!i)
-                return -EINVAL;
-        if (!ret_id)
                 return -EINVAL;
 
         r = ca_index_open(i);
@@ -524,7 +524,11 @@ int ca_index_read_chunk(CaIndex *i, CaChunkID *ret_id, uint64_t *ret_size) {
                 memcpy(&i->digest, item.chunk, sizeof(CaChunkID));
                 i->digest_valid = true;
 
-                memset(ret_id, 0, sizeof(CaChunkID));
+                if (ret_id)
+                        memset(ret_id, 0, sizeof(CaChunkID));
+
+                if (ret_offset_end)
+                        *ret_offset_end = UINT64_MAX;
 
                 if (ret_size)
                         *ret_size = 0;
@@ -532,21 +536,25 @@ int ca_index_read_chunk(CaIndex *i, CaChunkID *ret_id, uint64_t *ret_size) {
                 return 0; /* EOF */
         }
 
-        if (i->previous_chunk != UINT64_MAX &&
-            i->previous_chunk >= le64toh(item.offset))
+        if (i->previous_chunk_offset != UINT64_MAX &&
+            i->previous_chunk_offset >= le64toh(item.offset))
                 return -EBADMSG;
 
-        if (i->previous_chunk != UINT64_MAX &&
-            (le64toh(item.offset) - i->previous_chunk) > i->chunk_size_max)
+        if (i->previous_chunk_offset != UINT64_MAX &&
+            (le64toh(item.offset) - i->previous_chunk_offset) > i->chunk_size_max)
                 return -EBADMSG;
 
-        memcpy(ret_id, item.chunk, sizeof(CaChunkID));
+        if (ret_id)
+                memcpy(ret_id, item.chunk, sizeof(CaChunkID));
+
+        if (ret_offset_end)
+                *ret_offset_end = le64toh(item.offset);
 
         if (ret_size)
-                *ret_size = i->previous_chunk == UINT64_MAX ? UINT64_MAX : (le64toh(item.offset) - i->previous_chunk);
+                *ret_size = i->previous_chunk_offset == UINT64_MAX ? UINT64_MAX : (le64toh(item.offset) - i->previous_chunk_offset);
 
-        i->previous_chunk = le64toh(item.offset);
-        i->n_items++;
+        i->previous_chunk_offset = le64toh(item.offset);
+        i->item_position++;
         i->cooked_offset += sizeof(item);
 
         return 1;
@@ -571,11 +579,11 @@ int ca_index_set_position(CaIndex *i, uint64_t position) {
                 return -EINVAL;
 
         if (lseek(i->fd, q, SEEK_SET) == (off_t) -1)
-                return -EINVAL;
+                return -errno;
 
         i->cooked_offset = q;
-        i->n_items = position;
-        i->previous_chunk = position == 0 ? 0 : UINT64_MAX;
+        i->item_position = position;
+        i->previous_chunk_offset = position == 0 ? 0 : UINT64_MAX;
 
         return 0;
 }
@@ -589,8 +597,27 @@ int ca_index_get_position(CaIndex *i, uint64_t *ret) {
         if (i->start_offset == 0)
                 return -ENODATA;
 
-        *ret = i->n_items;
+        *ret = i->item_position;
         return 0;
+}
+
+static int read_file_size(CaIndex *i) {
+        struct stat st;
+
+        assert(i);
+
+        if (i->file_size != UINT64_MAX)
+                return 0;
+
+        if (fstat(i->fd, &st) < 0)
+                return -errno;
+
+        if (!S_ISREG(st.st_mode))
+                return -EBADFD;
+
+        i->file_size = st.st_size;
+
+        return 1;
 }
 
 int ca_index_get_available_chunks(CaIndex *i, uint64_t *ret) {
@@ -611,17 +638,9 @@ int ca_index_get_available_chunks(CaIndex *i, uint64_t *ret) {
 
         if (i->mode == CA_INDEX_READ) {
 
-                if (i->file_size == UINT64_MAX) {
-                        struct stat st;
-
-                        if (fstat(i->fd, &st) < 0)
-                                return -errno;
-
-                        if (!S_ISREG(st.st_mode))
-                                return -EBADFD;
-
-                        i->file_size = st.st_size;
-                }
+                r = read_file_size(i);
+                if (r < 0)
+                        return r;
 
                 available = i->file_size;
 
@@ -848,4 +867,239 @@ int ca_index_get_chunk_size_max(CaIndex *i, size_t *ret) {
 
         *ret = i->chunk_size_max;
         return 0;
+}
+
+static inline uint64_t CA_INDEX_METADATA_SIZE(CaIndex *i) {
+        assert(i);
+
+        return i->start_offset + sizeof(le64_t) + CA_CHUNK_ID_SIZE + sizeof(le64_t);
+}
+
+int ca_index_get_index_size(CaIndex *i, uint64_t *ret) {
+        uint64_t size, metadata_size;
+        int r;
+
+        if (!i)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        r = ca_index_open(i);
+        if (r < 0)
+                return r;
+
+        r = ca_index_read_head(i);
+        if (r < 0)
+                return r;
+
+        switch (i->mode) {
+
+        case CA_INDEX_READ:
+                r = read_file_size(i);
+                if (r < 0)
+                        return r;
+
+                size = i->file_size;
+                break;
+
+        case CA_INDEX_INCREMENTAL_READ:
+
+                if (!i->wrote_eof)
+                        return -EAGAIN;
+
+                size = i->raw_offset;
+                break;
+
+        default:
+                return -ENOTTY;
+        }
+
+        /* Some size validation checks */
+        metadata_size = CA_INDEX_METADATA_SIZE(i);
+        if (size < metadata_size)
+                return -EBADMSG;
+
+        if ((size - metadata_size) % sizeof(CaFormatTableItem) != 0)
+                return -EBADMSG;
+
+        *ret = size;
+        return 0;
+}
+
+int ca_index_get_total_chunks(CaIndex *i, uint64_t *ret) {
+        uint64_t size;
+        int r;
+
+        if (!i)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        r = ca_index_get_index_size(i, &size);
+        if (r < 0)
+                return r;
+
+        *ret = (size - CA_INDEX_METADATA_SIZE(i)) / sizeof(CaFormatTableItem);
+        return 0;
+}
+
+static int ca_index_read_tail(CaIndex *i) {
+        struct {
+                CaFormatTableItem last_item;
+                struct {
+                        le64_t marker;
+                        uint8_t digest[CA_CHUNK_ID_SIZE];
+                        le64_t final_size;
+                } tail;
+        } buffer;
+        uint64_t size;
+        ssize_t l;
+        int r;
+
+        if (!i)
+                return -EINVAL;
+
+        r = ca_index_get_index_size(i, &size);
+        if (r < 0)
+                return r;
+
+        if (size == CA_INDEX_METADATA_SIZE(i)) {
+                /* If there's not a single chunk, then the blob has size zero, in this case only read the tail */
+
+                l = pread(i->fd, &buffer.tail, sizeof(buffer.tail), size - sizeof(buffer.tail));
+                if (l < 0)
+                        return -errno;
+                if (l != sizeof(buffer.tail))
+                        return -EBADMSG;
+        } else {
+                /* If there's at least one chunk, then read the last chunk's data, too */
+
+                l = pread(i->fd, &buffer, sizeof(buffer), size - sizeof(buffer));
+                if (l < 0)
+                        return -errno;
+                if (l != sizeof(buffer))
+                        return -EBADMSG;
+        }
+
+        if (le64toh(buffer.tail.marker != UINT64_MAX))
+                return -EBADMSG;
+        if (le64toh(buffer.tail.final_size) + sizeof(CaFormatIndex) != size)
+                return -EBADMSG;
+        if (le64toh(buffer.last_item.offset) == 0)
+                return -EBADMSG;
+
+        memcpy(&i->digest, buffer.tail.digest, sizeof(CaChunkID));
+        i->digest_valid = true;
+
+        i->blob_size = le64toh(buffer.last_item.offset);
+
+        return 0;
+}
+
+int ca_index_get_blob_size(CaIndex *i, uint64_t *ret) {
+        int r;
+
+        if (!i)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (i->blob_size == UINT64_MAX) {
+                r = ca_index_read_tail(i);
+                if (r < 0)
+                        return r;
+        }
+
+        *ret = i->blob_size;
+        return 0;
+}
+
+int ca_index_seek(CaIndex *i, uint64_t offset, uint64_t *ret_skip) {
+        uint64_t size, n_chunks, left, right;
+        int r;
+
+        if (!i)
+                return -EINVAL;
+
+        r = ca_index_get_blob_size(i, &size);
+        if (r < 0)
+                return r;
+
+        if (offset >= size)
+                return -ENXIO;
+
+        r = ca_index_get_total_chunks(i, &n_chunks);
+        if (n_chunks == 0)
+                return -ENXIO;
+
+        /* Small opimization for seeking within the first chunk */
+        if (n_chunks == 1 || offset < i->chunk_size_min) {
+                r = ca_index_set_position(i, 0);
+                if (r < 0)
+                        return r;
+
+                if (ret_skip)
+                        *ret_skip = offset;
+
+                return 0;
+        }
+
+        /* Implement bisection to find the right chunk */
+        left = 0;
+        right = n_chunks - 2;
+        for (;;) {
+                uint64_t first_chunk_end, second_chunk_end, p;
+
+                p = left + (right - left) / 2;
+
+                r = ca_index_set_position(i, p);
+                if (r < 0)
+                        return r;
+
+                r = ca_index_read_chunk(i, NULL, &first_chunk_end, NULL);
+                if (r < 0)
+                        return r;
+
+                if (offset < first_chunk_end) {
+
+                        if (p == 0) {
+                                /* This is left of the first chunk boundary? Then it's definitely in the first chunk */
+
+                                r = ca_index_set_position(i, 0);
+                                if (r < 0)
+                                        return r;
+
+                                if (ret_skip)
+                                        *ret_skip = offset;
+
+                                return 0;
+                        }
+
+                        if (p == right)
+                                return -EBADMSG;
+
+                        right = p;
+                        continue;
+                }
+
+                r = ca_index_read_chunk(i, NULL, &second_chunk_end, NULL);
+                if (r < 0)
+                        return r;
+
+                if (offset >= second_chunk_end) {
+                        left = p+1;
+                        continue;
+                }
+
+                /* We found it, now let's position the read ptr on the second chunk again */
+
+                r = ca_index_set_position(i, p + 1);
+                if (r < 0)
+                        return r;
+
+                if (ret_skip)
+                        *ret_skip = offset - first_chunk_end;
+
+                return 0;
+        }
 }
