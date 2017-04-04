@@ -3,7 +3,6 @@
 * mtree manifest
 * seeks
 * fuse mount logic
-* nbd expose logic
 * save/restore btrfs file/subvol flags
 * save/restore acls
 * save/restore hardlinks?
