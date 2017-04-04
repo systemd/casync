@@ -2077,7 +2077,7 @@ int ca_decoder_get_payload(CaDecoder *d, const void **ret, size_t *ret_size) {
         if (!S_ISREG(mode) && !S_ISBLK(mode))
                 return -ENOTTY;
 
-        if (d->state != CA_DECODER_INIT)
+        if (d->state != CA_DECODER_IN_PAYLOAD)
                 return -ENODATA;
         if (realloc_buffer_size(&d->buffer) == 0)
                 return -ENODATA;
