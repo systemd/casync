@@ -66,6 +66,14 @@ int ca_sync_poll(CaSync *s, uint64_t timeout_usec);
 
 int ca_sync_current_path(CaSync *sync, char **ret);
 int ca_sync_current_mode(CaSync *sync, mode_t *ret);
+int ca_sync_current_target(CaSync *sync, const char **ret);
+int ca_sync_current_uid(CaSync *sync, uid_t *ret);
+int ca_sync_current_gid(CaSync *sync, uid_t *ret);
+int ca_sync_current_user(CaSync *sync, const char **ret);
+int ca_sync_current_group(CaSync *sync, const char **ret);
+int ca_sync_current_mtime(CaSync *sync, uint64_t *nsec);
+int ca_sync_current_size(CaSync *sync, uint64_t *ret);
+int ca_sync_current_rdev(CaSync *sync, dev_t *ret);
 
 int ca_sync_get_digest(CaSync *s, CaChunkID *ret);
 int ca_sync_get_archive_size(CaSync *s, uint64_t *ret);

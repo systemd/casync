@@ -1140,7 +1140,7 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                         return CA_ENCODER_FINISHED;
                 }
 
-                return CA_ENCODER_DATA;
+                return CA_ENCODER_PAYLOAD;
         }
 
         case CA_ENCODER_NEXT_DIRENT:
@@ -1331,6 +1331,41 @@ static int ca_encoder_get_filename_data(CaEncoder *e, const struct dirent *de) {
         return 1;
 }
 
+static uint64_t ca_encoder_fixup_mtime(CaEncoder *e, CaEncoderNode *n) {
+        uint64_t mtime;
+
+        assert(e);
+        assert(n);
+
+        if (e->time_granularity == UINT64_MAX)
+                mtime = 0;
+        else {
+                mtime = timespec_to_nsec(n->stat.st_mtim);
+                mtime = (mtime / e->time_granularity) * e->time_granularity;
+        }
+
+        return mtime;
+}
+
+static mode_t ca_encoder_fixup_mode(CaEncoder *e, CaEncoderNode *n) {
+        mode_t mode;
+
+        assert(e);
+        assert(n);
+
+        mode = n->stat.st_mode;
+        if (S_ISLNK(mode))
+                mode = S_IFLNK | 0777;
+        if (e->feature_flags & CA_FORMAT_WITH_PERMISSIONS)
+                mode = mode & (S_IFMT|07777);
+        else if (e->feature_flags & CA_FORMAT_WITH_READ_ONLY)
+                mode = (mode & S_IFMT) | ((mode & 0222) ? (S_ISDIR(mode) ? 0777 : 0666) : (S_ISDIR(mode) ? 0555 : 0444));
+        else
+                mode &= S_IFMT;
+
+        return mode;
+}
+
 static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         uint64_t mtime, mode, uid, gid, flags = 0, fsize;
         CaFormatEntry *entry;
@@ -1392,22 +1427,8 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
             S_ISSOCK(n->stat.st_mode))
                 return -EPROTONOSUPPORT;
 
-        if (e->time_granularity == UINT64_MAX)
-                mtime = 0;
-        else {
-                mtime = timespec_to_nsec(n->stat.st_mtim);
-                mtime = (mtime / e->time_granularity) * e->time_granularity;
-        }
-
-        mode = n->stat.st_mode;
-        if (S_ISLNK(mode))
-                mode = S_IFLNK | 0777;
-        if (e->feature_flags & CA_FORMAT_WITH_PERMISSIONS)
-                mode = mode & (S_IFMT|07777);
-        else if (e->feature_flags & CA_FORMAT_WITH_READ_ONLY)
-                mode = (mode & S_IFMT) | ((mode & 0222) ? (S_ISDIR(mode) ? 0777 : 0666) : (S_ISDIR(mode) ? 0555 : 0444));
-        else
-                mode &= S_IFMT;
+        mtime = ca_encoder_fixup_mtime(e, n);
+        mode = ca_encoder_fixup_mode(e, n);
 
         if (S_ISDIR(n->stat.st_mode) || S_ISREG(n->stat.st_mode)) {
                 /* chattr(1) flags and FAT file flags are only defined for regular files and directories */
@@ -1750,7 +1771,202 @@ int ca_encoder_current_mode(CaEncoder *e, mode_t *ret) {
                         return -EUNATCH;
         }
 
-        *ret = n->stat.st_mode;
+        *ret = ca_encoder_fixup_mode(e, n);
+        return 0;
+}
+
+int ca_encoder_current_target(CaEncoder *e, const char **ret) {
+        CaEncoderNode *n;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        n = ca_encoder_current_child_node(e);
+        if (!n) {
+                n = ca_encoder_current_node(e);
+                if (!n)
+                        return -EUNATCH;
+        }
+
+        if (!S_ISLNK(n->stat.st_mode))
+                return -ENOLINK;
+
+        if (!n->symlink_target)
+                return -ENODATA;
+
+        *ret = n->symlink_target;
+        return 0;
+}
+
+int ca_encoder_current_mtime(CaEncoder *e, uint64_t *ret) {
+        CaEncoderNode *n;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (e->time_granularity == UINT64_MAX)
+                return -ENODATA;
+
+        n = ca_encoder_current_child_node(e);
+        if (!n) {
+                n = ca_encoder_current_node(e);
+                if (!n)
+                        return -EUNATCH;
+        }
+
+        *ret = ca_encoder_fixup_mtime(e, n);
+        return 0;
+}
+
+int ca_encoder_current_size(CaEncoder *e, uint64_t *ret) {
+        CaEncoderNode *n;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        n = ca_encoder_current_child_node(e);
+        if (!n) {
+                n = ca_encoder_current_node(e);
+                if (!n)
+                        return -EUNATCH;
+        }
+
+        if (!S_ISREG(n->stat.st_mode))
+                return -ENODATA;
+
+        *ret = n->stat.st_size;
+        return 0;
+}
+
+int ca_encoder_current_uid(CaEncoder *e, uid_t *ret) {
+        CaEncoderNode *n;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!(e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)))
+                return -ENODATA;
+
+        n = ca_encoder_current_child_node(e);
+        if (!n) {
+                n = ca_encoder_current_node(e);
+                if (!n)
+                        return -EUNATCH;
+        }
+
+        *ret = n->stat.st_uid;
+        return 0;
+}
+
+int ca_encoder_current_gid(CaEncoder *e, gid_t *ret) {
+        CaEncoderNode *n;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!(e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)))
+                return -ENODATA;
+
+        n = ca_encoder_current_child_node(e);
+        if (!n) {
+                n = ca_encoder_current_node(e);
+                if (!n)
+                        return -EUNATCH;
+        }
+
+        *ret = n->stat.st_gid;
+        return 0;
+}
+
+int ca_encoder_current_user(CaEncoder *e, const char **ret) {
+        CaEncoderNode *n;
+        int r;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!(e->feature_flags & (CA_FORMAT_WITH_USER_NAMES)))
+                return -ENODATA;
+
+        n = ca_encoder_current_child_node(e);
+        if (!n) {
+                n = ca_encoder_current_node(e);
+                if (!n)
+                        return -EUNATCH;
+        }
+
+        r = ca_encoder_node_read_user_group_names(e, n);
+        if (r < 0)
+                return r;
+
+        if (!e->cached_user_name || e->cached_uid != n->stat.st_uid)
+                return -ENODATA;
+
+        *ret = e->cached_user_name;
+        return 0;
+}
+
+int ca_encoder_current_group(CaEncoder *e, const char **ret) {
+        CaEncoderNode *n;
+        int r;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!(e->feature_flags & (CA_FORMAT_WITH_USER_NAMES)))
+                return -ENODATA;
+
+        n = ca_encoder_current_child_node(e);
+        if (!n) {
+                n = ca_encoder_current_node(e);
+                if (!n)
+                        return -EUNATCH;
+        }
+
+        r = ca_encoder_node_read_user_group_names(e, n);
+        if (r < 0)
+                return r;
+
+        if (!e->cached_group_name || e->cached_gid != n->stat.st_gid)
+                return -ENODATA;
+
+        *ret = e->cached_group_name;
+        return 0;
+}
+
+int ca_encoder_current_rdev(CaEncoder *e, dev_t *ret) {
+        CaEncoderNode *n;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        n = ca_encoder_current_child_node(e);
+        if (!n) {
+                n = ca_encoder_current_node(e);
+                if (!n)
+                        return -EUNATCH;
+        }
+
+        if (!S_ISBLK(n->stat.st_mode) && !S_ISCHR(n->stat.st_mode))
+                return -ENODATA;
+
+        *ret = n->stat.st_rdev;
         return 0;
 }
 
@@ -2023,7 +2239,7 @@ int ca_encoder_seek(CaEncoder *e, CaLocation *location) {
 
                 realloc_buffer_empty(&e->buffer);
 
-                return CA_ENCODER_DATA;
+                return CA_ENCODER_PAYLOAD;
         }
 
         case CA_LOCATION_FILENAME:

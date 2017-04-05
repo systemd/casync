@@ -1245,8 +1245,9 @@ static int ca_sync_step_encode(CaSync *s) {
 
                 return CA_SYNC_FINISHED;
 
+        case CA_ENCODER_DATA:
         case CA_ENCODER_NEXT_FILE:
-        case CA_ENCODER_DATA: {
+        case CA_ENCODER_PAYLOAD: {
                 const void *p;
                 size_t l;
 
@@ -1270,7 +1271,8 @@ static int ca_sync_step_encode(CaSync *s) {
                 if (r < 0)
                         return r;
 
-                return step == CA_ENCODER_NEXT_FILE ? CA_SYNC_NEXT_FILE : CA_SYNC_STEP;
+                return step == CA_ENCODER_NEXT_FILE ? CA_SYNC_NEXT_FILE :
+                        step == CA_ENCODER_PAYLOAD ? CA_SYNC_PAYLOAD : CA_SYNC_STEP;
         }
 
         default:
@@ -2141,6 +2143,166 @@ int ca_sync_current_mode(CaSync *s, mode_t *ret) {
         return -ENOTTY;
 }
 
+int ca_sync_current_target(CaSync *s, const char **ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_target(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_target(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
+int ca_sync_current_mtime(CaSync *s, uint64_t *ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_mtime(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_mtime(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
+int ca_sync_current_size(CaSync *s, uint64_t *ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_size(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_size(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
+int ca_sync_current_uid(CaSync *s, uid_t *ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_uid(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_uid(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
+int ca_sync_current_gid(CaSync *s, gid_t *ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_gid(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_gid(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
+int ca_sync_current_user(CaSync *s, const char **ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_user(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_user(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
+int ca_sync_current_group(CaSync *s, const char **ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_group(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_group(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
+int ca_sync_current_rdev(CaSync *s, dev_t *ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_rdev(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_rdev(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
 static int ca_sync_add_pollfd(CaRemote *rr, struct pollfd *pollfd) {
         int r;
 
@@ -2285,10 +2447,12 @@ int ca_sync_get_payload(CaSync *s, const void **ret, size_t *ret_size) {
         if (!ret_size)
                 return -EINVAL;
 
-        if (!s->decoder)
-                return -ENODATA;
+        if (s->decoder)
+                return ca_decoder_get_payload(s->decoder, ret, ret_size);
+        else if (s->encoder)
+                return ca_encoder_get_data(s->encoder, ret, ret_size);
 
-        return ca_decoder_get_payload(s->decoder, ret, ret_size);
+        return -ENOTTY;
 }
 
 int ca_sync_get_archive_size(CaSync *s, uint64_t *ret_size) {

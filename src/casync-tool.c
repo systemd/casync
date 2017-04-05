@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <gcrypt.h>
 #include <getopt.h>
 #include <signal.h>
 #include <stdio.h>
@@ -16,6 +17,7 @@
 #include "caremote.h"
 #include "castore.h"
 #include "casync.h"
+#include "gcrypt-util.h"
 #include "parse-util.h"
 #include "util.h"
 
@@ -38,11 +40,12 @@ static uint64_t arg_with = 0;
 static uint64_t arg_without = 0;
 
 static void help(void) {
-        printf("%1$s [OPTIONS...] make ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX PATH\n"
-               "%1$s [OPTIONS...] extract ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX PATH\n"
-               "%1$s [OPTIONS...] list ARCHIVE|ARCHIVE_INDEX|DIRECTORY\n"
-               "%1$s [OPTIONS...] digest ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY\n"
-               "%1$s [OPTIONS...] mkdev BLOB|BLOB_INDEX\n\n"
+        printf("%1$s [OPTIONS...] make [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
+               "%1$s [OPTIONS...] extract [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
+               "%1$s [OPTIONS...] list [ARCHIVE|ARCHIVE_INDEX|DIRECTORY]\n"
+               "%1$s [OPTIONS...] mtree [ARCHIVE|ARCHIVE_INDEX|DIRECTORY]\n"
+               "%1$s [OPTIONS...] digest [ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY]\n"
+               "%1$s [OPTIONS...] mkdev [BLOB|BLOB_INDEX]\n\n"
                "Content-Addressable Data Synchronization Tool\n\n"
                "  -h --help                  Show this help\n"
                "  -v --verbose               Show terse status information during runtime\n"
@@ -1115,6 +1118,62 @@ finish:
         return r;
 }
 
+static int do_print_digest(gcry_md_hd_t digest) {
+        const void *q;
+        char *h;
+
+        assert(digest);
+
+        q = gcry_md_read(digest, GCRY_MD_SHA256);
+        if (!q) {
+                fprintf(stderr, "Failed to read SHA256 sum.\n");
+                return -EINVAL;
+        }
+
+        h = hexmem(q, gcry_md_get_algo_dlen(GCRY_MD_SHA256));
+        if (!h)
+                return log_oom();
+
+        printf(" sha256digest=%s\n", h);
+        free(h);
+
+        return 0;
+}
+
+static int mtree_escape(const char *p, char **ret) {
+        const char *a;
+        char *n, *b;
+        size_t l;
+
+        assert(p);
+        assert(ret);
+
+        l = strlen(p);
+        n = new(char, l*4+1);
+        if (!n)
+                return -ENOMEM;
+
+        for (a = p, b = n; *a; a++) {
+
+                if ((uint8_t) *a <= (uint8_t) ' ' ||
+                    (uint8_t) *a >= 127U ||
+                    IN_SET(*a, '\\', '#')) {
+
+                        *(b++) = '\\';
+                        *(b++) = octchar((uint8_t) *a / 64U);
+                        *(b++) = octchar(((uint8_t) *a / 8U) % 8U);
+                        *(b++) = octchar((uint8_t) *a % 8U);
+                } else
+                        *(b++) = *a;
+        }
+
+        *b = 0;
+
+        *ret = n;
+
+        return 0;
+}
+
 static int list(int argc, char *argv[]) {
 
         typedef enum ListOperation {
@@ -1129,6 +1188,8 @@ static int list(int argc, char *argv[]) {
         int r, input_fd = -1;
         char *input = NULL;
         CaSync *s = NULL;
+        gcry_md_hd_t digest = NULL;
+        bool print_digest = false;
 
         if (argc > 2) {
                 fprintf(stderr, "A single input file name expected.\n");
@@ -1296,6 +1357,16 @@ static int list(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
+        initialize_libgcrypt();
+
+        if (streq(argv[0], "mtree")) {
+                if (gcry_md_open(&digest, GCRY_MD_SHA256, 0) != 0) {
+                        fprintf(stderr, "Couldn't allocate SHA256 digest.\n");
+                        r = -EIO;
+                        goto finish;
+                }
+        }
+
         for (;;) {
                 r = ca_sync_step(s);
                 if (r == -ENOMEDIUM) {
@@ -1315,13 +1386,37 @@ static int list(int argc, char *argv[]) {
                         r = 0;
                         goto finish;
 
+                case CA_SYNC_PAYLOAD: {
+                        const void *p;
+                        size_t sz;
+
+                        if (!digest)
+                                break;
+
+                        r = ca_sync_get_payload(s, &p, &sz);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to acquire payload: %s\n", strerror(-r));
+                                goto finish;
+                        }
+
+                        gcry_md_write(digest, p, sz);
+                        break;
+                }
+
                 case CA_SYNC_STEP:
-                case CA_SYNC_PAYLOAD:
                         break;
 
                 case CA_SYNC_NEXT_FILE: {
                         char *path, ls_mode[LS_FORMAT_MODE_MAX];
                         mode_t mode;
+
+                        if (print_digest) {
+                                r = do_print_digest(digest);
+                                if (r < 0)
+                                        goto finish;
+
+                                print_digest = false;
+                        }
 
                         r = ca_sync_current_mode(s, &mode);
                         if (r < 0) {
@@ -1335,7 +1430,117 @@ static int list(int argc, char *argv[]) {
                                 goto finish;
                         }
 
-                        printf("%s %s\n", ls_format_mode(mode, ls_mode), path);
+                        if (streq(argv[0], "list")) {
+                                printf("%s %s\n", ls_format_mode(mode, ls_mode), path);
+                                print_digest = false;
+                        } else {
+                                const char *target = NULL, *user = NULL, *group = NULL;
+                                uint64_t mtime = UINT64_MAX, size = UINT64_MAX;
+                                uid_t uid = -1;
+                                gid_t gid = -1;
+                                dev_t rdev = (dev_t) -1;
+                                char *escaped;
+
+                                assert(streq(argv[0], "mtree"));
+
+                                (void) ca_sync_current_target(s, &target);
+                                (void) ca_sync_current_mtime(s, &mtime);
+                                (void) ca_sync_current_size(s, &size);
+                                (void) ca_sync_current_uid(s, &uid);
+                                (void) ca_sync_current_gid(s, &gid);
+                                (void) ca_sync_current_user(s, &user);
+                                (void) ca_sync_current_group(s, &group);
+                                (void) ca_sync_current_rdev(s, &rdev);
+
+                                r = mtree_escape(path, &escaped);
+                                if (r < 0) {
+                                        free(escaped);
+                                        r = log_oom();
+                                        goto finish;
+                                }
+
+                                fputs(isempty(escaped) ? "." : escaped, stdout);
+                                free(escaped);
+
+                                if (S_ISLNK(mode))
+                                        fputs(" type=link", stdout);
+                                else if (S_ISDIR(mode))
+                                        fputs(" type=dir", stdout);
+                                else if (S_ISREG(mode))
+                                        fputs(" type=file", stdout);
+                                else if (S_ISSOCK(mode))
+                                        fputs(" type=socket", stdout);
+                                else if (S_ISCHR(mode))
+                                        fputs(" type=char", stdout);
+                                else if (S_ISBLK(mode))
+                                        fputs(" type=block", stdout);
+                                else if (S_ISFIFO(mode))
+                                        fputs(" type=fifo", stdout);
+
+                                printf(" mode=%04o",  mode & 07777);
+
+                                if (size != UINT64_MAX)
+                                        printf(" size=%" PRIu64, size);
+
+                                if (target) {
+                                        r = mtree_escape(target, &escaped);
+                                        if (r < 0) {
+                                                free(path);
+                                                r = log_oom();
+                                                goto finish;
+                                        }
+
+                                        printf(" link=%s", escaped);
+                                        free(escaped);
+                                }
+
+                                if (rdev != (dev_t) -1)
+                                        printf(" device=linux,%" PRIu32 ",%" PRIu32,
+                                               (uint32_t) major(rdev),
+                                               (uint32_t) minor(rdev));
+
+                                if (uid_is_valid(uid))
+                                        printf(" uid=" UID_FMT, uid);
+                                if (uid_is_valid(gid))
+                                        printf(" gid=" GID_FMT, gid);
+
+                                if (user) {
+                                        r = mtree_escape(user, &escaped);
+                                        if (r < 0) {
+                                                free(path);
+                                                r = log_oom();
+                                                goto finish;
+                                        }
+
+                                        printf(" uname=%s", escaped);
+                                        free(escaped);
+                                }
+
+                                if (group) {
+                                        r = mtree_escape(group, &escaped);
+                                        if (r < 0) {
+                                                free(path);
+                                                r = log_oom();
+                                                goto finish;
+                                        }
+
+                                        printf(" gname=%s", escaped);
+                                        free(escaped);
+                                }
+
+                                if (mtime != UINT64_MAX)
+                                        printf(" time=%" PRIu64 ".%09" PRIu64,
+                                               mtime / UINT64_C(1000000000),
+                                               mtime % UINT64_C(1000000000));
+
+                                print_digest = S_ISREG(mode);
+
+                                if (print_digest)
+                                        gcry_md_reset(digest);
+                                else
+                                        putchar('\n');
+                        }
+
                         free(path);
                         break;
                 }
@@ -1366,7 +1571,21 @@ static int list(int argc, char *argv[]) {
                         progress();
         }
 
+        if (print_digest) {
+                r = do_print_digest(digest);
+                if (r < 0)
+                        goto finish;
+
+                print_digest = false;
+        }
+
 finish:
+        if (print_digest)
+                putchar('\n');
+
+        if (digest)
+                gcry_md_close(digest);
+
         ca_sync_unref(s);
 
         if (input_fd >= 3)
@@ -2543,7 +2762,7 @@ static int dispatch_verb(int argc, char *argv[]) {
                 r = make(argc, argv);
         else if (streq(argv[0], "extract"))
                 r = extract(argc, argv);
-        else if (streq(argv[0], "list"))
+        else if (STR_IN_SET(argv[0], "list", "mtree"))
                 r = list(argc, argv);
         else if (streq(argv[0], "digest"))
                 r = digest(argc, argv);

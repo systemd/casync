@@ -41,6 +41,15 @@ int ca_decoder_get_payload(CaDecoder *d, const void **ret, size_t *ret_size);
 
 int ca_decoder_current_path(CaDecoder *d, char **ret);
 int ca_decoder_current_mode(CaDecoder *d, mode_t *ret);
+int ca_decoder_current_target(CaDecoder *d, const char **ret);
+int ca_decoder_current_mtime(CaDecoder *d, uint64_t *nsec);
+int ca_decoder_current_size(CaDecoder *d, uint64_t *size);
+int ca_decoder_current_uid(CaDecoder *d, uid_t *uid);
+int ca_decoder_current_gid(CaDecoder *d, gid_t *gid);
+int ca_decoder_current_user(CaDecoder *d, const char **user);
+int ca_decoder_current_group(CaDecoder *d, const char **user);
+int ca_decoder_current_rdev(CaDecoder *d, dev_t *ret);
+
 int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret);
 
 int ca_decoder_seek_archive(CaDecoder *d, uint64_t offset);

@@ -237,6 +237,10 @@ int dev_urandom(void *p, size_t n) {
         return 0;
 }
 
+char octchar(int x) {
+        return '0' + (x & 7);
+}
+
 char hexchar(int x) {
         static const char table[16] = "0123456789abcdef";
 

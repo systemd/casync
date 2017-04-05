@@ -52,6 +52,7 @@ static int encode(int dfd, int fd) {
 
                         /* Fall through */
 
+                case CA_ENCODER_PAYLOAD:
                 case CA_ENCODER_DATA: {
                         const void *p;
                         size_t sz;

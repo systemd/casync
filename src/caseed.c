@@ -328,8 +328,10 @@ int ca_seed_step(CaSeed *s) {
 
                         return CA_SEED_READY;
 
-                case CA_ENCODER_NEXT_FILE:
                 case CA_ENCODER_DATA:
+                case CA_ENCODER_NEXT_FILE:
+                case CA_ENCODER_PAYLOAD:
+
                         r = ca_seed_cache_chunks(s);
                         if (r < 0)
                                 return r;
@@ -399,8 +401,9 @@ int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *
                 case CA_ENCODER_FINISHED:
                         return -EPIPE;
 
+                case CA_ENCODER_DATA:
                 case CA_ENCODER_NEXT_FILE:
-                case CA_ENCODER_DATA: {
+                case CA_ENCODER_PAYLOAD: {
                         const void *q;
                         size_t w;
                         uint64_t m;
