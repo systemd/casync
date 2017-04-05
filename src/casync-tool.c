@@ -1902,7 +1902,8 @@ static int mkdev(int argc, char *argv[]) {
         }
 
         if (operation == _MKDEV_OPERATION_INVALID && input && !streq(input, "-")) {
-                if (ca_locator_has_suffix(input, ".caibx"))
+                if (ca_locator_has_suffix(input, ".caibx") ||
+                    ca_locator_has_suffix(input, ".caidx"))
                         operation = MKDEV_BLOB_INDEX;
         }
 
