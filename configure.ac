@@ -42,7 +42,7 @@ AM_PATH_LIBGCRYPT([1.4.5],, AC_MSG_ERROR([*** libgcrypt was not found.]))
 AC_SUBST([LIBGCRYPT_CFLAGS])
 AC_SUBST([LIBGCRYPT_LIBS])
 
-PKG_CHECK_MODULES(LIBLZMA, [liblzma >= 5.2.2],
+PKG_CHECK_MODULES(LIBLZMA, [liblzma >= 5.1.0],
                   [], [AC_MSG_ERROR([*** lzma library not found])])
 
 PKG_CHECK_MODULES(LIBCURL, [libcurl >= 7.32.0],
