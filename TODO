@@ -1,6 +1,5 @@
 * verify
 * diff
-* mtree manifest
 * seeks
 * fuse mount logic
 * save/restore btrfs file/subvol flags
@@ -28,3 +27,4 @@
 * support accessing base trees through native protocol
 * implicitly generate index + chunks when accessing base trees or archives through native protocol
 * rework caindex to read multiple chunks per read (use reallocbuffer like elsewhere)
+* permit 511 (or 4095?) redundant NUL bytes at the end of archive and index files, so that they could in theory stored on block devices
