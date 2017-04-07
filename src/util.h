@@ -540,6 +540,10 @@ static inline const char *yes_no(bool b) {
 #define FUSE_CTL_SUPER_MAGIC 0x65735543
 #endif
 
+#ifndef CGROUP2_SUPER_MAGIC
+#define CGROUP2_SUPER_MAGIC 0x63677270
+#endif
+
 #define PTR_TO_INT(p) ((int) ((intptr_t) (p)))
 #define INT_TO_PTR(u) ((void *) ((intptr_t) (u)))
 #define PTR_TO_UINT(p) ((unsigned int) ((uintptr_t) (p)))
