@@ -64,8 +64,9 @@ but there are other systems that use similar algorithms, in particular:
 ## Operations on directory trees
 
 ```
-# casync digest /home/lennart
 # casync list /home/lennart
+# casync digest /home/lennart
+# casync mtree /home/lennart
 ```
 
 ## Operations on archives
@@ -113,6 +114,7 @@ but there are other systems that use similar algorithms, in particular:
 # casync extract foobar:/srv/backup/lennart.caidx /home/lennart2
 # casync list foobar:/srv/backup/lennart.caidx
 # casync digest foobar:/srv/backup/lennart.caidx
+# casync mtree foobar:/srv/backup/lennart.caidx
 ```
 
 ## Operations involving the web
@@ -121,6 +123,7 @@ but there are other systems that use similar algorithms, in particular:
 # casync extract http://www.foobar.com/lennart.caidx /home/lennart
 # casync list http://www.foobar.com/lennart.caidx
 # casync digest http://www.foobar.com/lennart.caidx
+# casync mtree http://www.foobar.com/lennart.caidx
 # casync extract --seed=/home/lennart http://www.foobar.com/lennart.caidx /home/lennart2
 # casync mount --seed=/home/lennart http://www.foobar.com/lennart.caidx /home/lennart2 (NOT IMPLEMENTED YET)
 ```
