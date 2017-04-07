@@ -75,7 +75,7 @@ but there are other systems that use similar algorithms, in particular:
 # casync extract /home/lennart.catar /home/lennart
 # casync list /home/lennart.catar
 # casync digest /home/lennart.catar
-# casync manifest /home/lennart.catar (NOT IMPLEMENTED YET)
+# casync mtree /home/lennart.catar
 # casync verify /home/lennart.catar /home/lennart  (NOT IMPLEMENTED YET)
 # casync diff /home/lennart.catar /home/lennart (NOT IMPLEMENTED YET)
 # casync mount /home/lennart.catar /home/lennart (NOT IMPLEMENTED YET)
@@ -90,7 +90,7 @@ but there are other systems that use similar algorithms, in particular:
 # casync get --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart.catar (NOT IMPLEMENTED YET)
 # casync list --store=/var/lib/backup.castr /home/lennart.caidx
 # casync digest --store=/var/lib/backup.castr /home/lennart.caidx
-# casync manifest -pool=/var/lib/backup.castr /home/lennart.caidx (NOT IMPLEMENTED YET)
+# casync mtree -pool=/var/lib/backup.castr /home/lennart.caidx
 # casync verify --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart (NOT IMPLEMENTED YET)
 # casync diff --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart (NOT IMPLEMENTED YET)
 # casync mount --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart (NOT IMPLEMENTED YET)
@@ -103,7 +103,7 @@ but there are other systems that use similar algorithms, in particular:
 # casync get --store=/var/lib/backup.castr fedora25.caibx /home/lennart/Fedora25.raw (NOT IMPLEMENTED YET)
 # casync digest --store=/var/lib/backup.castr fedora25.caibx
 # casync verify --store=/var/lib/backup.castr fedora25.caibx /home/lennart/Fedora25.raw (NOT IMPLEMENTED YET)
-# casync mkdev --store=/var/lib/backup.castr fedora25.caibx (NOT IMPLEMENTED YET)
+# casync mkdev --store=/var/lib/backup.castr fedora25.caibx
 ```
 
 ## Operations involving ssh remoting
