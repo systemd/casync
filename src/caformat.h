@@ -8,25 +8,35 @@
 
 /* The format is like this: every archive begins items in the following order:
  *
- * ENTRY      -- containing general stat() data and related bits
- * USER       -- user name as text, if enabled
- * GROUP      -- group name as text, if enabled
- * XATTR      -- one extended attribute
- * ..         -- more of these when there are multiple defined
- * FCAPS      -- file capability in Linux disk format
- * PAYLOAD    -- file contents, if it is one
- * SYMLINK    -- symlink target, if it is one
- * DEVICE     -- device major/minor, if it is a block/char device
+ * ENTRY             -- containing general stat() data and related bits
+ * USER              -- user name as text, if enabled
+ * GROUP             -- group name as text, if enabled
+ * XATTR             -- one extended attribute
+ * ..                -- more of these when there are multiple defined
+ * ACL_USER          -- one USER ACL entry
+ * ...               -- more of these when there are multiple defined
+ * ACL_GROUP         -- one GROUP ACL entry
+ * ...               -- more of these when there are multiple defined
+ * ACL_GROUP_OBJ     -- The ACL_GROUP_OBJ
+ * ACL_DEFAULT       -- The various default ACL fields if there's one defined
+ * ACL_DEFAULT_USER  -- one USER ACL entry
+ * ...               -- more of these when multiple are defined
+ * ACL_DEFAULT_GROUP -- one GROUP ACL entry
+ * ...               -- more of these when multiple are defined
+ * FCAPS             -- file capability in Linux disk format
+ * PAYLOAD           -- file contents, if it is one
+ * SYMLINK           -- symlink target, if it is one
+ * DEVICE            -- device major/minor, if it is a block/char device
  *
  * If we are serializing a directory, then this is followed by:
  *
- * FILENAME   -- name of the first directory entry (strictly ordered!)
- * <archive>  -- serialization of the first directory entry's metadata and contents,
- *               following the exact same archive format
- * FILENAME   -- name of the second directory entry (strictly ordered!)
- * <archive>  -- serialization of the second directory entry
+ * FILENAME          -- name of the first directory entry (strictly ordered!)
+ * <archive>         -- serialization of the first directory entry's metadata and contents,
+ *                      following the exact same archive format
+ * FILENAME          -- name of the second directory entry (strictly ordered!)
+ * <archive>         -- serialization of the second directory entry
  * …
- * GOODBYE    -- marker for the end of a list of directory entries
+ * GOODBYE           -- marker for the end of a list of directory entries
  *
  * And that's already it.
  *
@@ -34,20 +44,26 @@
 
 enum {
         /* The archive file format */
-        CA_FORMAT_ENTRY    = UINT64_C(0x1396fabcea5bbb51),
-        CA_FORMAT_USER     = UINT64_C(0xf453131aaeeaccb3),
-        CA_FORMAT_GROUP    = UINT64_C(0x25eb6ac969396a52),
-        CA_FORMAT_XATTR    = UINT64_C(0xb8157091f80bc486),
-        CA_FORMAT_FCAPS    = UINT64_C(0xf7267db0afed0629),
-        CA_FORMAT_SYMLINK  = UINT64_C(0x664a6fb6830e0d6c),
-        CA_FORMAT_DEVICE   = UINT64_C(0xac3dace369dfe643),
-        CA_FORMAT_PAYLOAD  = UINT64_C(0x8b9e1d93d6dcffc9),
-        CA_FORMAT_FILENAME = UINT64_C(0x6dbb6ebcb3161f0b),
-        CA_FORMAT_GOODBYE  = UINT64_C(0xdfd35c5e8327c403),
+        CA_FORMAT_ENTRY                 = UINT64_C(0x1396fabcea5bbb51),
+        CA_FORMAT_USER                  = UINT64_C(0xf453131aaeeaccb3),
+        CA_FORMAT_GROUP                 = UINT64_C(0x25eb6ac969396a52),
+        CA_FORMAT_XATTR                 = UINT64_C(0xb8157091f80bc486),
+        CA_FORMAT_ACL_USER              = UINT64_C(0x297dc88b2ef12faf),
+        CA_FORMAT_ACL_GROUP             = UINT64_C(0x36f2acb56cb3dd0b),
+        CA_FORMAT_ACL_GROUP_OBJ         = UINT64_C(0x23047110441f38f3),
+        CA_FORMAT_ACL_DEFAULT           = UINT64_C(0xfe3eeda6823c8cd0),
+        CA_FORMAT_ACL_DEFAULT_USER      = UINT64_C(0xbdf03df9bd010a91),
+        CA_FORMAT_ACL_DEFAULT_GROUP     = UINT64_C(0xa0cb1168782d1f51),
+        CA_FORMAT_FCAPS                 = UINT64_C(0xf7267db0afed0629),
+        CA_FORMAT_SYMLINK               = UINT64_C(0x664a6fb6830e0d6c),
+        CA_FORMAT_DEVICE                = UINT64_C(0xac3dace369dfe643),
+        CA_FORMAT_PAYLOAD               = UINT64_C(0x8b9e1d93d6dcffc9),
+        CA_FORMAT_FILENAME              = UINT64_C(0x6dbb6ebcb3161f0b),
+        CA_FORMAT_GOODBYE               = UINT64_C(0xdfd35c5e8327c403),
 
         /* The index file format */
-        CA_FORMAT_INDEX    = UINT64_C(0x96824d9c7b129ff9),
-        CA_FORMAT_TABLE    = UINT64_C(0xe75b9e112f17417d),
+        CA_FORMAT_INDEX         = UINT64_C(0x96824d9c7b129ff9),
+        CA_FORMAT_TABLE         = UINT64_C(0xe75b9e112f17417d),
 };
 
 /* Feature flags */
@@ -88,8 +104,8 @@ enum {
         /* CA_FORMAT_WITH_FLAG_SUBVOLUME_RO = 0x8000000, */
 
         /* Extended Attribute metadata */
-        CA_FORMAT_WITH_XATTR             = 0x10000000,
-        /* CA_FORMAT_WITH_ACL               = 0x20000000, */
+        CA_FORMAT_WITH_XATTRS            = 0x10000000,
+        CA_FORMAT_WITH_ACL               = 0x20000000,
         /* CA_FORMAT_WITH_SELINUX           = 0x40000000, */
         CA_FORMAT_WITH_FCAPS             = 0x80000000,
 
@@ -99,7 +115,6 @@ enum {
                 CA_FORMAT_WITH_32BIT_UIDS|
                 CA_FORMAT_WITH_USER_NAMES|
                 CA_FORMAT_WITH_NSEC_TIME|
-                CA_FORMAT_WITH_PERMISSIONS|
                 CA_FORMAT_WITH_SYMLINKS|
                 CA_FORMAT_WITH_DEVICE_NODES|
                 CA_FORMAT_WITH_FIFOS|
@@ -119,8 +134,8 @@ enum {
                 CA_FORMAT_WITH_FLAG_PROJINHERIT|
                 /* CA_FORMAT_WITH_FLAG_SUBVOLUME| */
                 /* CA_FORMAT_WITH_FLAG_SUBVOLUME_RO| */
-                CA_FORMAT_WITH_XATTR|
-                /* CA_FORMAT_WITH_ACL| */
+                CA_FORMAT_WITH_XATTRS|
+                CA_FORMAT_WITH_ACL|
                 /* CA_FORMAT_WITH_SELINUX */
                 CA_FORMAT_WITH_FCAPS,
 
@@ -202,6 +217,41 @@ typedef struct CaFormatFCaps {
 } CaFormatFCaps;
 
 #define CA_FORMAT_FCAPS_SIZE_MAX (offsetof(CaFormatFCaps, data) + (64*1024))
+
+#define CA_FORMAT_ACL_PERMISSION_READ 4
+#define CA_FORMAT_ACL_PERMISSION_WRITE 2
+#define CA_FORMAT_ACL_PERMISSION_EXECUTE 1
+
+typedef struct CaFormatACLUser {
+        CaFormatHeader header;
+        le64_t uid;
+        le64_t permissions;
+        char name[];
+} CaFormatACLUser;
+
+#define CA_FORMAT_ACL_USER_SIZE_MAX (offsetof(CaFormatACLUser, name) + 256)
+
+typedef struct CaFormatACLGroup {
+        CaFormatHeader header;
+        le64_t gid;
+        le64_t permissions;
+        char name[];
+} CaFormatACLGroup;
+
+#define CA_FORMAT_ACL_GROUP_SIZE_MAX (offsetof(CaFormatACLGroup, name) + 256)
+
+typedef struct CaFormatACLGroupObj {
+        CaFormatHeader header;
+        le64_t permissions;
+} CaFormatACLGroupObj;
+
+typedef struct CaFormatACLDefault {
+        CaFormatHeader header;
+        le64_t user_obj_permissions;
+        le64_t group_obj_permissions;
+        le64_t other_permissions;
+        le64_t mask_permissions;
+} CaFormatACLDefault;
 
 typedef struct CaFormatSymlink {
         CaFormatHeader header;

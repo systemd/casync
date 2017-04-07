@@ -48,4 +48,13 @@ PKG_CHECK_MODULES(LIBLZMA, [liblzma >= 5.2.2],
 PKG_CHECK_MODULES(LIBCURL, [libcurl >= 7.32.0],
                   [], [AC_MSG_ERROR([*** curl library not found])])
 
+AC_CHECK_HEADERS([sys/acl.h acl/libacl.h],
+                 [], [AC_MSG_ERROR([*** ACL headers not found.])])
+
+AC_CHECK_LIB([acl], [acl_get_file],
+             [], [AC_MSG_ERROR([*** libacl not found.])])
+
+ACL_LIBS="-lacl"
+AC_SUBST(ACL_LIBS)
+
 AC_OUTPUT

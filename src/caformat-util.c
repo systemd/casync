@@ -23,6 +23,24 @@ const char *ca_format_type_name(uint64_t u) {
         case CA_FORMAT_FCAPS:
                 return "fcaps";
 
+        case CA_FORMAT_ACL_USER:
+                return "acl-user";
+
+        case CA_FORMAT_ACL_GROUP:
+                return "acl-group";
+
+        case CA_FORMAT_ACL_GROUP_OBJ:
+                return "acl-group-obj";
+
+        case CA_FORMAT_ACL_DEFAULT:
+                return "acl-default";
+
+        case CA_FORMAT_ACL_DEFAULT_USER:
+                return "acl-default-user";
+
+        case CA_FORMAT_ACL_DEFAULT_GROUP:
+                return "acl-default-group";
+
         case CA_FORMAT_SYMLINK:
                 return "symlink";
 
@@ -78,8 +96,9 @@ static const struct {
         { "flag-sync",        CA_FORMAT_WITH_FLAG_SYNC        },
         { "flag-nocomp",      CA_FORMAT_WITH_FLAG_NOCOMP      },
         { "flag-projinherit", CA_FORMAT_WITH_FLAG_PROJINHERIT },
-        { "xattr",            CA_FORMAT_WITH_XATTR            },
+        { "xattrs",           CA_FORMAT_WITH_XATTRS           },
         { "fcaps",            CA_FORMAT_WITH_FCAPS            },
+        { "acl",              CA_FORMAT_WITH_ACL              },
         { "best",             CA_FORMAT_WITH_BEST             },
         { "unix",             CA_FORMAT_WITH_UNIX             },
         { "fat",              CA_FORMAT_WITH_FAT              },
@@ -137,6 +156,10 @@ int ca_feature_flags_normalize(uint64_t flags, uint64_t *ret) {
         if ((flags & ~CA_FORMAT_FEATURE_FLAGS_MAX) != 0)
                 return -EOPNOTSUPP;
 
+        if ((flags & CA_FORMAT_WITH_ACL) &&
+            (flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_USER_NAMES)) == 0)
+                flags |= CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_USER_NAMES;
+
         if (flags & CA_FORMAT_WITH_32BIT_UIDS)
                 flags &= ~CA_FORMAT_WITH_16BIT_UIDS;
 
@@ -147,6 +170,8 @@ int ca_feature_flags_normalize(uint64_t flags, uint64_t *ret) {
         if (flags & CA_FORMAT_WITH_SEC_TIME)
                 flags &= ~CA_FORMAT_WITH_2SEC_TIME;
 
+        if (flags & CA_FORMAT_WITH_ACL)
+                flags &= ~(CA_FORMAT_WITH_PERMISSIONS|CA_FORMAT_WITH_READ_ONLY);
         if (flags & CA_FORMAT_WITH_PERMISSIONS)
                 flags &= ~CA_FORMAT_WITH_READ_ONLY;
 
@@ -287,7 +312,8 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FLAG_DIRSYNC|
                         CA_FORMAT_WITH_FLAG_IMMUTABLE|
                         CA_FORMAT_WITH_FLAG_SYNC|
-                        CA_FORMAT_WITH_XATTR|
+                        CA_FORMAT_WITH_XATTRS|
+                        CA_FORMAT_WITH_ACL|
                         CA_FORMAT_WITH_FCAPS;
 
         case XFS_SUPER_MAGIC:
@@ -310,7 +336,8 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FLAG_NODUMP|
                         CA_FORMAT_WITH_FLAG_IMMUTABLE|
                         CA_FORMAT_WITH_FLAG_SYNC|
-                        CA_FORMAT_WITH_XATTR|
+                        CA_FORMAT_WITH_XATTRS|
+                        CA_FORMAT_WITH_ACL|
                         CA_FORMAT_WITH_FCAPS;
 
         case BTRFS_SUPER_MAGIC:
@@ -337,12 +364,28 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FLAG_IMMUTABLE|
                         CA_FORMAT_WITH_FLAG_SYNC|
                         CA_FORMAT_WITH_FLAG_NOCOMP|
-                        CA_FORMAT_WITH_XATTR|
+                        CA_FORMAT_WITH_XATTRS|
+                        CA_FORMAT_WITH_ACL|
                         CA_FORMAT_WITH_FCAPS;
 
         case TMPFS_MAGIC:
+                return
+                        CA_FORMAT_WITH_16BIT_UIDS|
+                        CA_FORMAT_WITH_32BIT_UIDS|
+                        CA_FORMAT_WITH_USER_NAMES|
+                        CA_FORMAT_WITH_SEC_TIME|
+                        CA_FORMAT_WITH_USEC_TIME|
+                        CA_FORMAT_WITH_NSEC_TIME|
+                        CA_FORMAT_WITH_2SEC_TIME|
+                        CA_FORMAT_WITH_READ_ONLY|
+                        CA_FORMAT_WITH_PERMISSIONS|
+                        CA_FORMAT_WITH_SYMLINKS|
+                        CA_FORMAT_WITH_DEVICE_NODES|
+                        CA_FORMAT_WITH_FIFOS|
+                        CA_FORMAT_WITH_SOCKETS|
+                        CA_FORMAT_WITH_ACL;
+
         default:
-                /* For now, let's assume that tmpfs defines the baseline of what Linux file systems support */
                 return
                         CA_FORMAT_WITH_16BIT_UIDS|
                         CA_FORMAT_WITH_32BIT_UIDS|

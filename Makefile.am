@@ -142,7 +142,8 @@ casync_CFLAGS = \
 
 casync_LDADD = \
 	$(LIBLZMA_LIBS) \
-	$(LIBGCRYPT_LIBS)
+	$(LIBGCRYPT_LIBS) \
+	$(ACL_LIBS)
 
 ## casync-http
 
@@ -159,7 +160,8 @@ casync_http_CFLAGS = \
 casync_http_LDADD = \
 	$(LIBLZMA_LIBS) \
 	$(LIBGCRYPT_LIBS) \
-	$(LIBCURL_LIBS)
+	$(LIBCURL_LIBS) \
+	$(ACL_LIBS)
 
 install-exec-hook:
 	mkdir -p $(DESTDIR)$(protocoldir)
@@ -177,7 +179,8 @@ test_caencoder_CFLAGS = \
 
 test_caencoder_LDADD = \
 	$(LIBLZMA_LIBS) \
-	$(LIBGCRYPT_LIBS)
+	$(LIBGCRYPT_LIBS) \
+	$(ACL_LIBS)
 
 ## test-caformat
 
@@ -192,7 +195,8 @@ test_caformat_CFLAGS = \
 
 test_caformat_LDADD = \
 	$(LIBLZMA_LIBS) \
-	$(LIBGCRYPT_LIBS)
+	$(LIBGCRYPT_LIBS) \
+	$(ACL_LIBS)
 
 ## test-cachunker
 
@@ -205,7 +209,8 @@ test_cachunker_CFLAGS = \
 
 test_cachunker_LDADD = \
 	$(LIBLZMA_LIBS) \
-	$(LIBGCRYPT_LIBS)
+	$(LIBGCRYPT_LIBS) \
+	$(ACL_LIBS)
 
 ## test-casync
 
@@ -218,7 +223,8 @@ test_casync_CFLAGS = \
 
 test_casync_LDADD = \
 	$(LIBLZMA_LIBS) \
-	$(LIBGCRYPT_LIBS)
+	$(LIBGCRYPT_LIBS) \
+	$(ACL_LIBS)
 
 ## test-cautil
 
@@ -233,7 +239,8 @@ test_cautil_CFLAGS = \
 
 test_cautil_LDADD = \
 	$(LIBLZMA_LIBS) \
-	$(LIBGCRYPT_LIBS)
+	$(LIBGCRYPT_LIBS) \
+	$(ACL_LIBS)
 
 ## test-cachunk
 
@@ -248,7 +255,8 @@ test_cachunk_CFLAGS = \
 
 test_cachunk_LDADD = \
 	$(LIBLZMA_LIBS) \
-	$(LIBGCRYPT_LIBS)
+	$(LIBGCRYPT_LIBS) \
+	$(ACL_LIBS)
 
 ## test-caindex
 
@@ -263,7 +271,8 @@ test_caindex_CFLAGS = \
 
 test_caindex_LDADD = \
 	$(LIBLZMA_LIBS) \
-	$(LIBGCRYPT_LIBS)
+	$(LIBGCRYPT_LIBS) \
+	$(ACL_LIBS)
 
 ## test-script.sh
 
@@ -289,6 +298,7 @@ test-files:
 	test -e test-files/achardevice || mknod test-files/achardevice c 0 0
 	test -e test-files/immutable || ( touch test-files/immutable && chattr +i test-files/immutable )
 	test -e test-files/nocow || ( touch test-files/nocow && chattr +C test-files/nocow )
+	test -e test-files/acl || ( touch test-files/acl && setfacl -nm u:nobody:rw,u:root:rw test-files/acl)
 
 rm-test-files:
 	chattr -i test-files/immutable || :
@@ -297,5 +307,6 @@ rm-test-files:
 	rm -f test-files/achardevice
 	rm -f test-files/immutable
 	rm -f test-files/nocow
+	rm -f test-files/acl
 
 .PHONY: test-files

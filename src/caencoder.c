@@ -1,3 +1,4 @@
+#include <acl/libacl.h>
 #include <assert.h>
 #include <dirent.h>
 #include <errno.h>
@@ -7,6 +8,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/acl.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
@@ -35,6 +37,16 @@ typedef struct CaEncoderExtendedAttribute {
         void *data;
         size_t data_size;
 } CaEncoderExtendedAttribute;
+
+typedef struct CaEncoderACLEntry {
+        char *name;
+        uint64_t permissions;
+        union {
+                uid_t uid;
+                gid_t gid;
+                uint32_t generic_id;
+        };
+} CaEncoderACLEntry;
 
 typedef struct CaEncoderNode {
         int fd;
@@ -65,6 +77,23 @@ typedef struct CaEncoderNode {
         size_t n_xattrs;
         bool xattrs_valid;
 
+        /* ACLs */
+        CaEncoderACLEntry *acl_user;
+        size_t n_acl_user;
+        CaEncoderACLEntry *acl_group;
+        size_t n_acl_group;
+        CaEncoderACLEntry *acl_default_user;
+        size_t n_acl_default_user;
+        CaEncoderACLEntry *acl_default_group;
+        size_t n_acl_default_group;
+        uint64_t acl_group_obj_permissions;
+        uint64_t acl_default_user_obj_permissions;
+        uint64_t acl_default_group_obj_permissions;
+        uint64_t acl_default_other_permissions;
+        uint64_t acl_default_mask_permissions;
+        bool acl_valid;
+
+        /* File system capabilities */
         void *fcaps;
         size_t fcaps_size;
 } CaEncoderNode;
@@ -120,6 +149,15 @@ CaEncoder *ca_encoder_new(void) {
         return e;
 }
 
+static CaEncoderACLEntry* ca_encoder_acl_entry_free(CaEncoderACLEntry *l, size_t n) {
+        size_t i;
+
+        for (i = 0; i < n; i++)
+                free(l[i].name);
+
+        return mfree(l);
+}
+
 static void ca_encoder_node_free(CaEncoderNode *n) {
         size_t i;
 
@@ -141,8 +179,22 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
                 free(n->xattrs[i].name);
                 free(n->xattrs[i].data);
         }
-
         n->xattrs = mfree(n->xattrs);
+        n->n_xattrs = 0;
+
+        n->acl_user = ca_encoder_acl_entry_free(n->acl_user, n->n_acl_user);
+        n->acl_group = ca_encoder_acl_entry_free(n->acl_group, n->n_acl_group);
+        n->acl_default_user = ca_encoder_acl_entry_free(n->acl_default_user, n->n_acl_default_user);
+        n->acl_default_group = ca_encoder_acl_entry_free(n->acl_default_group, n->n_acl_default_group);
+
+        n->n_acl_user = n->n_acl_group = n->n_acl_default_user = n->n_acl_default_group = 0;
+
+        n->acl_group_obj_permissions = UINT64_MAX;
+        n->acl_default_user_obj_permissions = UINT64_MAX;
+        n->acl_default_group_obj_permissions = UINT64_MAX;
+        n->acl_default_other_permissions = UINT64_MAX;
+        n->acl_default_mask_permissions = UINT64_MAX;
+
         n->fcaps = mfree(n->fcaps);
 
         n->device_size = UINT64_MAX;
@@ -236,6 +288,11 @@ int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
                 .stat = st,
                 .device_size = UINT64_MAX,
                 .magic = sfs.f_type,
+                .acl_group_obj_permissions = UINT64_MAX,
+                .acl_default_user_obj_permissions = UINT64_MAX,
+                .acl_default_group_obj_permissions = UINT64_MAX,
+                .acl_default_other_permissions = UINT64_MAX,
+                .acl_default_mask_permissions = UINT64_MAX,
         };
 
         e->n_nodes = 1;
@@ -472,7 +529,6 @@ static int ca_encoder_node_read_xattrs(
                 CaEncoder *e,
                 CaEncoderNode *n) {
 
-        CaEncoderNode *parent;
         size_t space = 256, left, count = 0;
         bool has_fcaps = false;
         int path_fd = -1, r;
@@ -481,7 +537,7 @@ static int ca_encoder_node_read_xattrs(
         assert(e);
         assert(n);
 
-        if ((e->feature_flags & (CA_FORMAT_WITH_XATTR|CA_FORMAT_WITH_FCAPS)) == 0)
+        if ((e->feature_flags & (CA_FORMAT_WITH_XATTRS|CA_FORMAT_WITH_FCAPS)) == 0)
                 return 0;
 
         if (n->xattrs_valid)
@@ -497,6 +553,7 @@ static int ca_encoder_node_read_xattrs(
 
         if (n->fd < 0) {
                 const struct dirent *de;
+                CaEncoderNode *parent;
 
                 parent = ca_encoder_node_parent_of(e, n);
                 if (!parent) {
@@ -510,7 +567,7 @@ static int ca_encoder_node_read_xattrs(
                         goto finish;
                 }
 
-                /* There's not listxattrat() unfortunately, we fake it via openat() with O_PATH */
+                /* There's no listxattrat() unfortunately, we fake it via openat() with O_PATH */
                 path_fd = openat(parent->fd, de->d_name, O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_PATH);
                 if (path_fd < 0) {
                         r = -errno;
@@ -807,6 +864,351 @@ static int gid_to_name(CaEncoder *e, gid_t gid, char **ret) {
         }
 }
 
+static int compare_acl_entry(const void *a, const void *b) {
+        const CaEncoderACLEntry *x = a, *y = b;
+        int r;
+
+        assert(x);
+        assert(y);
+
+        if (x->generic_id < y->generic_id)
+                return -1;
+        if (x->generic_id > y->generic_id)
+                return 1;
+
+        if (!x->name && y->name)
+                return -1;
+        if (x->name && !y->name)
+                return 1;
+        if (x->name && y->name) {
+                r = strcmp(x->name, y->name);
+                if (r != 0)
+                        return r;
+        }
+
+        if (x->permissions < y->permissions)
+                return -1;
+        if (x->permissions > y->permissions)
+                return 1;
+
+        return 0;
+}
+
+static int acl_entry_permissions(acl_entry_t entry, uint64_t *ret) {
+
+        uint64_t permissions = 0;
+        acl_permset_t permset;
+        int r;
+
+        assert(entry);
+
+        if (acl_get_permset(entry, &permset) < 0)
+                return -errno;
+
+        r = acl_get_perm(permset, ACL_READ);
+        if (r < 0)
+                return -errno;
+        if (r > 0)
+                permissions |= CA_FORMAT_ACL_PERMISSION_READ;
+
+        r = acl_get_perm(permset, ACL_WRITE);
+        if (r < 0)
+                return -errno;
+        if (r > 0)
+                permissions |= CA_FORMAT_ACL_PERMISSION_WRITE;
+
+        r = acl_get_perm(permset, ACL_EXECUTE);
+        if (r < 0)
+                return -errno;
+        if (r > 0)
+                permissions |= CA_FORMAT_ACL_PERMISSION_EXECUTE;
+
+        *ret = permissions;
+        return 0;
+}
+
+static int ca_encoder_node_process_acl(
+                CaEncoder *e,
+                CaEncoderNode *n,
+                acl_type_t type,
+                acl_t acl) {
+
+        size_t n_allocated_user = 0, n_allocated_group = 0;
+        uint64_t user_obj_permissions = UINT64_MAX, group_obj_permissions = UINT64_MAX, other_permissions = UINT64_MAX, mask_permissions = UINT64_MAX;
+        CaEncoderACLEntry **user_entries, **group_entries;
+        size_t *n_user_entries, *n_group_entries;
+        acl_entry_t entry;
+        int r;
+
+        switch (type) {
+
+        case ACL_TYPE_ACCESS:
+                user_entries = &n->acl_user;
+                n_user_entries = &n->n_acl_user;
+
+                group_entries = &n->acl_group;
+                n_group_entries = &n->n_acl_group;
+                break;
+
+        case ACL_TYPE_DEFAULT:
+                user_entries = &n->acl_default_user;
+                n_user_entries = &n->n_acl_default_user;
+
+                group_entries = &n->acl_default_group;
+                n_group_entries = &n->n_acl_default_group;
+                break;
+
+        default:
+                assert(false);
+        }
+
+        for (r = acl_get_entry(acl, ACL_FIRST_ENTRY, &entry);
+             r > 0;
+             r = acl_get_entry(acl, ACL_NEXT_ENTRY, &entry)) {
+
+                uint64_t permissions;
+                const void *q;
+                acl_tag_t tag;
+
+                if (acl_get_tag_type(entry, &tag) < 0)
+                        return -errno;
+
+                r = acl_entry_permissions(entry, &permissions);
+                if (r < 0)
+                        return r;
+
+                switch (tag) {
+
+                case ACL_USER_OBJ:
+                        user_obj_permissions = permissions;
+                        break;
+
+                case ACL_GROUP_OBJ:
+                        group_obj_permissions = permissions;
+                        break;
+
+                case ACL_OTHER:
+                        other_permissions = permissions;
+                        break;
+
+                case ACL_MASK:
+                        mask_permissions = permissions;
+                        break;
+
+                case ACL_USER: {
+                        uid_t uid;
+                        char *name;
+
+                        q = acl_get_qualifier(entry);
+                        if (!q)
+                                return -errno;
+
+                        uid = *(uid_t*) q;
+
+                        if (!uid_is_valid(uid))
+                                return -EINVAL;
+
+                        if ((e->feature_flags & CA_FORMAT_WITH_16BIT_UIDS) && uid > UINT16_MAX)
+                                return -EPROTONOSUPPORT;
+
+                        if (e->feature_flags & CA_FORMAT_WITH_USER_NAMES) {
+                                r = uid_to_name(e, uid, &name);
+                                if (r < 0)
+                                        return r;
+                        } else
+                                name = NULL;
+
+                        if (!GREEDY_REALLOC(*user_entries, n_allocated_user, *n_user_entries+1)) {
+                                free(name);
+                                return -ENOMEM;
+                        }
+
+                        (*user_entries)[(*n_user_entries)++] = (CaEncoderACLEntry) {
+                                .name = name,
+                                .permissions = permissions,
+                                .uid = (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) ? uid : 0,
+                        };
+                        break;
+                }
+
+                case ACL_GROUP: {
+                        gid_t gid;
+                        char *name;
+
+                        q = acl_get_qualifier(entry);
+                        if (!q)
+                                return -errno;
+
+                        gid = *(gid_t*) q;
+
+                        if (!gid_is_valid(gid))
+                                return -EINVAL;
+
+                        if ((e->feature_flags & CA_FORMAT_WITH_16BIT_UIDS) && gid > UINT16_MAX)
+                                return -EPROTONOSUPPORT;
+
+                        if (e->feature_flags & CA_FORMAT_WITH_USER_NAMES) {
+                                r = gid_to_name(e, gid, &name);
+                                if (r < 0)
+                                        return r;
+                        } else
+                                name = NULL;
+
+                        if (!GREEDY_REALLOC(*group_entries, n_allocated_group, *n_group_entries+1)) {
+                                free(name);
+                                return -ENOMEM;
+                        }
+
+                        (*group_entries)[(*n_group_entries)++] = (CaEncoderACLEntry) {
+                                .name = name,
+                                .permissions = permissions,
+                                .gid = (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) ? gid : 0,
+                        };
+                        break;
+                }
+
+                default:
+                        assert(false);
+                }
+        }
+        if (r < 0)
+                return -errno;
+
+        if (*n_user_entries > 1)
+                qsort(*user_entries, *n_user_entries, sizeof(CaEncoderACLEntry), compare_acl_entry);
+        if (*n_group_entries > 1)
+                qsort(*group_entries, *n_group_entries, sizeof(CaEncoderACLEntry), compare_acl_entry);
+
+        switch (type) {
+
+        case ACL_TYPE_ACCESS:
+
+                /* We only store the group object if there's also a mask set. This is because on Linux the stat()
+                 * reported group permissions map to the ACL mask if one is set and the group permissions otherwise. */
+
+                if (group_obj_permissions != UINT64_MAX && mask_permissions != UINT64_MAX)
+                        n->acl_group_obj_permissions = group_obj_permissions;
+
+                break;
+
+        case ACL_TYPE_DEFAULT:
+
+                n->acl_default_user_obj_permissions = user_obj_permissions;
+                n->acl_default_group_obj_permissions = group_obj_permissions;
+                n->acl_default_other_permissions = other_permissions;
+                n->acl_default_mask_permissions = mask_permissions;
+                break;
+
+        default:
+                assert(false);
+        }
+
+        return 0;
+}
+
+static int ca_encoder_node_read_acl(
+                CaEncoder *e,
+                CaEncoderNode *n) {
+
+        char proc_path[strlen("/proc/self/fd/") + DECIMAL_STR_MAX(int) + 1];
+        int path_fd = -1, r;
+        acl_t acl = NULL;
+
+        if ((e->feature_flags & CA_FORMAT_WITH_ACL) == 0)
+                return 0;
+
+        if (n->acl_valid)
+                return 0;
+
+        assert(n->n_acl_user == 0);
+        assert(!n->acl_user);
+        assert(n->n_acl_group == 0);
+        assert(!n->acl_group);
+
+        assert(n->n_acl_default_user == 0);
+        assert(!n->acl_default_user);
+        assert(n->n_acl_default_group == 0);
+        assert(!n->acl_default_group);
+
+        assert(n->acl_group_obj_permissions == UINT64_MAX);
+        assert(n->acl_default_user_obj_permissions == UINT64_MAX);
+        assert(n->acl_default_group_obj_permissions == UINT64_MAX);
+        assert(n->acl_default_other_permissions == UINT64_MAX);
+        assert(n->acl_default_mask_permissions == UINT64_MAX);
+
+        if (S_ISLNK(n->stat.st_mode))
+                return 0;
+
+        if (n->fd < 0) {
+                CaEncoderNode *parent;
+                const struct dirent *de;
+
+                parent = ca_encoder_node_parent_of(e, n);
+                if (!parent) {
+                        r = -EUNATCH;
+                        goto finish;
+                }
+
+                de = ca_encoder_node_current_dirent(parent);
+                if (!de) {
+                        r = -EUNATCH;
+                        goto finish;
+                }
+
+                /* There's no acl_get_fdat() unfortunately, we fake it via openat() with O_PATH */
+                path_fd = openat(parent->fd, de->d_name, O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_PATH);
+                if (path_fd < 0) {
+                        r = -errno;
+                        goto finish;
+                }
+        }
+
+        sprintf(proc_path, "/proc/self/fd/%i", n->fd < 0 ? path_fd : n->fd);
+
+        acl = acl_get_file(proc_path, ACL_TYPE_ACCESS);
+        if (acl) {
+
+                r = ca_encoder_node_process_acl(e, n, ACL_TYPE_ACCESS, acl);
+                if (r < 0)
+                        goto finish;
+
+                acl_free(acl);
+                acl = NULL;
+
+        } else if (!IN_SET(errno, EOPNOTSUPP, EBADF, ENODATA)) {
+                r = -errno;
+                goto finish;
+        }
+
+        if (S_ISDIR(n->stat.st_mode)) {
+                acl = acl_get_file(proc_path, ACL_TYPE_DEFAULT);
+                if (acl) {
+
+                        r = ca_encoder_node_process_acl(e, n, ACL_TYPE_DEFAULT, acl);
+                        if (r < 0)
+                                goto finish;
+
+                        acl_free(acl);
+                        acl = NULL;
+
+                } else if (!IN_SET(errno, EOPNOTSUPP, EBADF, ENODATA)) {
+                        r = -errno;
+                        goto finish;
+                }
+        }
+
+        n->acl_valid = true;
+        r = 0;
+
+finish:
+        safe_close(path_fd);
+
+        if (acl)
+                acl_free(acl);
+
+        return r;
+}
+
 static int ca_encoder_node_read_user_group_names(
                 CaEncoder *e,
                 CaEncoderNode *n) {
@@ -872,6 +1274,11 @@ static CaEncoderNode* ca_encoder_init_child(CaEncoder *e) {
         *n = (CaEncoderNode) {
                 .fd = -1,
                 .device_size = UINT64_MAX,
+                .acl_group_obj_permissions = UINT64_MAX,
+                .acl_default_user_obj_permissions = UINT64_MAX,
+                .acl_default_group_obj_permissions = UINT64_MAX,
+                .acl_default_other_permissions = UINT64_MAX,
+                .acl_default_mask_permissions = UINT64_MAX,
         };
 
         return n;
@@ -1356,7 +1763,7 @@ static mode_t ca_encoder_fixup_mode(CaEncoder *e, CaEncoderNode *n) {
         mode = n->stat.st_mode;
         if (S_ISLNK(mode))
                 mode = S_IFLNK | 0777;
-        if (e->feature_flags & CA_FORMAT_WITH_PERMISSIONS)
+        if (e->feature_flags & (CA_FORMAT_WITH_PERMISSIONS|CA_FORMAT_WITH_ACL))
                 mode = mode & (S_IFMT|07777);
         else if (e->feature_flags & CA_FORMAT_WITH_READ_ONLY)
                 mode = (mode & S_IFMT) | ((mode & 0222) ? (S_ISDIR(mode) ? 0777 : 0666) : (S_ISDIR(mode) ? 0555 : 0444));
@@ -1364,6 +1771,86 @@ static mode_t ca_encoder_fixup_mode(CaEncoder *e, CaEncoderNode *n) {
                 mode &= S_IFMT;
 
         return mode;
+}
+
+static size_t ca_encoder_format_acl_user_size(CaEncoderACLEntry *l, size_t n) {
+        size_t i, size = 0;
+
+        for (i = 0; i < n; i++)
+                size += offsetof(CaFormatACLUser, name) +
+                        (l[i].name ? strlen(l[i].name) + 1 : 0);
+
+        return size;
+}
+
+static size_t ca_encoder_format_acl_group_size(CaEncoderACLEntry *l, size_t n) {
+        size_t i, size = 0;
+
+        for (i = 0; i < n; i++)
+                size += offsetof(CaFormatACLGroup, name) +
+                        (l[i].name ? strlen(l[i].name) + 1 : 0);
+
+        return size;
+}
+
+static void *ca_encoder_format_acl_user_append(CaEncoder *e, void *p, uint64_t type, CaEncoderACLEntry *l, size_t n) {
+        CaFormatACLUser *acl_user;
+        size_t i;
+
+        assert(e);
+        assert(p);
+
+        acl_user = alloca0(offsetof(CaFormatACLUser, name));
+
+        for (i = 0; i < n; i++) {
+
+                acl_user->header = (CaFormatHeader) {
+                        .type = htole64(type),
+                        .size = htole64(offsetof(CaFormatACLUser, name) +
+                                        (l[i].name ? strlen(l[i].name) + 1 : 0)),
+                };
+
+                acl_user->uid =
+                        (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) ?
+                        htole64(l[i].uid) : htole64(0);
+                acl_user->permissions = htole64(l[i].permissions);
+
+                p = mempcpy(p, acl_user, offsetof(CaFormatACLUser, name));
+                if (l[i].name)
+                        p = stpcpy(p, l[i].name) + 1;
+        }
+
+        return p;
+}
+
+static void *ca_encoder_format_acl_group_append(CaEncoder *e, void *p, uint64_t type, CaEncoderACLEntry *l, size_t n) {
+        CaFormatACLGroup *acl_group;
+        size_t i;
+
+        assert(e);
+        assert(p);
+
+        acl_group = alloca0(offsetof(CaFormatACLGroup, name));
+
+        for (i = 0; i < n; i++) {
+
+                acl_group->header = (CaFormatHeader) {
+                        .type = htole64(type),
+                        .size = htole64(offsetof(CaFormatACLGroup, name) +
+                                        (l[i].name ? strlen(l[i].name) + 1 : 0)),
+                };
+
+                acl_group->gid =
+                        (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) ?
+                        htole64(l[i].gid) : htole64(0);
+                acl_group->permissions = htole64(l[i].permissions);
+
+                p = mempcpy(p, acl_group, offsetof(CaFormatACLGroup, name));
+                if (l[i].name)
+                        p = stpcpy(p, l[i].name) + 1;
+        }
+
+        return p;
 }
 
 static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
@@ -1389,6 +1876,10 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 return r;
 
         r = ca_encoder_node_read_xattrs(e, n);
+        if (r < 0)
+                return r;
+
+        r = ca_encoder_node_read_acl(e, n);
         if (r < 0)
                 return r;
 
@@ -1463,6 +1954,21 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                         strlen(n->xattrs[i].name) + 1 +
                         n->xattrs[i].data_size;
 
+        size += ca_encoder_format_acl_user_size(n->acl_user, n->n_acl_user);
+        size += ca_encoder_format_acl_group_size(n->acl_group, n->n_acl_group);
+
+        if (n->acl_group_obj_permissions != UINT64_MAX)
+                size += sizeof(CaFormatACLGroupObj);
+
+        if (n->acl_default_user_obj_permissions != UINT64_MAX ||
+            n->acl_default_group_obj_permissions != UINT64_MAX ||
+            n->acl_default_other_permissions != UINT64_MAX ||
+            n->acl_default_mask_permissions != UINT64_MAX)
+                size += sizeof(CaFormatACLDefault);
+
+        size += ca_encoder_format_acl_user_size(n->acl_default_user, n->n_acl_default_user);
+        size += ca_encoder_format_acl_group_size(n->acl_default_group, n->n_acl_default_group);
+
         if (n->fcaps)
                 size += offsetof(CaFormatFCaps, data) + n->fcaps_size;
 
@@ -1525,6 +2031,38 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 p = stpcpy(p, n->xattrs[i].name) + 1;
                 p = mempcpy(p, n->xattrs[i].data, n->xattrs[i].data_size);
         }
+
+        p = ca_encoder_format_acl_user_append(e, p, CA_FORMAT_ACL_USER, n->acl_user, n->n_acl_user);
+        p = ca_encoder_format_acl_group_append(e, p, CA_FORMAT_ACL_GROUP, n->acl_group, n->n_acl_group);
+
+        if (n->acl_group_obj_permissions != UINT64_MAX) {
+                CaFormatACLGroupObj acl_group_obj = {
+                        .header.type = htole64(CA_FORMAT_ACL_GROUP_OBJ),
+                        .header.size = htole64(sizeof(CaFormatACLGroupObj)),
+                        .permissions = htole64(n->acl_group_obj_permissions),
+                };
+
+                p = mempcpy(p, &acl_group_obj, sizeof(acl_group_obj));
+        }
+
+        if (n->acl_default_user_obj_permissions != UINT64_MAX ||
+            n->acl_default_group_obj_permissions != UINT64_MAX ||
+            n->acl_default_other_permissions != UINT64_MAX ||
+            n->acl_default_mask_permissions != UINT64_MAX) {
+                CaFormatACLDefault acl_default = {
+                        .header.type = htole64(CA_FORMAT_ACL_DEFAULT),
+                        .header.size = htole64(sizeof(CaFormatACLDefault)),
+                        .user_obj_permissions = htole64(n->acl_default_user_obj_permissions),
+                        .group_obj_permissions = htole64(n->acl_default_group_obj_permissions),
+                        .other_permissions = htole64(n->acl_default_other_permissions),
+                        .mask_permissions = htole64(n->acl_default_mask_permissions),
+                };
+
+                p = mempcpy(p, &acl_default, sizeof(acl_default));
+        }
+
+        p = ca_encoder_format_acl_user_append(e, p, CA_FORMAT_ACL_DEFAULT_USER, n->acl_default_user, n->n_acl_default_user);
+        p = ca_encoder_format_acl_group_append(e, p, CA_FORMAT_ACL_DEFAULT_GROUP, n->acl_default_group, n->n_acl_default_group);
 
         if (n->fcaps) {
                 CaFormatHeader header = {

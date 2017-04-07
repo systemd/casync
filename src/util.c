@@ -894,3 +894,48 @@ int getenv_bool(const char *p) {
 
         return parse_boolean(e);
 }
+
+void* greedy_realloc(void **p, size_t *allocated, size_t need, size_t size) {
+        size_t a, newalloc;
+        void *q;
+
+        assert(p);
+        assert(allocated);
+
+        if (*allocated >= need)
+                return *p;
+
+        newalloc = MAX(need * 2, 64u / size);
+        a = newalloc * size;
+
+        /* check for overflows */
+        if (a < size * need)
+                return NULL;
+
+        q = realloc(*p, a);
+        if (!q)
+                return NULL;
+
+        *p = q;
+        *allocated = newalloc;
+        return q;
+}
+
+void* greedy_realloc0(void **p, size_t *allocated, size_t need, size_t size) {
+        size_t prev;
+        uint8_t *q;
+
+        assert(p);
+        assert(allocated);
+
+        prev = *allocated;
+
+        q = greedy_realloc(p, allocated, need, size);
+        if (!q)
+                return NULL;
+
+        if (*allocated > prev)
+                memzero(q + prev * size, (*allocated - prev) * size);
+
+        return q;
+}

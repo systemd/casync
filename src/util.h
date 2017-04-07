@@ -545,4 +545,30 @@ static inline const char *yes_no(bool b) {
 #define PTR_TO_UINT(p) ((unsigned int) ((uintptr_t) (p)))
 #define UINT_TO_PTR(u) ((void *) ((uintptr_t) (u)))
 
+void* greedy_realloc(void **p, size_t *allocated, size_t need, size_t size);
+void* greedy_realloc0(void **p, size_t *allocated, size_t need, size_t size);
+
+#define GREEDY_REALLOC(array, allocated, need)                          \
+        greedy_realloc((void**) &(array), &(allocated), (need), sizeof((array)[0]))
+
+#define GREEDY_REALLOC0(array, allocated, need)                         \
+        greedy_realloc0((void**) &(array), &(allocated), (need), sizeof((array)[0]))
+
+#define alloca0(n)                                      \
+        ({                                              \
+                char *_new_;                            \
+                size_t _len_ = n;                       \
+                _new_ = alloca(_len_);                  \
+                (void *) memset(_new_, 0, _len_);       \
+        })
+
+#define memzero(x,l) (memset((x), 0, (l)))
+#define zero(x) (memzero(&(x), sizeof(x)))
+
+#define DECIMAL_STR_MAX(type)                                           \
+        (1+(sizeof(type) <= 1 ? 3 :                                     \
+            sizeof(type) <= 2 ? 5 :                                     \
+            sizeof(type) <= 4 ? 10 :                                    \
+            sizeof(type) <= 8 ? 20 : sizeof(int[-2*(sizeof(type) > 8)])))
+
 #endif

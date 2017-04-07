@@ -3,7 +3,6 @@
 * seeks
 * fuse mount logic
 * save/restore btrfs file/subvol flags
-* save/restore acls
 * save/restore hardlinks?
 * check fs features when restoring
 * encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
