@@ -2865,7 +2865,7 @@ static int dispatch_verb(int argc, char *argv[]) {
         int r;
 
         if (argc < 1) {
-                fprintf(stderr, "Missing verb.\n");
+                fprintf(stderr, "Missing verb. (Invoke '%s --help' for a list of available verbs.)\n", program_invocation_short_name);
                 return -EINVAL;
         }
 
@@ -2887,7 +2887,7 @@ static int dispatch_verb(int argc, char *argv[]) {
         else if (streq(argv[0], "push")) /* Same here. */
                 r = push(argc, argv);
         else {
-                fprintf(stderr, "Unknown verb.\n");
+                fprintf(stderr, "Unknown verb '%s'. (Invoke '%s --help' for a list of available verbs.)\n", argv[0], program_invocation_short_name);
                 r = -EINVAL;
         }
 
