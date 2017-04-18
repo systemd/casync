@@ -48,4 +48,5 @@
 /test-casync
 /test-cautil
 /test-script.sh
+/test-util
 Makefile.in

@@ -6,7 +6,6 @@
 * check fs features when restoring
 * encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
 * hardlink/reflink from seed
-* restore zeroes as sparse files
 * exclude patterns
 * permit shifting UID/GIDs
 * delete old files in destination after sync

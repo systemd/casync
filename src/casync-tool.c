@@ -31,6 +31,7 @@ static enum {
 } arg_what = _WHAT_INVALID;
 static bool arg_verbose = false;
 static bool arg_respect_nodump = true;
+static bool arg_punch_holes = true;
 static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
@@ -54,7 +55,8 @@ static void help(void) {
                "     --chunk-size-avg=SIZE   The average number of bytes for a chunk file\n"
                "     --seed=PATH             Additional file or directory to use as seed\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n"
-               "     --respect-nodump=no     Don't respect chattr(1)'s -d 'nodump' flag\n\n"
+               "     --respect-nodump=no     Don't respect chattr(1)'s -d 'nodump' flag\n"
+               "     --punch-holes=no        Don't create sparse files\n\n"
                "Input/output selector:\n"
                "     --what=archive          Operate on archive file\n"
                "     --what=archive-index    Operate on archive index file\n"
@@ -112,6 +114,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_WITHOUT,
                 ARG_WHAT,
                 ARG_RESPECT_NODUMP,
+                ARG_PUNCH_HOLES,
         };
 
         static const struct option options[] = {
@@ -126,6 +129,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "without",        required_argument, NULL, ARG_WITHOUT        },
                 { "what",           required_argument, NULL, ARG_WHAT           },
                 { "respect-nodump", required_argument, NULL, ARG_RESPECT_NODUMP },
+                { "punch-holes",    required_argument, NULL, ARG_PUNCH_HOLES    },
                 {}
         };
 
@@ -254,6 +258,16 @@ static int parse_argv(int argc, char *argv[]) {
                         }
 
                         arg_respect_nodump = r;
+                        break;
+
+                case ARG_PUNCH_HOLES:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --punch-holes= parameter: %s\n", optarg);
+                                return -EINVAL;
+                        }
+
+                        arg_punch_holes = r;
                         break;
 
                 case '?':
@@ -1081,6 +1095,12 @@ static int extract(int argc, char *argv[]) {
         r = load_feature_flags(s);
         if (r < 0)
                 goto finish;
+
+        r = ca_sync_set_punch_holes(s, arg_punch_holes);
+        if (r < 0) {
+                fprintf(stderr, "Failed to configure hole punching: %s\n", strerror(-r));
+                goto finish;
+        }
 
         if (seek_path) {
                 r = ca_sync_seek_path(s, seek_path);

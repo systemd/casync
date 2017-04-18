@@ -15,6 +15,8 @@
 #include "def.h"
 #include "util.h"
 
+#define HOLE_MIN 64
+
 int loop_write(int fd, const void *p, size_t l) {
 
         if (fd < 0)
@@ -72,6 +74,130 @@ int loop_write_block(int fd, const void *p, size_t l) {
         }
 
         return 0;
+}
+
+int write_zeroes(int fd, size_t l) {
+        const char *zeroes;
+        off_t p, end;
+        size_t bs;
+
+        /* Writes the specified number of zero bytes to the current file position. If possible this is done via "hole
+         * punching", i.e. by creating sparse files. Unfortunately there's no syscall currently available that
+         * implements this efficiently, hence we have to fake it via the existing FALLOC_FL_PUNCH_HOLE operation, which
+         * requires us to extend the file size manually if necessary. This means we need 6 syscalls in the worst case,
+         * instead of one. Bummer... But this is Linux, so what did you expect? */
+
+        if (fd < 0)
+                return -EBADF;
+        if (l == 0)
+                return 0;
+
+        p = lseek(fd, 0, SEEK_CUR); /* Determine where we are */
+        if (p == (off_t) -1)
+                goto fallback;
+
+        if (p + (off_t) l < p)
+                return -EOVERFLOW;
+
+        end = lseek(fd, 0, SEEK_END); /* Determine file size (this also puts the file offset at the end, but we don't care) */
+        if (end == (off_t) -1)
+                return -errno;
+
+        if (end > p) {
+                if (fallocate(fd, FALLOC_FL_PUNCH_HOLE|FALLOC_FL_KEEP_SIZE, p, l) < 0) {
+
+                        if (lseek(fd, p, SEEK_SET) == (off_t) -1) /* Revert to the original position, before we fallback to write() */
+                                return -errno;
+
+                        goto fallback;
+                }
+        }
+
+        if (p + (off_t) l > end) {
+                if (ftruncate(fd, p + l) < 0)
+                        return -errno;
+        }
+
+        if (lseek(fd, p + l, SEEK_SET) == (off_t) -1) /* Make sure we position the offset now after the hole we just added */
+                return -errno;
+
+        return 1; /* Return > 0 when we managed to punch holes */
+
+fallback:
+        bs = MIN(4096U, l);
+        zeroes = alloca0(bs);
+
+        while (l > 0) {
+                ssize_t w;
+
+                w = write(fd, zeroes, MIN(l, bs));
+                if (w < 0)
+                        return -errno;
+
+                assert((size_t) w <= l);
+                l -= w;
+        }
+
+        return 0; /* Return == 0 if we could only write out zeroes */
+}
+
+int loop_write_with_holes(int fd, const void *p, size_t l) {
+        const uint8_t *q, *start = p, *zero_start = NULL;
+        int r;
+
+        /* Write out the specified data much like loop_write(), but try to punch holes for any longer series of zero
+         * bytes, thus creating sparse files if possible. */
+
+        for (q = p; q < (const uint8_t*) p + l; q++) {
+
+                if (*q == 0) {
+
+                        if (!zero_start)
+                                zero_start = q;
+
+                        continue;
+                }
+
+                if (zero_start) {
+
+                        if (q - zero_start >= HOLE_MIN) {
+
+                                r = loop_write(fd, start, zero_start - start);
+                                if (r < 0)
+                                        return r;
+
+                                r = write_zeroes(fd, q - zero_start);
+                                if (r < 0)
+                                        return r;
+
+                                /* Couldn't punch hole? then don't bother again */
+                                if (r == 0)
+                                        return loop_write(fd, q, (const uint8_t*) p + l - q);
+
+                                start = q;
+
+                        }
+
+                        zero_start = NULL;
+                        continue;
+                }
+        }
+
+        if (zero_start) {
+                if (q - zero_start >= HOLE_MIN) {
+                        r = loop_write(fd, start, zero_start - start);
+                        if (r < 0)
+                                return r;
+
+                        r = write_zeroes(fd, q - zero_start);
+                        if (r < 0)
+                                return r;
+
+                        return 0;
+                }
+        }
+
+        return loop_write(fd, start, q - start);
 }
 
 ssize_t loop_read(int fd, void *p, size_t l) {

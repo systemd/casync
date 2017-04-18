@@ -93,6 +93,8 @@ typedef struct CaSync {
         uint64_t archive_size;
 
         uint64_t chunk_skip;
+
+        bool punch_holes;
 } CaSync;
 
 static CaSync *ca_sync_new(void) {
@@ -109,6 +111,7 @@ static CaSync *ca_sync_new(void) {
         s->chunker = (CaChunker) CA_CHUNKER_INIT;
 
         s->archive_size = UINT64_MAX;
+        s->punch_holes = true;
 
         return s;
 }
@@ -171,6 +174,25 @@ int ca_sync_get_chunk_size_max(CaSync *s, size_t *ret) {
                 return -EINVAL;
 
         *ret = s->chunker.chunk_size_max;
+        return 0;
+}
+
+int ca_sync_set_punch_holes(CaSync *s, int enabled) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        if (s->decoder) {
+                r = ca_decoder_set_punch_holes(s->decoder, enabled);
+                if (r < 0)
+                        return r;
+        }
+
+        s->punch_holes = enabled;
+
         return 0;
 }
 
@@ -1057,6 +1079,10 @@ static int ca_sync_start(CaSync *s) {
                         if (r < 0)
                                 return r;
                 }
+
+                r = ca_decoder_set_punch_holes(s->decoder, s->punch_holes);
+                if (r < 0)
+                        return r;
         }
 
         if (s->remote_index && !s->index) {

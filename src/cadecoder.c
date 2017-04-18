@@ -64,7 +64,7 @@ typedef struct CaDecoderNode {
         CaFormatEntry *entry;
         CaFormatGoodbye *goodbye;
 
-        mode_t mode;          /* Only set if entry == NULL */
+        mode_t mode;          /* Only relevant if entry == NULL */
         uint64_t size;        /* Only for S_ISREG() */
 
         char *user_name;
@@ -88,6 +88,8 @@ typedef struct CaDecoderNode {
         uint64_t acl_default_group_obj_permissions;
         uint64_t acl_default_other_permissions;
         uint64_t acl_default_mask_permissions;
+
+        bool punch_holes;
 } CaDecoderNode;
 
 typedef enum CaDecoderState {
@@ -154,6 +156,8 @@ struct CaDecoder {
         statfs_f_type_t cached_magic;
 
         int boundary_fd;
+
+        bool punch_holes;
 };
 
 static inline bool CA_DECODER_IS_SEEKING(CaDecoder *d) {
@@ -195,6 +199,8 @@ CaDecoder *ca_decoder_new(void) {
         d->cached_gid = GID_INVALID;
 
         d->boundary_fd = -1;
+
+        d->punch_holes = true;
 
         return d;
 }
@@ -3218,7 +3224,12 @@ static int ca_decoder_advance_buffer(CaDecoder *d, CaDecoderNode *n) {
         if (d->state == CA_DECODER_IN_PAYLOAD) {
 
                 if (n->fd >= 0) {
-                        r = loop_write(n->fd, realloc_buffer_data(&d->buffer), d->step_size);
+
+                        /* If hole punching is supported and we are writing to a regular file, use it */
+                        if (d->punch_holes && S_ISREG(ca_decoder_node_mode(n)))
+                                r = loop_write_with_holes(n->fd, realloc_buffer_data(&d->buffer), d->step_size);
+                        else
+                                r = loop_write(n->fd, realloc_buffer_data(&d->buffer), d->step_size);
                         if (r < 0)
                                 return r;
                 }
@@ -3832,5 +3843,14 @@ int ca_decoder_set_archive_size(CaDecoder *d, uint64_t size) {
                 return -EUNATCH;
 
         d->nodes[0].end_offset = size;
+        return 0;
+}
+
+int ca_decoder_set_punch_holes(CaDecoder *d, int enabled) {
+
+        if (!d)
+                return -EINVAL;
+
+        d->punch_holes = enabled;
         return 0;
 }

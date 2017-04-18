@@ -66,7 +66,8 @@ tests = \
 	test-caencoder \
 	test-casync \
 	test-cautil \
-	test-camakebst
+	test-camakebst \
+	test-util
 
 bin_PROGRAMS = \
 	casync
@@ -295,6 +296,22 @@ test_camakebst_LDADD = \
 	$(LIBGCRYPT_LIBS) \
 	$(ACL_LIBS)
 
+## test-util
+
+test_util_SOURCES = \
+	test/test-util.c \
+	$(lib_SOURCES)
+
+test_util_CFLAGS = \
+	$(AM_CFLAGS) \
+	$(LIBLZMA_CFLAGS) \
+	$(LIBGCRYPT_CFLAGS)
+
+test_util_LDADD = \
+	$(LIBLZMA_LIBS) \
+	$(LIBGCRYPT_LIBS) \
+	$(ACL_LIBS)
+
 ## test-script.sh
 
 test-script.sh: test/test-script.sh.in
@@ -320,6 +337,7 @@ test-files:
 	test -e test-files/immutable || ( touch test-files/immutable && chattr +i test-files/immutable )
 	test -e test-files/nocow || ( touch test-files/nocow && chattr +C test-files/nocow )
 	test -e test-files/acl || ( touch test-files/acl && setfacl -nm u:nobody:rw,u:root:rw test-files/acl)
+	test -e test-files/sparse || dd if=/dev/urandom of=test-files/sparse count=2 bs=1 seek=9999
 
 rm-test-files:
 	chattr -i test-files/immutable || :
@@ -329,5 +347,6 @@ rm-test-files:
 	rm -f test-files/immutable
 	rm -f test-files/nocow
 	rm -f test-files/acl
+	rm -f test-files/sparse
 
 .PHONY: test-files
