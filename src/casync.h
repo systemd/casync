@@ -15,6 +15,8 @@ enum {
         CA_SYNC_NEXT_FILE,       /* Started synchronizing a new file, find out which one with ca_sync_current_path() */
         CA_SYNC_SEED_NEXT_FILE,  /* Started indexing a new file as sed, find out which one with ca_sync_current_path() */
         CA_SYNC_POLL,            /* Can't proceed with remote feedback, please use ca_sync_poll() to wait for it */
+        CA_SYNC_FOUND,           /* Entry looked for was found and is read next */
+        CA_SYNC_NOT_FOUND,       /* Entry you were looking for couldn't be found */
 };
 
 CaSync *ca_sync_new_encode(void);
@@ -40,6 +42,10 @@ int ca_sync_set_index_auto(CaSync *s, const char *locator);
 int ca_sync_set_base_fd(CaSync *sync, int fd);
 int ca_sync_set_base_path(CaSync *sync, const char *path);
 int ca_sync_set_base_mode(CaSync *sync, mode_t mode);
+
+/* The raw, unarchived ("user") "boundary" tree, in case seeking is used */
+int ca_sync_set_boundary_fd(CaSync *sync, int fd);
+int ca_sync_set_boundary_path(CaSync *sync, const char *path);
 
 /* The serialization of the user tree */
 int ca_sync_set_archive_fd(CaSync *sync, int fd);
@@ -94,7 +100,8 @@ int ca_sync_get_chunk_size_max(CaSync *s, size_t *ret);
 int ca_sync_current_archive_chunks(CaSync *s, uint64_t *ret);
 int ca_sync_current_archive_offset(CaSync *s, uint64_t *ret);
 
-int ca_sync_seek(CaSync *s, uint64_t offset);
+int ca_sync_seek_offset(CaSync *s, uint64_t offset);
+int ca_sync_seek_path(CaSync *s, const char *path);
 
 int ca_sync_get_payload(CaSync *s, const void **ret, size_t *ret_size);
 

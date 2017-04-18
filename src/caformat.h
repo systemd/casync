@@ -280,12 +280,25 @@ typedef struct CaFormatFilename {
 /* NAME_MAX on Linux is 255 + NUL byte */
 #define CA_FORMAT_FILENAME_SIZE_MAX (offsetof(CaFormatFilename, name) + 256)
 
+typedef struct CaFormatGoodbyeItem {
+        le64_t offset;
+        le64_t size;
+        le64_t hash;
+} CaFormatGoodbyeItem;
+
 typedef struct CaFormatGoodbye {
         CaFormatHeader header;
-        /* entry bisection table here */
-        le64_t table[];
+        CaFormatGoodbyeItem items[];
         /* Followed by a final le64_t size; */
 } CaFormatGoodbye;
+
+#define CA_FORMAT_GOODBYE_HASH_KEY          \
+        {                                   \
+                0xb3U, 0x84U, 0x1dU, 0x0fU, \
+                0x2bU, 0x44U, 0x74U, 0x85U, \
+                0xc1U, 0x2eU, 0xc2U, 0xd1U, \
+                0x30U, 0xedU, 0x36U, 0x27U, \
+        }
 
 /*** The following structures are used by the index files. ***/
 

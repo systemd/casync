@@ -65,7 +65,8 @@ tests = \
 	test-cachunker \
 	test-caencoder \
 	test-casync \
-	test-cautil
+	test-cautil \
+	test-camakebst
 
 bin_PROGRAMS = \
 	casync
@@ -100,6 +101,8 @@ lib_SOURCES = \
 	src/caindex.h \
 	src/calocation.c \
 	src/calocation.h \
+	src/camakebst.c \
+	src/camakebst.h \
 	src/canbd.c \
 	src/canbd.h \
 	src/caprotocol-util.c \
@@ -126,6 +129,8 @@ lib_SOURCES = \
 	src/realloc-buffer.h \
 	src/rm-rf.c \
 	src/rm-rf.h \
+	src/siphash24.c \
+	src/siphash24.h \
 	src/util.c \
 	src/util.h
 
@@ -270,6 +275,22 @@ test_caindex_CFLAGS = \
 	$(LIBGCRYPT_CFLAGS)
 
 test_caindex_LDADD = \
+	$(LIBLZMA_LIBS) \
+	$(LIBGCRYPT_LIBS) \
+	$(ACL_LIBS)
+
+## test-camakebst
+
+test_camakebst_SOURCES = \
+	test/test-camakebst.c \
+	$(lib_SOURCES)
+
+test_camakebst_CFLAGS = \
+	$(AM_CFLAGS) \
+	$(LIBLZMA_CFLAGS) \
+	$(LIBGCRYPT_CFLAGS)
+
+test_camakebst_LDADD = \
 	$(LIBLZMA_LIBS) \
 	$(LIBGCRYPT_LIBS) \
 	$(ACL_LIBS)

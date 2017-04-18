@@ -377,6 +377,9 @@ static inline int parse_gid(const char *s, gid_t *ret_gid) {
         return parse_uid(s, (uid_t*) ret_gid);
 }
 
+#define UID_INVALID ((uid_t) -1)
+#define GID_INVALID ((gid_t) -1)
+
 #define ALPHABET_LOWER "abcdefghijklmnopqrstuvwxyz"
 #define ALPHABET_UPPER "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 #define ALPHABET ALPHABET_LOWER ALPHABET_UPPER

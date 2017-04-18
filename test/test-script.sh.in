@@ -59,6 +59,27 @@ diff -q $SCRATCH_DIR/test.mtree $SCRATCH_DIR/test.extract-caidx.mtree
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.extract-catar.digest
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.extract-caidx.digest
 
+### Test seeking
+
+@top_builddir@/casync make $SCRATCH_DIR/seek.catar
+@top_builddir@/casync make $SCRATCH_DIR/seek.caidx
+
+@top_builddir@/casync extract $SCRATCH_DIR/seek.catar $SCRATCH_DIR/extract-seek-catar casync/test-files
+@top_builddir@/casync extract $SCRATCH_DIR/seek.caidx $SCRATCH_DIR/extract-seek-caidx casync/test-files
+
+@top_builddir@/casync mtree casync/test-files > $SCRATCH_DIR/original-seek.mtree
+@top_builddir@/casync digest casync/test-files > $SCRATCH_DIR/original-seek.digest
+@top_builddir@/casync mtree $SCRATCH_DIR/extract-seek-catar/test-files > $SCRATCH_DIR/extract-seek-catar.mtree
+@top_builddir@/casync digest $SCRATCH_DIR/extract-seek-catar/test-files > $SCRATCH_DIR/extract-seek-catar.digest
+@top_builddir@/casync mtree $SCRATCH_DIR/extract-seek-caidx/test-files > $SCRATCH_DIR/extract-seek-caidx.mtree
+@top_builddir@/casync digest $SCRATCH_DIR/extract-seek-caidx/test-files > $SCRATCH_DIR/extract-seek-caidx.digest
+
+diff -q $SCRATCH_DIR/original-seek.digest $SCRATCH_DIR/extract-seek-catar.digest
+diff -q $SCRATCH_DIR/original-seek.digest $SCRATCH_DIR/extract-seek-caidx.digest
+
+diff -q $SCRATCH_DIR/original-seek.mtree $SCRATCH_DIR/extract-seek-catar.mtree
+diff -q $SCRATCH_DIR/original-seek.mtree $SCRATCH_DIR/extract-seek-caidx.mtree
+
 ### Test SSH Remoting
 
 CASYNC_SSH_PATH=@top_srcdir@/test/pseudo-ssh

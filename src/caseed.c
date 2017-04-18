@@ -386,7 +386,7 @@ int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *
         }
         size = l->size;
 
-        step = ca_encoder_seek(s->encoder, l);
+        step = ca_encoder_seek_location(s->encoder, l);
         ca_location_unref(l);
         if (step < 0)
                 return step;

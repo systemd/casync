@@ -790,6 +790,7 @@ static int make(int argc, char *argv[]) {
 
                 case CA_SYNC_STEP:
                 case CA_SYNC_PAYLOAD:
+                case CA_SYNC_FOUND:
                         break;
 
                 case CA_SYNC_POLL:
@@ -822,6 +823,22 @@ finish:
         return r;
 }
 
+static const char *normalize_seek_path(const char *p) {
+
+        /* Normalizes the seek path. Specifically, if the seek path is specified as root directory or empty, we'll
+         * simply suppress it entirely. */
+
+        if (!p)
+                return p;
+
+        p += strspn(p, "/");
+
+        if (isempty(p))
+                return NULL;
+
+        return p;
+}
+
 static int extract(int argc, char *argv[]) {
 
         typedef enum ExtractOperation {
@@ -834,10 +851,11 @@ static int extract(int argc, char *argv[]) {
         ExtractOperation operation = _EXTRACT_OPERATION_INVALID;
         int r, output_fd = -1, input_fd = -1;
         char *input = NULL, *output = NULL;
+        const char *seek_path = NULL;
         CaSync *s = NULL;
 
-        if (argc > 3) {
-                fprintf(stderr, "A pair of output and input path/URL expected.\n");
+        if (argc > 4) {
+                fprintf(stderr, "Input path/URL, output path, and subtree path expected.\n");
                 return -EINVAL;
         }
 
@@ -856,6 +874,9 @@ static int extract(int argc, char *argv[]) {
                         goto finish;
                 }
         }
+
+        if (argc > 3)
+                seek_path = argv[3];
 
         if (arg_what == WHAT_ARCHIVE)
                 operation = EXTRACT_ARCHIVE;
@@ -882,12 +903,6 @@ static int extract(int argc, char *argv[]) {
                         r = -EINVAL;
                         goto finish;
                 }
-        }
-
-        s = ca_sync_new_decode();
-        if (!s) {
-                r = log_oom();
-                goto finish;
         }
 
         if (!input || streq(input, "-"))
@@ -972,6 +987,20 @@ static int extract(int argc, char *argv[]) {
                 goto finish;
         }
 
+        if (!IN_SET(operation, EXTRACT_ARCHIVE, EXTRACT_ARCHIVE_INDEX) && seek_path) {
+                fprintf(stderr, "Subtree path only supported when extracting archive or archive index.\n");
+                r = -EINVAL;
+                goto finish;
+        }
+
+        seek_path = normalize_seek_path(seek_path);
+
+        s = ca_sync_new_decode();
+        if (!s) {
+                r = log_oom();
+                goto finish;
+        }
+
         if (IN_SET(operation, EXTRACT_ARCHIVE_INDEX, EXTRACT_BLOB_INDEX)) {
                 r = set_default_store(input);
                 if (r < 0)
@@ -990,26 +1019,30 @@ static int extract(int argc, char *argv[]) {
                 }
         }
 
-        if (output_fd >= 0)
-                r = ca_sync_set_base_fd(s, output_fd);
-        else {
-                assert(output);
+        if (seek_path) {
+                if (output_fd >= 0)
+                        r = ca_sync_set_boundary_fd(s, output_fd);
+                else
+                        r = ca_sync_set_boundary_path(s, output);
+        } else {
+                if (output_fd >= 0)
+                        r = ca_sync_set_base_fd(s, output_fd);
+                else {
+                        r = ca_sync_set_base_mode(s, IN_SET(operation, EXTRACT_ARCHIVE, EXTRACT_ARCHIVE_INDEX) ? S_IFDIR : S_IFREG);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to set base mode to directory: %s\n", strerror(-r));
+                                goto finish;
+                        }
 
-                r = ca_sync_set_base_path(s, output);
+                        r = ca_sync_set_base_path(s, output);
+                }
         }
         if (r < 0) {
                 fprintf(stderr, "Failed to set sync base: %s\n", strerror(-r));
                 goto finish;
         }
 
-        if (output_fd < 0) {
-                r = ca_sync_set_base_mode(s, IN_SET(operation, EXTRACT_ARCHIVE, EXTRACT_ARCHIVE_INDEX) ? S_IFDIR : S_IFREG);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set base mode to directory: %s\n", strerror(-r));
-                        goto finish;
-                }
-        } else
-                output_fd = -1;
+        output_fd = -1;
 
         if (operation == EXTRACT_ARCHIVE) {
                 if (input_fd >= 0)
@@ -1049,6 +1082,14 @@ static int extract(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
+        if (seek_path) {
+                r = ca_sync_seek_path(s, seek_path);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to seek to %s: %s\n", seek_path, strerror(-r));
+                        goto finish;
+                }
+        }
+
         for (;;) {
                 r = ca_sync_step(s);
                 if (r == -ENOMEDIUM) {
@@ -1069,6 +1110,7 @@ static int extract(int argc, char *argv[]) {
 
                 case CA_SYNC_STEP:
                 case CA_SYNC_PAYLOAD:
+                case CA_SYNC_FOUND:
                         break;
 
                 case CA_SYNC_NEXT_FILE: {
@@ -1094,6 +1136,11 @@ static int extract(int argc, char *argv[]) {
                                 goto finish;
                         }
                         break;
+
+                case CA_SYNC_NOT_FOUND:
+                        fprintf(stderr, "Seek path not available in archive: %s\n", seek_path);
+                        r = -ENOENT;
+                        goto finish;
 
                 default:
                         assert(false);
@@ -1184,16 +1231,16 @@ static int list(int argc, char *argv[]) {
                 _LIST_OPERATION_INVALID = -1
         } ListOperation;
 
-        CaLocatorClass input_class = _CA_LOCATOR_CLASS_INVALID;
         ListOperation operation = _LIST_OPERATION_INVALID;
+        const char *seek_path = NULL;
+        gcry_md_hd_t digest = NULL;
+        bool print_digest = false;
         int r, input_fd = -1;
         char *input = NULL;
         CaSync *s = NULL;
-        gcry_md_hd_t digest = NULL;
-        bool print_digest = false;
 
-        if (argc > 2) {
-                fprintf(stderr, "A single input file name expected.\n");
+        if (argc > 3) {
+                fprintf(stderr, "Input path/URL and subtree path expected.\n");
                 return -EINVAL;
         }
 
@@ -1204,6 +1251,9 @@ static int list(int argc, char *argv[]) {
                         goto finish;
                 }
         }
+
+        if (argc > 2)
+                seek_path = argv[2];
 
         if (arg_what == WHAT_ARCHIVE)
                 operation = LIST_ARCHIVE;
@@ -1235,9 +1285,17 @@ static int list(int argc, char *argv[]) {
         if (!input || streq(input, "-"))
                 input_fd = STDIN_FILENO;
         else {
+                CaLocatorClass input_class = _CA_LOCATOR_CLASS_INVALID;
+
                 input_class = ca_classify_locator(input);
                 if (input_class < 0) {
                         fprintf(stderr, "Failed to determine type of locator: %s\n", input);
+                        r = -EINVAL;
+                        goto finish;
+                }
+
+                if (operation == LIST_DIRECTORY && input_class != CA_LOCATOR_PATH) {
+                        fprintf(stderr, "Input must be local path: %s\n", input);
                         r = -EINVAL;
                         goto finish;
                 }
@@ -1294,6 +1352,14 @@ static int list(int argc, char *argv[]) {
                 r = -EINVAL;
                 goto finish;
         }
+
+        if (!IN_SET(operation, LIST_ARCHIVE, LIST_ARCHIVE_INDEX) && seek_path) {
+                fprintf(stderr, "Subtree path only supported when listing archive or archive index.\n");
+                r = -EINVAL;
+                goto finish;
+        }
+
+        seek_path = normalize_seek_path(seek_path);
 
         if (operation == LIST_ARCHIVE_INDEX) {
                 r = set_default_store(input);
@@ -1358,6 +1424,14 @@ static int list(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
+        if (seek_path) {
+                r = ca_sync_seek_path(s, seek_path);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to seek to %s: %s\n", seek_path, strerror(-r));
+                        goto finish;
+                }
+        }
+
         initialize_libgcrypt();
 
         if (streq(argv[0], "mtree")) {
@@ -1405,6 +1479,7 @@ static int list(int argc, char *argv[]) {
                 }
 
                 case CA_SYNC_STEP:
+                case CA_SYNC_FOUND:
                         break;
 
                 case CA_SYNC_NEXT_FILE: {
@@ -1562,6 +1637,11 @@ static int list(int argc, char *argv[]) {
                         }
                         break;
 
+                case CA_SYNC_NOT_FOUND:
+                        fprintf(stderr, "Seek path not available in archive: %s\n", seek_path);
+                        r = -ENOENT;
+                        goto finish;
+
                 default:
                         assert(false);
                 }
@@ -1599,20 +1679,23 @@ finish:
 static int digest(int argc, char *argv[]) {
 
         typedef enum DigestOperation {
+                DIGEST_ARCHIVE,
+                DIGEST_ARCHIVE_INDEX,
                 DIGEST_BLOB,
-                DIGEST_INDEX,
+                DIGEST_BLOB_INDEX,
                 DIGEST_DIRECTORY,
                 _DIGEST_OPERATION_INVALID = -1,
         } DigestOperation;
 
         DigestOperation operation = _DIGEST_OPERATION_INVALID;
-        bool set_base_mode_ifreg = false;
+        bool set_base_mode = false;
+        const char *seek_path = NULL;
         int r, input_fd = -1;
         char *input = NULL;
         CaSync *s = NULL;
 
-        if (argc > 2) {
-                fprintf(stderr, "A single input file name expected.\n");
+        if (argc > 3) {
+                fprintf(stderr, "Input path/URL and subtree path expected.\n");
                 return -EINVAL;
         }
 
@@ -1624,10 +1707,17 @@ static int digest(int argc, char *argv[]) {
                 }
         }
 
-        if (IN_SET(arg_what, WHAT_ARCHIVE, WHAT_BLOB))
+        if (argc > 2)
+                seek_path = argv[2];
+
+        if (arg_what == WHAT_ARCHIVE)
+                operation = DIGEST_ARCHIVE;
+        else if (arg_what == WHAT_ARCHIVE_INDEX)
+                operation = DIGEST_ARCHIVE_INDEX;
+        else if (arg_what == WHAT_BLOB)
                 operation = DIGEST_BLOB;
-        else if (IN_SET(arg_what, WHAT_ARCHIVE_INDEX, WHAT_BLOB_INDEX))
-                operation = DIGEST_INDEX;
+        else if (arg_what == WHAT_BLOB_INDEX)
+                operation = DIGEST_BLOB_INDEX;
         else if (arg_what == WHAT_DIRECTORY)
                 operation = DIGEST_DIRECTORY;
         else if (arg_what != _WHAT_INVALID) {
@@ -1636,12 +1726,14 @@ static int digest(int argc, char *argv[]) {
                 goto finish;
         }
 
-        if (input && !streq(input, "-")) {
+        if (operation == _DIGEST_OPERATION_INVALID && input && !streq(input, "-")) {
 
                 if (ca_locator_has_suffix(input, ".catar"))
-                        operation = DIGEST_BLOB;
-                else if (ca_locator_has_suffix(input, ".caidx") || ca_locator_has_suffix(input, ".caibx"))
-                        operation = DIGEST_INDEX;
+                        operation = DIGEST_ARCHIVE;
+                else if (ca_locator_has_suffix(input, ".caidx"))
+                        operation = DIGEST_ARCHIVE_INDEX;
+                else if (ca_locator_has_suffix(input, ".caibx"))
+                        operation = DIGEST_BLOB_INDEX;
         }
 
         if (!input && IN_SET(operation, DIGEST_DIRECTORY, _DIGEST_OPERATION_INVALID)) {
@@ -1702,8 +1794,8 @@ static int digest(int argc, char *argv[]) {
                 } else if (S_ISREG(st.st_mode) || S_ISBLK(st.st_mode)) {
 
                         if (operation == _DIGEST_OPERATION_INVALID)
-                                operation = DIGEST_BLOB;
-                        else if (!IN_SET(operation, DIGEST_BLOB, DIGEST_INDEX)) {
+                                operation = seek_path ? DIGEST_ARCHIVE : DIGEST_BLOB;
+                        else if (!IN_SET(operation, DIGEST_ARCHIVE, DIGEST_BLOB, DIGEST_ARCHIVE_INDEX, DIGEST_BLOB_INDEX)) {
                                 fprintf(stderr, "Input is not a regular file or block device, but attempted to list as one. Refusing.\n");
                                 r = -EINVAL;
                                 goto finish;
@@ -1724,14 +1816,21 @@ static int digest(int argc, char *argv[]) {
                 goto finish;
         }
 
-        if (operation == DIGEST_INDEX) {
+        if (!IN_SET(operation, DIGEST_ARCHIVE, DIGEST_ARCHIVE_INDEX) && seek_path) {
+                fprintf(stderr, "Subtree path only supported when calculating message digest of archive or archive index.\n");
+                r = -EINVAL;
+                goto finish;
+        }
+
+        seek_path = normalize_seek_path(seek_path);
+
+        if (IN_SET(operation, DIGEST_ARCHIVE_INDEX, DIGEST_BLOB_INDEX)) {
                 r = set_default_store(input);
                 if (r < 0)
                         goto finish;
         }
 
-        if (operation == DIGEST_DIRECTORY ||
-            (operation == DIGEST_BLOB && input_fd >= 0))
+        if (operation == DIGEST_DIRECTORY || (operation == DIGEST_BLOB && input_fd >= 0))
                 s = ca_sync_new_encode();
         else
                 s = ca_sync_new_decode();
@@ -1744,21 +1843,19 @@ static int digest(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
-        if (operation == DIGEST_DIRECTORY ||
-            (operation == DIGEST_BLOB && input_fd >= 0))
+        if (operation == DIGEST_DIRECTORY || (operation == DIGEST_BLOB && input_fd >= 0))
                 r = ca_sync_set_base_fd(s, input_fd);
-        else if (operation == DIGEST_INDEX) {
+        else if (IN_SET(operation, DIGEST_ARCHIVE_INDEX, DIGEST_BLOB_INDEX)) {
                 if (input_fd >= 0)
                         r = ca_sync_set_index_fd(s, input_fd);
                 else
                         r = ca_sync_set_index_auto(s, input);
 
-                set_base_mode_ifreg = true;
-
+                set_base_mode = true;
         } else {
-                assert(operation == DIGEST_BLOB);
+                assert(IN_SET(operation, DIGEST_BLOB, DIGEST_ARCHIVE));
 
-                set_base_mode_ifreg = true;
+                set_base_mode = true;
 
                 r = ca_sync_set_archive_auto(s, input);
         }
@@ -1768,8 +1865,8 @@ static int digest(int argc, char *argv[]) {
         }
         input_fd = -1;
 
-        if (set_base_mode_ifreg) {
-                r = ca_sync_set_base_mode(s, S_IFREG);
+        if (set_base_mode) {
+                r = ca_sync_set_base_mode(s, IN_SET(operation, DIGEST_ARCHIVE, DIGEST_ARCHIVE_INDEX) ? S_IFDIR : S_IFREG);
                 if (r < 0) {
                         fprintf(stderr, "Failed to set base mode to regular file: %s\n", strerror(-r));
                         goto finish;
@@ -1791,6 +1888,14 @@ static int digest(int argc, char *argv[]) {
         r = load_feature_flags(s);
         if (r < 0)
                 goto finish;
+
+        if (seek_path) {
+                r = ca_sync_seek_path(s, seek_path);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to seek to %s: %s\n", seek_path, strerror(-r));
+                        goto finish;
+                }
+        }
 
         for (;;) {
                 r = ca_sync_step(s);
@@ -1819,6 +1924,7 @@ static int digest(int argc, char *argv[]) {
 
                 case CA_SYNC_STEP:
                 case CA_SYNC_PAYLOAD:
+                case CA_SYNC_FOUND:
                         break;
 
                 case CA_SYNC_NEXT_FILE:
@@ -1842,6 +1948,11 @@ static int digest(int argc, char *argv[]) {
                                 goto finish;
                         }
                         break;
+
+                case CA_SYNC_NOT_FOUND:
+                        fprintf(stderr, "Seek path not available in archive: %s\n", seek_path);
+                        r = -ENOENT;
+                        goto finish;
 
                 default:
                         assert(false);
@@ -2081,7 +2192,7 @@ static int mkdev(int argc, char *argv[]) {
                         goto finish;
                 }
 
-                r = ca_sync_seek(s, req_offset);
+                r = ca_sync_seek_offset(s, req_offset);
                 if (r < 0) {
                         fprintf(stderr, "Failed to seek: %s\n", strerror(-r));
                         goto finish;
@@ -2105,6 +2216,7 @@ static int mkdev(int argc, char *argv[]) {
                         switch (r) {
 
                         case CA_SYNC_STEP:
+                        case CA_SYNC_FOUND:
                                 break;
 
                         case CA_SYNC_FINISHED:

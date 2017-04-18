@@ -62,9 +62,11 @@ typedef struct CaSync {
         bool chunk_size_propagated;
 
         int base_fd;
+        int boundary_fd;
         int archive_fd;
 
         char *base_path, *temporary_base_path;
+        char *boundary_path;
         char *archive_path, *temporary_archive_path;
 
         mode_t base_mode;
@@ -100,7 +102,7 @@ static CaSync *ca_sync_new(void) {
         if (!s)
                 return NULL;
 
-        s->base_fd = s->archive_fd = -1;
+        s->base_fd = s->boundary_fd = s->archive_fd = -1;
         s->base_mode = (mode_t) -1;
         s->make_mode = (mode_t) -1;
 
@@ -197,10 +199,12 @@ CaSync *ca_sync_unref(CaSync *s) {
         free(s->seeds);
 
         safe_close(s->base_fd);
+        safe_close(s->boundary_fd);
         safe_close(s->archive_fd);
 
         free(s->base_path);
         free(s->archive_path);
+        free(s->boundary_path);
 
         if (s->temporary_base_path) {
                 (void) unlink(s->temporary_base_path);
@@ -419,6 +423,10 @@ int ca_sync_set_base_fd(CaSync *s, int fd) {
                 return -EBUSY;
         if (s->base_path)
                 return -EBUSY;
+        if (s->boundary_fd >= 0)
+                return -EBUSY;
+        if (s->boundary_path)
+                return -EBUSY;
 
         s->base_fd = fd;
         return 0;
@@ -434,14 +442,22 @@ int ca_sync_set_base_path(CaSync *s, const char *path) {
                 return -EBUSY;
         if (s->base_path)
                 return -EBUSY;
+        if (s->boundary_fd >= 0)
+                return -EBUSY;
+        if (s->boundary_path)
+                return -EBUSY;
 
-        s->base_fd = open(path, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_DIRECTORY);
-        if (s->base_fd >= 0) /* Base exists already and is a directory */
-                return 0;
+        if (s->base_mode == (mode_t) -1 || S_ISDIR(s->base_mode)) {
+
+                s->base_fd = open(path, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_DIRECTORY);
+                if (s->base_fd >= 0) /* Base exists already and is a directory */
+                        return 0;
+
+                if (s->direction == CA_SYNC_ENCODE && errno != ENOTDIR)
+                        return -errno;
+        }
 
         if (s->direction == CA_SYNC_ENCODE) {
-                if (errno != ENOTDIR)
-                        return -errno;
 
                 s->base_fd = open(path, O_RDONLY|O_CLOEXEC|O_NOCTTY);
                 if (s->base_fd < 0)
@@ -488,8 +504,70 @@ int ca_sync_set_base_mode(CaSync *s, mode_t m) {
                 return -EBUSY;
         if (s->base_mode != (mode_t) -1)
                 return -EBUSY;
+        if (s->boundary_fd >= 0)
+                return -EBUSY;
+        if (s->boundary_path)
+                return -EBUSY;
 
         s->base_mode = m;
+        return 0;
+}
+
+int ca_sync_set_boundary_fd(CaSync *s, int fd) {
+        if (!s)
+                return -EINVAL;
+        if (fd < 0)
+                return -EINVAL;
+
+        if (s->base_fd >= 0)
+                return -EBUSY;
+        if (s->base_mode != (mode_t) -1)
+                return -EBUSY;
+        if (s->base_path)
+                return -EBUSY;
+        if (s->boundary_fd >= 0)
+                return -EBUSY;
+        if (s->boundary_path)
+                return -EBUSY;
+
+        if (s->direction == CA_SYNC_ENCODE)
+                return -ENOTTY;
+
+        s->boundary_fd = fd;
+        return 0;
+}
+
+int ca_sync_set_boundary_path(CaSync *s, const char *p) {
+        if (!s)
+                return -EINVAL;
+        if (!p)
+                return -EINVAL;
+
+        if (s->base_fd >= 0)
+                return -EBUSY;
+        if (s->base_mode != (mode_t) -1)
+                return -EBUSY;
+        if (s->base_path)
+                return -EBUSY;
+        if (s->boundary_fd >= 0)
+                return -EBUSY;
+        if (s->boundary_path)
+                return -EBUSY;
+
+        if (s->direction == CA_SYNC_ENCODE)
+                return -ENOTTY;
+
+        s->boundary_fd = open(p, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_DIRECTORY);
+        if (s->boundary_fd >= 0) /* Base exists already is a directory, good */
+                return 0;
+
+        if (errno != ENOENT)
+                return -errno;
+
+        s->boundary_path = strdup(p);
+        if (!s->boundary_path)
+                return -ENOMEM;
+
         return 0;
 }
 
@@ -882,6 +960,16 @@ static int ca_sync_start(CaSync *s) {
 
         if (s->direction == CA_SYNC_DECODE && !s->decoder) {
 
+                if (s->boundary_fd < 0 && s->boundary_path) {
+
+                        if (mkdir(s->boundary_path, 0777) < 0 && errno != EEXIST)
+                                return -errno;
+
+                        s->boundary_fd = open(s->boundary_path, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_DIRECTORY);
+                        if (s->boundary_fd < 0)
+                                return -errno;
+                }
+
                 if (s->base_fd < 0 && s->base_path) {
 
                         if (s->base_mode == (mode_t) -1)
@@ -923,7 +1011,31 @@ static int ca_sync_start(CaSync *s) {
                 if (!s->decoder)
                         return -ENOMEM;
 
-                if (s->base_fd >= 0) {
+                /* There are three ways we can initialize the decoder:
+                 *
+                 * 1. We extract the whole archive. In this case we specify the "base" fd for the extraction, which is
+                 *    going to be the top-level object we'll write to. If the archive is a directory tree, this needs
+                 *    to be a directory fd, otherwise a regular file or block device.
+                 *
+                 * 2. We do not extract anything (i.e. only list the contents or such). In this case we don't specify
+                 *    any fd, but we do specify the file type (directory or regular file/block device) of the top-level
+                 *    object we'd extract to if we'd extract. This is necessary so that we know whether to simply
+                 *    decode a raw file contents blob, or a full directory tree.
+                 *
+                 * 3. We extract a subtree of the whole archive. In this case we specify a "boundary" directory fd,
+                 *    where to place the objected seeked to. Note that difference from the "base" fd: we'll always
+                 *    extract the seeked to file as a subfile of the specified fd.
+                 */
+
+                if (s->boundary_fd >= 0) {
+
+                        r = ca_decoder_set_boundary_fd(s->decoder, s->boundary_fd);
+                        if (r < 0)
+                                return r;
+
+                        s->boundary_fd = -1;
+
+                } else  if (s->base_fd >= 0) {
 
                         r = ca_decoder_set_base_fd(s->decoder, s->base_fd);
                         if (r < 0)
@@ -936,6 +1048,12 @@ static int ca_sync_start(CaSync *s) {
                                 return -EUNATCH;
 
                         r = ca_decoder_set_base_mode(s->decoder, s->base_mode);
+                        if (r < 0)
+                                return r;
+                }
+
+                if (s->archive_size != UINT64_MAX) {
+                        r = ca_decoder_set_archive_size(s->decoder, s->archive_size);
                         if (r < 0)
                                 return r;
                 }
@@ -1290,6 +1408,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
         int r;
 
         assert(s);
+        assert(s->decoder);
 
         if (s->index)  {
                 uint64_t chunk_size;
@@ -1408,6 +1527,41 @@ static int ca_sync_install_base(CaSync *s) {
         return 0;
 }
 
+static int ca_sync_process_decoder_seek(CaSync *s) {
+        uint64_t offset;
+        int r;
+
+        assert(s);
+        assert(s->decoder);
+
+        r = ca_decoder_get_seek_offset(s->decoder, &offset);
+        if (r < 0)
+                return r;
+
+        if (s->index) {
+                r = ca_index_seek(s->index, offset, &s->chunk_skip);
+                if (r < 0)
+                        return r;
+
+        } else if (s->archive_fd >= 0) {
+                off_t f;
+
+                f = lseek(s->archive_fd, (off_t) offset, SEEK_SET);
+                if (f == (off_t) -1)
+                        return -errno;
+
+                s->chunk_skip = 0;
+
+        } else
+                return -EOPNOTSUPP;
+
+        s->archive_eof = false;
+        s->remote_index_eof = false;
+        s->next_chunk_valid = false;
+
+        return CA_SYNC_STEP;
+}
+
 static int ca_sync_step_decode(CaSync *s) {
         int step, r;
 
@@ -1446,6 +1600,18 @@ static int ca_sync_step_decode(CaSync *s) {
 
         case CA_DECODER_REQUEST:
                 return ca_sync_process_decoder_request(s);
+
+        case CA_DECODER_SEEK:
+                return ca_sync_process_decoder_seek(s);
+
+        case CA_DECODER_FOUND:
+                if (s->archive_digest)
+                        gcry_md_reset(s->archive_digest);
+
+                return CA_SYNC_FOUND;
+
+        case CA_DECODER_NOT_FOUND:
+                return CA_SYNC_NOT_FOUND;
 
         default:
                 assert(false);
@@ -2396,7 +2562,7 @@ int ca_sync_current_archive_offset(CaSync *s, uint64_t *ret) {
         return ca_encoder_current_archive_offset(s->encoder, ret);
 }
 
-int ca_sync_seek(CaSync *s, uint64_t offset) {
+int ca_sync_seek_offset(CaSync *s, uint64_t offset) {
         uint64_t chunk_skip = 0;
         int r;
 
@@ -2408,7 +2574,7 @@ int ca_sync_seek(CaSync *s, uint64_t offset) {
                 return r;
 
         if (!s->decoder)
-                return -ENODATA;
+                return -ESPIPE;
 
         if (s->index) {
 
@@ -2426,7 +2592,7 @@ int ca_sync_seek(CaSync *s, uint64_t offset) {
         } else
                 return -EOPNOTSUPP;
 
-        r = ca_decoder_seek_archive(s->decoder, offset);
+        r = ca_decoder_seek_offset(s->decoder, offset);
         if (r < 0)
                 return r;
 
@@ -2435,6 +2601,59 @@ int ca_sync_seek(CaSync *s, uint64_t offset) {
         s->next_chunk_valid = false;
 
         s->chunk_skip = chunk_skip;
+
+        return 0;
+}
+
+int ca_sync_seek_path(CaSync *s, const char *path) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!path)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        r = ca_sync_start(s);
+        if (r < 0)
+                return r;
+
+        if (!s->decoder)
+                return -ESPIPE;
+
+        if (s->archive_size == UINT64_MAX) {
+
+                if (s->archive_fd >= 0) {
+                        struct stat st;
+
+                        if (fstat(s->archive_fd, &st) < 0)
+                                return -errno;
+
+                        if (S_ISREG(st.st_mode))
+                                s->archive_size = st.st_size;
+
+                } else if (s->index) {
+                        r = ca_index_get_blob_size(s->index, &s->archive_size);
+                        if (r < 0)
+                                return r;
+                } else
+                        return -EOPNOTSUPP;
+
+                r = ca_decoder_set_archive_size(s->decoder, s->archive_size);
+                if (r < 0)
+                        return r;
+        }
+
+        r = ca_decoder_seek_path(s->decoder, path);
+        if(r < 0)
+                return r;
+
+        s->archive_eof = false;
+        s->remote_index_eof = false;
+        s->next_chunk_valid = false;
+        s->chunk_skip = 0;
 
         return 0;
 }

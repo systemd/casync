@@ -27,7 +27,9 @@
 #include "def.h"
 #include "fssize.h"
 #include "realloc-buffer.h"
+#include "siphash24.h"
 #include "util.h"
+#include "camakebst.h"
 
 /* #undef EINVAL */
 /* #define EINVAL __LINE__ */
@@ -47,6 +49,12 @@ typedef struct CaEncoderACLEntry {
                 uint32_t generic_id;
         };
 } CaEncoderACLEntry;
+
+typedef struct CaEncoderNameTable {
+        uint64_t hash;
+        uint64_t start_offset;
+        uint64_t end_offset;
+} CaEncoderNameTable;
 
 typedef struct CaEncoderNode {
         int fd;
@@ -96,6 +104,12 @@ typedef struct CaEncoderNode {
         /* File system capabilities */
         void *fcaps;
         size_t fcaps_size;
+
+        /* If this is a directory: file name lookup data */
+        CaEncoderNameTable *name_table;
+        size_t n_name_table;
+        size_t n_name_table_allocated;
+        uint64_t previous_name_table_offset;
 } CaEncoderNode;
 
 typedef enum CaEncoderState {
@@ -200,6 +214,10 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
         n->device_size = UINT64_MAX;
 
         n->stat.st_mode = 0;
+
+        n->name_table = mfree(n->name_table);
+        n->n_name_table = n->n_name_table_allocated = 0;
+        n->previous_name_table_offset = UINT64_MAX;
 }
 
 CaEncoder *ca_encoder_unref(CaEncoder *e) {
@@ -293,6 +311,7 @@ int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
                 .acl_default_group_obj_permissions = UINT64_MAX,
                 .acl_default_other_permissions = UINT64_MAX,
                 .acl_default_mask_permissions = UINT64_MAX,
+                .previous_name_table_offset = UINT64_MAX,
         };
 
         e->n_nodes = 1;
@@ -1551,6 +1570,10 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
         }
 
         case CA_ENCODER_NEXT_DIRENT:
+
+                assert(n->n_name_table > 0);
+                n->name_table[n->n_name_table-1].end_offset = e->archive_offset;
+
                 n->dirent_idx++;
 
                 /* Fall through */
@@ -1567,6 +1590,9 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                 for (;;) {
                         de = ca_encoder_node_current_dirent(n);
                         if (!de) {
+                                if (n->n_name_table > 0)
+                                        n->name_table[n->n_name_table-1].end_offset = e->archive_offset;
+
                                 ca_encoder_enter_state(e, CA_ENCODER_GOODBYE);
                                 return CA_ENCODER_DATA;
                         }
@@ -1585,6 +1611,14 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                         /* Nope, not relevant to us, let's try the next one */
                         n->dirent_idx++;
                 }
+
+                if (!GREEDY_REALLOC(n->name_table, n->n_name_table_allocated, n->n_name_table+1))
+                        return -ENOMEM;
+
+                n->name_table[n->n_name_table++] = (CaEncoderNameTable) {
+                        .start_offset = e->archive_offset,
+                        .hash = siphash24(de->d_name, strlen(de->d_name), (const uint8_t[16]) CA_FORMAT_GOODBYE_HASH_KEY),
+                };
 
                 ca_encoder_enter_state(e, CA_ENCODER_FILENAME);
                 return CA_ENCODER_DATA;
@@ -1608,6 +1642,7 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
         }
 
         case CA_ENCODER_GOODBYE:
+
                 ca_encoder_enter_state(e, CA_ENCODER_EOF);
                 return CA_ENCODER_FINISHED;
 
@@ -2107,9 +2142,27 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         return 1;
 }
 
+static int name_table_compare(const void *a, const void *b) {
+        const CaEncoderNameTable *x = a, *y = b;
+
+        if (x->hash < y->hash)
+                return -1;
+        if (x->hash > y->hash)
+                return 1;
+
+        if (x->start_offset < y->start_offset)
+                return -1;
+        if (x->start_offset > y->start_offset)
+                return 1;
+
+        return 0;
+}
+
 static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
+        const CaEncoderNameTable *table;
+        CaEncoderNameTable *bst = NULL;
         CaFormatGoodbye *g;
-        size_t size;
+        size_t size, i;
 
         assert(e);
         assert(n);
@@ -2119,7 +2172,9 @@ static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
         if (realloc_buffer_size(&e->buffer) > 0) /* Already generated */
                 return 1;
 
-        size = offsetof(CaFormatGoodbye, table) + sizeof(le64_t);
+        size = offsetof(CaFormatGoodbye, items) +
+                sizeof(CaFormatGoodbyeItem) * n->n_name_table +
+                sizeof(le64_t);
 
         g = realloc_buffer_acquire(&e->buffer, size);
         if (!g)
@@ -2130,7 +2185,35 @@ static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
                 .size = htole64(size),
         };
 
-        memcpy(g->table, &g->header.size, sizeof(le64_t));
+        if (n->n_name_table <= 1)
+                table = n->name_table;
+        else {
+                qsort(n->name_table, n->n_name_table, sizeof(CaEncoderNameTable), name_table_compare);
+
+                bst = new(CaEncoderNameTable, n->n_name_table);
+                if (!bst)
+                        return -ENOMEM;
+
+                ca_make_bst(n->name_table, n->n_name_table, sizeof(CaEncoderNameTable), bst);
+
+                table = bst;
+        }
+
+        for (i = 0; i < n->n_name_table; i++) {
+                assert(table[i].start_offset < e->archive_offset);
+                assert(table[i].end_offset <= e->archive_offset);
+                assert(table[i].start_offset < table[i].end_offset);
+
+                g->items[i] = (CaFormatGoodbyeItem) {
+                        .offset = htole64(e->archive_offset - table[i].start_offset),
+                        .size = htole64(table[i].end_offset - table[i].start_offset),
+                        .hash = htole64(table[i].hash),
+                };
+        }
+
+        free(bst);
+
+        memcpy(g->items + n->n_name_table, &g->header.size, sizeof(le64_t));
         return 1;
 }
 
@@ -2706,7 +2789,7 @@ static int ca_encoder_seek_path_and_enter(CaEncoder *e, const char *path) {
         return ca_encoder_enter_child(e);
 }
 
-int ca_encoder_seek(CaEncoder *e, CaLocation *location) {
+int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
         CaEncoderNode *node;
         int r;
 

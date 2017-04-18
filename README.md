@@ -66,7 +66,7 @@ but there are other systems that use similar algorithms, in particular:
 ```
 # casync list /home/lennart
 # casync digest /home/lennart
-# casync mtree /home/lennart
+# casync mtree /home/lennart (BSD mtree(5) compatible manifest)
 ```
 
 ## Operations on archives
