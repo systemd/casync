@@ -387,7 +387,9 @@ int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *
         size = l->size;
 
         step = ca_encoder_seek_location(s->encoder, l);
-        ca_location_unref(l);
+        l = ca_location_unref(l);
+        if (step == -ENXIO) /* location doesn't exist anymore? Then the seed has been modified */
+                return -ESTALE;
         if (step < 0)
                 return step;
 
@@ -395,11 +397,22 @@ int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *
         if (!p)
                 return -ENOMEM;
 
+        if (ret_origin) {
+                r = ca_seed_get_file_root(s, &root);
+                if (r < 0)
+                        return r;
+
+                r = ca_origin_new(&origin);
+                if (r < 0)
+                        return r;
+        }
+
         for (;;) {
                 switch (step) {
 
                 case CA_ENCODER_FINISHED:
-                        return -EPIPE;
+                        /* Premature end? Then the seed has been modified */
+                        return -ESTALE;
 
                 case CA_ENCODER_DATA:
                 case CA_ENCODER_NEXT_FILE:
