@@ -88,8 +88,6 @@ typedef struct CaDecoderNode {
         uint64_t acl_default_group_obj_permissions;
         uint64_t acl_default_other_permissions;
         uint64_t acl_default_mask_permissions;
-
-        bool punch_holes;
 } CaDecoderNode;
 
 typedef enum CaDecoderState {
