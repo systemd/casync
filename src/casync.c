@@ -124,7 +124,7 @@ CaSync *ca_sync_new_encode(void) {
                 return NULL;
 
         s->direction = CA_SYNC_ENCODE;
-        s->feature_flags = CA_FORMAT_WITH_BEST;
+        assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_RESPECT_FLAG_NODUMP, &s->feature_flags) >= 0);
 
         return s;
 }

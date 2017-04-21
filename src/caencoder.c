@@ -157,7 +157,7 @@ CaEncoder *ca_encoder_new(void) {
         if (!e)
                 return NULL;
 
-        e->feature_flags = CA_FORMAT_WITH_BEST;
+        assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_RESPECT_FLAG_NODUMP, &e->feature_flags) >= 0);
         e->time_granularity = 1;
 
         return e;
