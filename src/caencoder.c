@@ -1798,12 +1798,12 @@ static mode_t ca_encoder_fixup_mode(CaEncoder *e, CaEncoderNode *n) {
         mode = n->stat.st_mode;
         if (S_ISLNK(mode))
                 mode = S_IFLNK | 0777;
-        if (e->feature_flags & (CA_FORMAT_WITH_PERMISSIONS|CA_FORMAT_WITH_ACL))
+        else if (e->feature_flags & (CA_FORMAT_WITH_PERMISSIONS|CA_FORMAT_WITH_ACL))
                 mode = mode & (S_IFMT|07777);
         else if (e->feature_flags & CA_FORMAT_WITH_READ_ONLY)
                 mode = (mode & S_IFMT) | ((mode & 0222) ? (S_ISDIR(mode) ? 0777 : 0666) : (S_ISDIR(mode) ? 0555 : 0444));
         else
-                mode &= S_IFMT;
+                mode = (mode & S_IFMT) | (S_ISDIR(mode) ? 0777 : 0666);
 
         return mode;
 }
