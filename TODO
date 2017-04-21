@@ -27,3 +27,8 @@
 * permit 511 (or 4095?) redundant NUL bytes at the end of archive and index files, so that they could in theory stored on block devices
 * archive digest can't sanely process subdirectories right now, since it will include trailing data that belongs to the next objects already
 * when listing archive contents, seek over payload
+* when restoring file objects, do so atomically by using temporary file and rename (except: directories)
+* decoder: rework seek by file offset to match seek by path semantics of async CA_DECODER_SEEK events
+* propagate feature flags into index, and then into seed
+* seed: cache GOODBYE name table data so that we can regenerate the right bits when needed
+* decoder: count how many bytes on disk we saved due to sparse files, and due to reflinks
