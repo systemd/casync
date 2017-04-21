@@ -13,6 +13,7 @@ int main(int argc, char *argv[]) {
         uint8_t buffer2[sizeof(buffer)];
         char fn[] = "/tmp/zeroXXXXXX";
         int fd, p[2];
+        uint64_t n_punched;
 
         memzero(buffer, PART1);
         dev_urandom(buffer + PART1, PART2);
@@ -24,7 +25,8 @@ int main(int argc, char *argv[]) {
         assert_se(fd >= 0);
         assert_se(unlink(fn) == 0);
 
-        assert_se(loop_write_with_holes(fd, buffer, sizeof(buffer)) >= 0);
+        assert_se(loop_write_with_holes(fd, buffer, sizeof(buffer), &n_punched) >= 0);
+        assert_se(n_punched >= PART1 + PART3);
 
         assert_se(lseek(fd, 0, SEEK_SET) == 0);
         assert_se(loop_read(fd, buffer2, sizeof(buffer2)) == sizeof(buffer2));
@@ -32,7 +34,8 @@ int main(int argc, char *argv[]) {
 
         memzero(buffer + PART1 + 1, PART2 - 2);
         assert_se(lseek(fd, PART1-1, SEEK_SET) == PART1-1);
-        assert_se(loop_write_with_holes(fd, buffer + PART1 - 1, PART2 + 2) >= 0);
+        assert_se(loop_write_with_holes(fd, buffer + PART1 - 1, PART2 + 2, &n_punched) >= 0);
+        assert_se(n_punched >= PART2 - 2);
 
         assert_se(lseek(fd, 0, SEEK_SET) == 0);
         assert_se(loop_read(fd, buffer2, sizeof(buffer2)) == sizeof(buffer2));
@@ -42,7 +45,8 @@ int main(int argc, char *argv[]) {
 
         assert_se(pipe2(p, O_CLOEXEC) >= 0);
 
-        assert_se(loop_write_with_holes(p[1], buffer, MIN(sizeof(buffer), (size_t) PIPE_BUF)) >= 0);
+        assert_se(loop_write_with_holes(p[1], buffer, MIN(sizeof(buffer), (size_t) PIPE_BUF), &n_punched) >= 0);
+        assert_se(n_punched == 0);
 
         p[1] = safe_close(p[1]);
 

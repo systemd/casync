@@ -540,7 +540,7 @@ static int verbose_print_size(CaSync *s) {
 }
 
 static int verbose_print_done(CaSync *s) {
-        uint64_t selected, covering, too_much;
+        uint64_t covering, n_bytes;
         int r;
 
         assert(s);
@@ -549,31 +549,43 @@ static int verbose_print_done(CaSync *s) {
                 return 0;
 
         r = ca_sync_get_covering_feature_flags(s, &covering);
-        if (r == -ENODATA)
-                return 0;
-        if (r < 0) {
-                fprintf(stderr, "Failed to determine covering flags: %s\n", strerror(-r));
-                return r;
-        }
+        if (r != -ENODATA) {
+                uint64_t selected, too_much;
 
-        r = ca_sync_get_feature_flags(s, &selected);
-        if (r < 0) {
-                fprintf(stderr, "Failed to determine used flags: %s\n", strerror(-r));
-                return r;
-        }
-
-        too_much = selected & ~covering;
-        if (too_much != 0) {
-                char *t;
-
-                r = ca_with_feature_flags_format(too_much, &t);
                 if (r < 0) {
-                        fprintf(stderr, "Failed to format feature flags: %s\n", strerror(-r));
+                        fprintf(stderr, "Failed to determine covering flags: %s\n", strerror(-r));
                         return r;
                 }
 
-                fprintf(stderr, "Specified feature flags not covered by backing file systems: %s\n", t);
-                free(t);
+                r = ca_sync_get_feature_flags(s, &selected);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to determine used flags: %s\n", strerror(-r));
+                        return r;
+                }
+
+                too_much = selected & ~covering;
+                if (too_much != 0) {
+                        char *t;
+
+                        r = ca_with_feature_flags_format(too_much, &t);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to format feature flags: %s\n", strerror(-r));
+                                return r;
+                        }
+
+                        fprintf(stderr, "Specified feature flags not covered by backing file systems: %s\n", t);
+                        free(t);
+                }
+        }
+
+        r = ca_sync_get_punch_holes_bytes(s, &n_bytes);
+        if (!IN_SET(r, -ENODATA, -ENOTTY)) {
+                if (r < 0) {
+                        fprintf(stderr, "Failed to determine number of punch holes bytes: %s\n", strerror(-r));
+                        return r;
+                }
+
+                fprintf(stderr, "Zero bytes written as holes (sparse files): %" PRIu64 "\n", n_bytes);
         }
 
         return 1;

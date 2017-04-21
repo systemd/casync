@@ -68,4 +68,6 @@ int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret);
 int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset);
 int ca_decoder_seek_path(CaDecoder *d, const char *path);
 
+int ca_decoder_get_punch_holes_byte(CaDecoder *d, uint64_t *ret);
+
 #endif

@@ -2846,3 +2846,23 @@ int ca_sync_get_archive_size(CaSync *s, uint64_t *ret_size) {
 
         return -ENOTTY;
 }
+
+int ca_sync_get_punch_holes_bytes(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        if (!s->punch_holes)
+                return -ENODATA;
+
+        if (!s->decoder) {
+                *ret = 0;
+                return 0;
+        }
+
+        return ca_decoder_get_punch_holes_byte(s->decoder, ret);
+}

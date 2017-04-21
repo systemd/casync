@@ -66,7 +66,7 @@ int loop_write_block(int fd, const void *p, size_t l);
 ssize_t loop_read(int fd, void *p, size_t l);
 
 int write_zeroes(int fd, size_t l);
-int loop_write_with_holes(int fd, const void *p, size_t l);
+int loop_write_with_holes(int fd, const void *p, size_t l, uint64_t *ret_punched);
 
 int skip_bytes(int fd, uint64_t bytes);
 

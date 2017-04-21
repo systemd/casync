@@ -165,6 +165,8 @@ struct CaDecoder {
 
         bool punch_holes;
         bool reflink;
+
+        uint64_t n_punch_holes_bytes;
 };
 
 static inline bool CA_DECODER_IS_SEEKING(CaDecoder *d) {
@@ -3301,12 +3303,19 @@ static int ca_decoder_advance_buffer(CaDecoder *d, CaDecoderNode *n) {
                 if (n->fd >= 0) {
 
                         /* If hole punching is supported and we are writing to a regular file, use it */
-                        if (d->punch_holes && S_ISREG(ca_decoder_node_mode(n)))
-                                r = loop_write_with_holes(n->fd, realloc_buffer_data(&d->buffer), d->step_size);
-                        else
+                        if (d->punch_holes && S_ISREG(ca_decoder_node_mode(n))) {
+                                uint64_t n_punched;
+
+                                r = loop_write_with_holes(n->fd, realloc_buffer_data(&d->buffer), d->step_size, &n_punched);
+                                if (r < 0)
+                                        return r;
+
+                                d->n_punch_holes_bytes += n_punched;
+                        } else {
                                 r = loop_write(n->fd, realloc_buffer_data(&d->buffer), d->step_size);
-                        if (r < 0)
-                                return r;
+                                if (r < 0)
+                                        return r;
+                        }
                 }
 
                 if (d->reflink) {
@@ -3933,5 +3942,18 @@ int ca_decoder_set_reflink(CaDecoder *d, bool enabled) {
                 return -EINVAL;
 
         d->reflink = enabled;
+        return 0;
+}
+
+int ca_decoder_get_punch_holes_byte(CaDecoder *d, uint64_t *ret) {
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!d->punch_holes)
+                return -ENODATA;
+
+        *ret = d->n_punch_holes_bytes;
         return 0;
 }

@@ -141,8 +141,9 @@ fallback:
         return 0; /* Return == 0 if we could only write out zeroes */
 }
 
-int loop_write_with_holes(int fd, const void *p, size_t l) {
+int loop_write_with_holes(int fd, const void *p, size_t l, uint64_t *ret_punched) {
         const uint8_t *q, *start = p, *zero_start = NULL;
+        uint64_t n_punched = 0;
         int r;
 
         /* Write out the specified data much like loop_write(), but try to punch holes for any longer series of zero
@@ -171,11 +172,19 @@ int loop_write_with_holes(int fd, const void *p, size_t l) {
                                         return r;
 
                                 /* Couldn't punch hole? then don't bother again */
-                                if (r == 0)
-                                        return loop_write(fd, q, (const uint8_t*) p + l - q);
+                                if (r == 0) {
+                                        r = loop_write(fd, q, (const uint8_t*) p + l - q);
+                                        if (r < 0)
+                                                return r;
 
+                                        if (ret_punched)
+                                                *ret_punched = n_punched;
+
+                                        return r;
+                                }
+
+                                n_punched += q - zero_start;
                                 start = q;
-
                         }
 
                         zero_start = NULL;
@@ -192,12 +201,24 @@ int loop_write_with_holes(int fd, const void *p, size_t l) {
                         r = write_zeroes(fd, q - zero_start);
                         if (r < 0)
                                 return r;
+                        if (r > 0)
+                                n_punched += q - zero_start;
+
+                        if (ret_punched)
+                                *ret_punched = n_punched;
 
                         return 0;
                 }
         }
 
-        return loop_write(fd, start, q - start);
+        r = loop_write(fd, start, q - start);
+        if (r < 0)
+                return r;
+
+        if (ret_punched)
+                *ret_punched = n_punched;
+
+        return r;
 }
 
 ssize_t loop_read(int fd, void *p, size_t l) {
