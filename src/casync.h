@@ -5,6 +5,7 @@
 
 #include "cachunk.h"
 #include "cachunkid.h"
+#include "caorigin.h"
 
 typedef struct CaSync CaSync;
 
@@ -29,7 +30,8 @@ int ca_sync_set_feature_flags(CaSync *s, uint64_t flags);
 int ca_sync_get_feature_flags(CaSync *s, uint64_t *ret);
 int ca_sync_get_covering_feature_flags(CaSync *s, uint64_t *ret);
 
-int ca_sync_set_punch_holes(CaSync *s, int enabled);
+int ca_sync_set_punch_holes(CaSync *s, bool enabled);
+int ca_sync_set_reflink(CaSync *s, bool enabled);
 
 /* Mode mask to use for created archive or index files */
 int ca_sync_set_make_mode(CaSync *sync, mode_t mode);
@@ -87,8 +89,8 @@ int ca_sync_get_digest(CaSync *s, CaChunkID *ret);
 int ca_sync_get_archive_size(CaSync *s, uint64_t *ret);
 
 /* Low level chunk access */
-int ca_sync_get_local(CaSync *s, const CaChunkID *chunk_id, CaChunkCompression desired_compression, const void **ret, size_t *ret_size, CaChunkCompression *ret_effective_compression);
-int ca_sync_get(CaSync *s, const CaChunkID *chunk_id, CaChunkCompression desired_compression, const void **ret, size_t *ret_size, CaChunkCompression *ret_effective_compression);
+int ca_sync_get_local(CaSync *s, const CaChunkID *chunk_id, CaChunkCompression desired_compression, const void **ret, size_t *ret_size, CaChunkCompression *ret_effective_compression, CaOrigin **ret_origin);
+int ca_sync_get(CaSync *s, const CaChunkID *chunk_id, CaChunkCompression desired_compression, const void **ret, size_t *ret_size, CaChunkCompression *ret_effective_compression, CaOrigin **ret_origin);
 int ca_sync_has_local(CaSync *s, const CaChunkID *chunk_id);
 
 int ca_sync_make_chunk_id(CaSync *s, const void *p, size_t l, CaChunkID *ret);

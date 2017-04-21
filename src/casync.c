@@ -23,6 +23,9 @@
 /* #undef EINVAL */
 /* #define EINVAL __LINE__ */
 
+/* #undef ENXIO */
+/* #define ENXIO __LINE__ */
+
 typedef enum CaDirection {
         CA_SYNC_ENCODE,
         CA_SYNC_DECODE,
@@ -95,6 +98,9 @@ typedef struct CaSync {
         uint64_t chunk_skip;
 
         bool punch_holes;
+        bool reflink;
+
+        CaFileRoot *archive_root;
 } CaSync;
 
 static CaSync *ca_sync_new(void) {
@@ -112,6 +118,7 @@ static CaSync *ca_sync_new(void) {
 
         s->archive_size = UINT64_MAX;
         s->punch_holes = true;
+        s->reflink = true;
 
         return s;
 }
@@ -177,7 +184,7 @@ int ca_sync_get_chunk_size_max(CaSync *s, size_t *ret) {
         return 0;
 }
 
-int ca_sync_set_punch_holes(CaSync *s, int enabled) {
+int ca_sync_set_punch_holes(CaSync *s, bool enabled) {
         int r;
 
         if (!s)
@@ -192,6 +199,25 @@ int ca_sync_set_punch_holes(CaSync *s, int enabled) {
         }
 
         s->punch_holes = enabled;
+
+        return 0;
+}
+
+int ca_sync_set_reflink(CaSync *s, bool enabled) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        if (s->decoder) {
+                r = ca_decoder_set_reflink(s->decoder, enabled);
+                if (r < 0)
+                        return r;
+        }
+
+        s->reflink = enabled;
 
         return 0;
 }
@@ -246,6 +272,8 @@ CaSync *ca_sync_unref(CaSync *s) {
         realloc_buffer_free(&s->index_buffer);
         realloc_buffer_free(&s->archive_buffer);
         realloc_buffer_free(&s->compress_buffer);
+
+        ca_file_root_unref(s->archive_root);
 
         gcry_md_close(s->chunk_digest);
         gcry_md_close(s->archive_digest);
@@ -1083,6 +1111,10 @@ static int ca_sync_start(CaSync *s) {
                 r = ca_decoder_set_punch_holes(s->decoder, s->punch_holes);
                 if (r < 0)
                         return r;
+
+                r = ca_decoder_set_reflink(s->decoder, s->reflink);
+                if (r < 0)
+                        return r;
         }
 
         if (s->remote_index && !s->index) {
@@ -1437,6 +1469,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
         assert(s->decoder);
 
         if (s->index)  {
+                CaOrigin *origin = NULL;
                 uint64_t chunk_size;
                 const void *p;
 
@@ -1464,7 +1497,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                 if (!ca_sync_seed_ready(s))
                         return CA_SYNC_POLL;
 
-                r = ca_sync_get(s, &s->next_chunk, CA_CHUNK_UNCOMPRESSED, &p, &chunk_size, NULL);
+                r = ca_sync_get(s, &s->next_chunk, CA_CHUNK_UNCOMPRESSED, &p, &chunk_size, NULL, &origin);
                 if (r == -EAGAIN) /* Don't have this right now, but requested it now */
                         return CA_SYNC_STEP;
                 if (r == -EALREADY) /* Don't have this right now, but it was already enqueued. */
@@ -1472,16 +1505,20 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                 if (r < 0)
                         return r;
                 if (s->next_chunk_size != UINT64_MAX && /* next_chunk_size will be -1 if we just seeked in the index file */
-                    s->next_chunk_size != chunk_size)
+                    s->next_chunk_size != chunk_size) {
+                        ca_origin_unref(origin);
                         return -EBADMSG;
+                }
 
                 s->next_chunk_valid = false;
 
                 if (s->chunk_skip > 0) {
                         /* If we just seeked, then we might have seeked to a location inside of a chunk, hence skip as
                          * many bytes as necessary */
-                        if (s->chunk_skip >= chunk_size)
+                        if (s->chunk_skip >= chunk_size) {
+                                ca_origin_unref(origin);
                                 return -EINVAL;
+                        }
 
                         p = (const uint8_t*) p + s->chunk_skip;
                         chunk_size -= s->chunk_skip;
@@ -1489,7 +1526,8 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                         s->chunk_skip = 0;
                 }
 
-                r = ca_decoder_put_data(s->decoder, p, chunk_size);
+                r = ca_decoder_put_data(s->decoder, p, chunk_size, origin);
+                ca_origin_unref(origin);
                 if (r < 0)
                         return r;
 
@@ -1521,7 +1559,41 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                                 return r;
 
                 } else {
-                        r = ca_decoder_put_data(s->decoder, p, n);
+                        CaOrigin *origin;
+                        CaLocation *location;
+                        uint64_t offset;
+
+                        if (!s->archive_root) {
+                                r = ca_file_root_new(s->archive_path, s->archive_fd, &s->archive_root);
+                                if (r < 0)
+                                        return r;
+                        }
+
+                        r = ca_decoder_get_request_offset(s->decoder, &offset);
+                        if (r < 0)
+                                return r;
+
+                        r = ca_origin_new(&origin);
+                        if (r < 0)
+                                return r;
+
+                        r = ca_location_new(NULL, CA_LOCATION_PAYLOAD, offset, n, &location);
+                        if (r < 0) {
+                                ca_origin_unref(origin);
+                                return r;
+                        }
+
+                        location->root = ca_file_root_ref(s->archive_root);
+
+                        r = ca_origin_put(origin, location);
+                        ca_location_unref(location);
+                        if (r < 0) {
+                                ca_origin_unref(origin);
+                                return r;
+                        }
+
+                        r = ca_decoder_put_data(s->decoder, p, n, origin);
+                        ca_origin_unref(origin);
                         if (r < 0)
                                 return r;
 
@@ -1889,7 +1961,7 @@ static int ca_sync_remote_push_chunk(CaSync *s) {
         if (r < 0)
                 return r;
 
-        r = ca_sync_get_local(s, &id, CA_CHUNK_COMPRESSED, &p, &l, NULL);
+        r = ca_sync_get_local(s, &id, CA_CHUNK_COMPRESSED, &p, &l, NULL, NULL);
         if (r == -ENOENT) {
                 r = ca_remote_put_missing(s->remote_wstore, &id);
                 if (r < 0)
@@ -1946,7 +2018,7 @@ static int ca_sync_remote_step_one(CaSync *s, CaRemote *rr) {
                 if (r < 0)
                         return r;
 
-                r = ca_decoder_put_data(s->decoder, data, size);
+                r = ca_decoder_put_data(s->decoder, data, size, NULL);
                 if (r < 0)
                         return r;
 
@@ -2112,7 +2184,8 @@ int ca_sync_get_local(
                 CaChunkCompression desired_compression,
                 const void **ret,
                 size_t *ret_size,
-                CaChunkCompression *ret_effective_compression) {
+                CaChunkCompression *ret_effective_compression,
+                CaOrigin **ret_origin) {
 
         size_t i;
         int r;
@@ -2127,12 +2200,17 @@ int ca_sync_get_local(
                 return -EINVAL;
 
         for (i = 0; i < s->n_seeds; i++) {
+                CaOrigin *origin = NULL;
                 const void *p;
                 size_t l;
 
-                r = ca_seed_get(s->seeds[i], chunk_id, &p, &l);
+                r = ca_seed_get(s->seeds[i], chunk_id, &p, &l, ret_origin ? &origin : NULL);
                 if (r == -ESTALE) {
                         fprintf(stderr, "Chunk cache is not up-to-date, ignoring.\n");
+                        continue;
+                }
+                if (r == -ENOLINK) {
+                        fprintf(stderr, "Can't reproduce name table for GOODBYE record, ignoring.\n");
                         continue;
                 }
                 if (r == -ENOENT)
@@ -2144,8 +2222,10 @@ int ca_sync_get_local(
                         realloc_buffer_empty(&s->compress_buffer);
 
                         r = ca_compress(p, l, &s->compress_buffer);
-                        if (r < 0)
+                        if (r < 0) {
+                                ca_origin_unref(origin);
                                 return r;
+                        }
 
                         *ret = realloc_buffer_data(&s->compress_buffer);
                         *ret_size = realloc_buffer_size(&s->compress_buffer);
@@ -2160,23 +2240,40 @@ int ca_sync_get_local(
                                 *ret_effective_compression = CA_CHUNK_UNCOMPRESSED;
                 }
 
+                if (ret_origin)
+                        *ret_origin = origin;
                 return r;
         }
 
         if (s->wstore) {
                 r = ca_store_get(s->wstore, chunk_id, desired_compression, ret, ret_size, ret_effective_compression);
+                if (r >= 0) {
+                        if (ret_origin)
+                                *ret_origin = NULL;
+                        return r;
+                }
                 if (r != -ENOENT)
                         return r;
         }
 
         if (s->cache_store) {
                 r = ca_store_get(s->cache_store, chunk_id, desired_compression, ret, ret_size, ret_effective_compression);
+                if (r >= 0) {
+                        if (ret_origin)
+                                *ret_origin = NULL;
+                        return r;
+                }
                 if (r != -ENOENT)
                         return r;
         }
 
         for (i = 0; i < s->n_rstores; i++) {
                 r = ca_store_get(s->rstores[i], chunk_id, desired_compression, ret, ret_size, ret_effective_compression);
+                if (r >= 0) {
+                        if (ret_origin)
+                                *ret_origin = NULL;
+                        return r;
+                }
                 if (r != -ENOENT)
                         return r;
         }
@@ -2189,7 +2286,8 @@ int ca_sync_get(CaSync *s,
                 CaChunkCompression desired_compression,
                 const void **ret,
                 size_t *ret_size,
-                CaChunkCompression *ret_effective_compression) {
+                CaChunkCompression *ret_effective_compression,
+                CaOrigin **ret_origin) {
 
         size_t i;
         int r;
@@ -2203,18 +2301,28 @@ int ca_sync_get(CaSync *s,
         if (!ret_size)
                 return -EINVAL;
 
-        r = ca_sync_get_local(s, chunk_id, desired_compression, ret, ret_size, ret_effective_compression);
+        r = ca_sync_get_local(s, chunk_id, desired_compression, ret, ret_size, ret_effective_compression, ret_origin);
         if (r != -ENOENT)
                 return r;
 
         if (s->remote_wstore) {
                 r = ca_remote_request(s->remote_wstore, chunk_id, true, desired_compression, ret, ret_size, ret_effective_compression);
+                if (r >= 0) {
+                        if (ret_origin)
+                                *ret_origin = NULL;
+                        return r;
+                }
                 if (r != -ENOENT)
                         return r;
         }
 
         for (i = 0; i < s->n_remote_rstores; i++) {
                 r = ca_remote_request(s->remote_rstores[i], chunk_id, true, desired_compression, ret, ret_size, ret_effective_compression);
+                if (r >= 0) {
+                        if (ret_origin)
+                                *ret_origin = NULL;
+                        return r;
+                }
                 if (r != -ENOENT)
                         return r;
         }

@@ -1,4 +1,5 @@
 /acl
 /immutable
 /nocow
+/reflink
 /sparse

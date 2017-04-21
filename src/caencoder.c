@@ -34,6 +34,9 @@
 /* #undef EINVAL */
 /* #define EINVAL __LINE__ */
 
+/* #undef ENXIO */
+/* #define ENXIO __LINE__ */
+
 typedef struct CaEncoderExtendedAttribute {
         char *name;
         void *data;
@@ -110,6 +113,7 @@ typedef struct CaEncoderNode {
         size_t n_name_table;
         size_t n_name_table_allocated;
         uint64_t previous_name_table_offset;
+        bool name_table_incomplete;
 } CaEncoderNode;
 
 typedef enum CaEncoderState {
@@ -218,6 +222,7 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
         n->name_table = mfree(n->name_table);
         n->n_name_table = n->n_name_table_allocated = 0;
         n->previous_name_table_offset = UINT64_MAX;
+        n->name_table_incomplete = false;
 }
 
 CaEncoder *ca_encoder_unref(CaEncoder *e) {
@@ -317,6 +322,17 @@ int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
         e->n_nodes = 1;
 
         return 0;
+}
+
+int ca_encoder_get_base_fd(CaEncoder *e) {
+        if (!e)
+                return -EINVAL;
+        if (e->n_nodes == 0)
+                return -EUNATCH;
+        if (e->nodes[0].fd < 0)
+                return -EUNATCH;
+
+        return e->nodes[0].fd;
 }
 
 static CaEncoderNode* ca_encoder_current_node(CaEncoder *e) {
@@ -1571,8 +1587,10 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
 
         case CA_ENCODER_NEXT_DIRENT:
 
-                assert(n->n_name_table > 0);
-                n->name_table[n->n_name_table-1].end_offset = e->archive_offset;
+                if (!n->name_table_incomplete) {
+                        assert(n->n_name_table > 0);
+                        n->name_table[n->n_name_table-1].end_offset = e->archive_offset;
+                }
 
                 n->dirent_idx++;
 
@@ -1590,7 +1608,7 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                 for (;;) {
                         de = ca_encoder_node_current_dirent(n);
                         if (!de) {
-                                if (n->n_name_table > 0)
+                                if (!n->name_table_incomplete && n->n_name_table > 0)
                                         n->name_table[n->n_name_table-1].end_offset = e->archive_offset;
 
                                 ca_encoder_enter_state(e, CA_ENCODER_GOODBYE);
@@ -1612,13 +1630,15 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                         n->dirent_idx++;
                 }
 
-                if (!GREEDY_REALLOC(n->name_table, n->n_name_table_allocated, n->n_name_table+1))
-                        return -ENOMEM;
+                if (!n->name_table_incomplete) {
+                        if (!GREEDY_REALLOC(n->name_table, n->n_name_table_allocated, n->n_name_table+1))
+                                return -ENOMEM;
 
-                n->name_table[n->n_name_table++] = (CaEncoderNameTable) {
-                        .start_offset = e->archive_offset,
-                        .hash = siphash24(de->d_name, strlen(de->d_name), (const uint8_t[16]) CA_FORMAT_GOODBYE_HASH_KEY),
-                };
+                        n->name_table[n->n_name_table++] = (CaEncoderNameTable) {
+                                .start_offset = e->archive_offset,
+                                .hash = siphash24(de->d_name, strlen(de->d_name), (const uint8_t[16]) CA_FORMAT_GOODBYE_HASH_KEY),
+                        };
+                }
 
                 ca_encoder_enter_state(e, CA_ENCODER_FILENAME);
                 return CA_ENCODER_DATA;
@@ -2172,6 +2192,11 @@ static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
         if (realloc_buffer_size(&e->buffer) > 0) /* Already generated */
                 return 1;
 
+        /* If we got here through a seek we don't know the correct addresses of the directory entries, hence can't
+         * correctly generate the name GOODBYE record. */
+        if (n->name_table_incomplete)
+                return -ENOLINK;
+
         size = offsetof(CaFormatGoodbye, items) +
                 sizeof(CaFormatGoodbyeItem) * n->n_name_table +
                 sizeof(le64_t);
@@ -2702,6 +2727,8 @@ static int ca_encoder_node_seek_child(CaEncoder *e, CaEncoderNode *n, const char
         r = ca_encoder_node_read_dirents(n);
         if (r < 0)
                 return r;
+
+        n->name_table_incomplete = true;
 
         de = ca_encoder_node_current_dirent(n);
         if (de && streq(name, de->d_name)) {

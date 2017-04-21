@@ -141,12 +141,24 @@ static int decode(int fd) {
                 case CA_DECODER_STEP:
                         break;
 
-                case CA_DECODER_REQUEST:
-                        r = ca_decoder_put_data_fd(d, fd, UINT64_MAX, UINT64_MAX);
+                case CA_DECODER_REQUEST: {
+                        uint8_t buffer[4096];
+                        ssize_t n;
+
+                        n = read(fd, buffer, sizeof(buffer));
+                        if (n < 0) {
+                                r = -errno;
+                                goto finish;
+                        }
+                        if (n == 0)
+                                r = ca_decoder_put_eof(d);
+                        else
+                                r = ca_decoder_put_data(d, buffer, n, NULL);
                         if (r < 0)
                                 goto finish;
 
                         break;
+                }
 
                 case CA_DECODER_NEXT_FILE: {
                         char *path = NULL;

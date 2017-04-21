@@ -416,7 +416,7 @@ int ca_index_write_chunk(CaIndex *i, const CaChunkID *id, uint64_t size) {
 
         /* { */
         /*         char ids[CA_CHUNK_ID_FORMAT_MAX]; */
-        /*         fprintf(stderr, "WRITING INDEX CHUNK: %s\n", ca_chunk_id_format(id, ids)); */
+        /*         fprintf(stderr, "WRITING INDEX CHUNK: %s %zu\n", ca_chunk_id_format(id, ids), size); */
         /* } */
 
         item.offset = htole64(end);

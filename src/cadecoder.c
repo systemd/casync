@@ -18,6 +18,7 @@
 #include "cautil.h"
 #include "def.h"
 #include "realloc-buffer.h"
+#include "reflink.h"
 #include "siphash24.h"
 #include "util.h"
 
@@ -32,6 +33,9 @@
 
 /* #undef ENOENT */
 /* #define ENOENT __LINE__ */
+
+/* #undef EUNATCH */
+/* #define EUNATCH __LINE__ */
 
 #define APPLY_EARLY_FS_FL                       \
         (FS_NOATIME_FL|                         \
@@ -88,6 +92,9 @@ typedef struct CaDecoderNode {
         uint64_t acl_default_group_obj_permissions;
         uint64_t acl_default_other_permissions;
         uint64_t acl_default_mask_permissions;
+
+        /* Only for S_ISREG(), the origin if we know it */
+        CaOrigin *payload_origin;
 } CaDecoderNode;
 
 typedef enum CaDecoderState {
@@ -122,6 +129,7 @@ struct CaDecoder {
 
         /* A buffer that automatically resizes, containing what we read most recently */
         ReallocBuffer buffer;
+        CaOrigin *buffer_origin;
 
         /* An EOF was signalled to us */
         bool eof;
@@ -156,6 +164,7 @@ struct CaDecoder {
         int boundary_fd;
 
         bool punch_holes;
+        bool reflink;
 };
 
 static inline bool CA_DECODER_IS_SEEKING(CaDecoder *d) {
@@ -199,6 +208,7 @@ CaDecoder *ca_decoder_new(void) {
         d->boundary_fd = -1;
 
         d->punch_holes = true;
+        d->reflink = true;
 
         return d;
 }
@@ -263,6 +273,8 @@ static void ca_decoder_node_free(CaDecoderNode *n) {
         n->entry_offset = UINT64_MAX;
         n->goodbye_offset = UINT64_MAX;
         n->end_offset = UINT64_MAX;
+
+        n->payload_origin = ca_origin_unref(n->payload_origin);
 }
 
 static void ca_decoder_flush_nodes(CaDecoder *d, size_t leave) {
@@ -284,6 +296,7 @@ CaDecoder *ca_decoder_unref(CaDecoder *d) {
         ca_decoder_flush_nodes(d, 0);
 
         realloc_buffer_free(&d->buffer);
+        ca_origin_unref(d->buffer_origin);
 
         free(d->cached_user_name);
         free(d->cached_group_name);
@@ -2644,6 +2657,61 @@ fail:
         return r;
 }
 
+static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
+        uint64_t offset = 0;
+        mode_t mode;
+        size_t i;
+        int r;
+
+        assert(d);
+        assert(n);
+
+        if (!d->reflink)
+                return 0;
+
+        if (n->fd < 0)
+                return 0;
+
+        mode = ca_decoder_node_mode(n);
+        if (!S_ISREG(mode))
+                return 0;
+
+        for (i = 0; i < ca_origin_items(n->payload_origin); i++) {
+
+                CaLocation *l;
+
+                l = ca_origin_get(n->payload_origin, i);
+                assert(l);
+
+                if (l->designator == CA_LOCATION_PAYLOAD) {
+                        int source_fd;
+
+                        source_fd = ca_location_open(l);
+                        if (source_fd == -ENOENT) {
+                                fprintf(stderr, "Can't open reflink source %s: %s\n", ca_location_format(l), strerror(-source_fd));
+                                continue;
+                        }
+                        if (source_fd < 0)
+                                return source_fd;
+
+                        r = reflink_fd(source_fd, l->offset, n->fd, offset, l->size);
+                        safe_close(source_fd);
+                        if (r == -EBADR) /* the offsets are not multiples of 512 */
+                                continue;
+                        if (r == -EXDEV) /* cross-device reflinks aren't supported */
+                                continue;
+                        if (r == -ENOTTY) /* reflinks not supported */
+                                break;
+                        if (r < 0)
+                                return r;
+                }
+
+                offset += l->size;
+        }
+
+        return 0;
+}
+
 static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *child) {
         statfs_f_type_t magic = 0;
         struct stat st;
@@ -2721,6 +2789,12 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 if (memcmp(child->symlink_target, buf, l) != 0)
                         return -EEXIST;
+        }
+
+        if (S_ISREG(st.st_mode)) {
+                r = ca_decoder_node_reflink(d, child);
+                if (r < 0)
+                        return r;
         }
 
         if (d->feature_flags & (CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_USER_NAMES)) {
@@ -3043,6 +3117,7 @@ static void ca_decoder_apply_seek_offset(CaDecoder *d) {
         d->eof = false;
 
         realloc_buffer_empty(&d->buffer);
+        ca_origin_flush(d->buffer_origin);
 }
 
 static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
@@ -3219,6 +3294,8 @@ static int ca_decoder_advance_buffer(CaDecoder *d, CaDecoderNode *n) {
         if (d->step_size <= 0)
                 return 0;
 
+        assert(d->step_size <= realloc_buffer_size(&d->buffer));
+
         if (d->state == CA_DECODER_IN_PAYLOAD) {
 
                 if (n->fd >= 0) {
@@ -3232,12 +3309,30 @@ static int ca_decoder_advance_buffer(CaDecoder *d, CaDecoderNode *n) {
                                 return r;
                 }
 
+                if (d->reflink) {
+                        if (!n->payload_origin) {
+                                r = ca_origin_new(&n->payload_origin);
+                                if (r < 0)
+                                        return r;
+                        }
+
+                        r = ca_origin_concat(n->payload_origin, d->buffer_origin, d->step_size);
+                        if (r < 0)
+                                return r;
+                }
+
                 d->payload_offset += d->step_size;
         }
 
         r = realloc_buffer_advance(&d->buffer, d->step_size);
         if (r < 0)
                 return r;
+
+        if (d->reflink) {
+                r = ca_origin_advance_bytes(d->buffer_origin, d->step_size);
+                if (r < 0)
+                        return r;
+        }
 
         d->archive_offset += d->step_size;
         d->step_size = 0;
@@ -3304,7 +3399,9 @@ int ca_decoder_get_request_offset(CaDecoder *d, uint64_t *ret) {
         return d->archive_offset;
 }
 
-int ca_decoder_put_data(CaDecoder *d, const void *p, size_t size) {
+int ca_decoder_put_data(CaDecoder *d, const void *p, size_t size, CaOrigin *origin) {
+        int r;
+
         if (!d)
                 return -EINVAL;
         if (size == 0)
@@ -3315,54 +3412,30 @@ int ca_decoder_put_data(CaDecoder *d, const void *p, size_t size) {
         if (d->eof)
                 return -EBUSY;
 
+        if (origin && origin->n_bytes != size)
+                return -EINVAL;
+
         if (size == 0)
                 return 0;
 
         if (!realloc_buffer_append(&d->buffer, p, size))
                 return -ENOMEM;
 
-        return 0;
-}
+        if (d->reflink) {
 
-int ca_decoder_put_data_fd(CaDecoder *d, int fd, uint64_t offset, uint64_t size) {
-        ssize_t l;
-        void *m;
-        int r;
+                if (!d->buffer_origin) {
+                        r = ca_origin_new(&d->buffer_origin);
+                        if (r < 0)
+                                return r;
+                }
 
-        /* fprintf(stderr, "put data\n"); */
-
-        if (!d)
-                return -EINVAL;
-        if (fd < 0)
-                return -EINVAL;
-
-        if (d->eof)
-                return -EBUSY;
-
-        if (size == 0)
-                return 0;
-
-        if (size == UINT64_MAX)
-                size = BUFFER_SIZE;
-
-        m = realloc_buffer_extend(&d->buffer, size);
-        if (!m)
-                return -ENOMEM;
-
-        if (offset == UINT64_MAX)
-                l = read(fd, m, size);
-        else
-                l = pread(fd, m, size, offset);
-        if (l < 0) {
-                r = -errno;
-                (void) realloc_buffer_shorten(&d->buffer, size);
-                return r;
+                if (!origin)
+                        r = ca_origin_put_void(d->buffer_origin, size);
+                else
+                        r = ca_origin_concat(d->buffer_origin, origin, UINT64_MAX);
+                if (r < 0)
+                        return r;
         }
-        if (l == 0)
-                d->eof = true;
-
-        assert((size_t) l <= size);
-        realloc_buffer_shorten(&d->buffer, size - l);
 
         return 0;
 }
@@ -3726,6 +3799,7 @@ int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset) {
         d->eof = false;
 
         realloc_buffer_empty(&d->buffer);
+        ca_origin_flush(d->buffer_origin);
 
         ca_decoder_enter_state(d, CA_DECODER_IN_PAYLOAD);
 
@@ -3844,11 +3918,20 @@ int ca_decoder_set_archive_size(CaDecoder *d, uint64_t size) {
         return 0;
 }
 
-int ca_decoder_set_punch_holes(CaDecoder *d, int enabled) {
+int ca_decoder_set_punch_holes(CaDecoder *d, bool enabled) {
 
         if (!d)
                 return -EINVAL;
 
         d->punch_holes = enabled;
+        return 0;
+}
+
+int ca_decoder_set_reflink(CaDecoder *d, bool enabled) {
+
+        if (!d)
+                return -EINVAL;
+
+        d->reflink = enabled;
         return 0;
 }

@@ -45,6 +45,7 @@
 /test-caformat
 /test-caindex
 /test-camakebst
+/test-caorigin
 /test-casync
 /test-cautil
 /test-script.sh

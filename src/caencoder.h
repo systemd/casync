@@ -26,6 +26,7 @@ int ca_encoder_get_covering_feature_flags(CaEncoder *e, uint64_t *ret);
 
 /* Input: a directory tree, block device node or regular file */
 int ca_encoder_set_base_fd(CaEncoder *e, int fd);
+int ca_encoder_get_base_fd(CaEncoder *e);
 
 int ca_encoder_step(CaEncoder *e);
 

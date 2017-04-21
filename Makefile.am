@@ -67,7 +67,8 @@ tests = \
 	test-casync \
 	test-cautil \
 	test-camakebst \
-	test-util
+	test-util \
+	test-caorigin
 
 bin_PROGRAMS = \
 	casync
@@ -95,6 +96,8 @@ lib_SOURCES = \
 	src/cadecoder.h \
 	src/caencoder.c \
 	src/caencoder.h \
+	src/cafileroot.c \
+	src/cafileroot.h \
 	src/caformat-util.c \
 	src/caformat-util.h \
 	src/caformat.h \
@@ -106,6 +109,8 @@ lib_SOURCES = \
 	src/camakebst.h \
 	src/canbd.c \
 	src/canbd.h \
+	src/caorigin.c \
+	src/caorigin.h \
 	src/caprotocol-util.c \
 	src/caprotocol-util.h \
 	src/caprotocol.h \
@@ -128,6 +133,8 @@ lib_SOURCES = \
 	src/parse-util.h \
 	src/realloc-buffer.c \
 	src/realloc-buffer.h \
+	src/reflink.c \
+	src/reflink.h \
 	src/rm-rf.c \
 	src/rm-rf.h \
 	src/siphash24.c \
@@ -312,6 +319,22 @@ test_util_LDADD = \
 	$(LIBGCRYPT_LIBS) \
 	$(ACL_LIBS)
 
+## test-caorigin
+
+test_caorigin_SOURCES = \
+	test/test-caorigin.c \
+	$(lib_SOURCES)
+
+test_caorigin_CFLAGS = \
+	$(AM_CFLAGS) \
+	$(LIBLZMA_CFLAGS) \
+	$(LIBGCRYPT_CFLAGS)
+
+test_caorigin_LDADD = \
+	$(LIBLZMA_LIBS) \
+	$(LIBGCRYPT_LIBS) \
+	$(ACL_LIBS)
+
 ## test-script.sh
 
 test-script.sh: test/test-script.sh.in
@@ -338,6 +361,7 @@ test-files:
 	test -e test-files/nocow || ( touch test-files/nocow && chattr +C test-files/nocow )
 	test -e test-files/acl || ( touch test-files/acl && setfacl -nm u:nobody:rw,u:root:rw test-files/acl)
 	test -e test-files/sparse || dd if=/dev/urandom of=test-files/sparse count=2 bs=1 seek=9999
+	test -e test-files/reflink || (cp --reflink=auto test-files/large test-files/reflink && dd if=/dev/urandom of=test-files/reflink seek=102400 bs=1 count=1 conv=notrunc )
 
 rm-test-files:
 	chattr -i test-files/immutable || :

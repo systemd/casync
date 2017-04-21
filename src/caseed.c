@@ -3,11 +3,18 @@
 
 #include "cachunker.h"
 #include "caencoder.h"
+#include "cafileroot.h"
 #include "calocation.h"
 #include "caseed.h"
 #include "realloc-buffer.h"
 #include "rm-rf.h"
 #include "util.h"
+
+/* #undef ENXIO */
+/* #define ENXIO __LINE__ */
+
+/* #undef EUNATCH */
+/* #define EUNATCH __LINE__ */
 
 struct CaSeed {
         CaEncoder *encoder;
@@ -23,6 +30,8 @@ struct CaSeed {
 
         ReallocBuffer buffer;
         CaLocation *buffer_location;
+
+        CaFileRoot *root;
 };
 
 CaSeed *ca_seed_new(void) {
@@ -60,6 +69,8 @@ CaSeed *ca_seed_unref(CaSeed *s) {
         if (!s)
                 return NULL;
 
+        ca_file_root_invalidate(s->root);
+
         ca_seed_remove_and_close_cache(s);
 
         ca_encoder_unref(s->encoder);
@@ -72,6 +83,8 @@ CaSeed *ca_seed_unref(CaSeed *s) {
 
         realloc_buffer_free(&s->buffer);
         ca_location_unref(s->buffer_location);
+
+        ca_file_root_unref(s->root);
 
         free(s);
 
@@ -344,9 +357,16 @@ int ca_seed_step(CaSeed *s) {
         }
 }
 
-int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *ret_size) {
+int ca_seed_get(CaSeed *s,
+                const CaChunkID *chunk_id,
+                const void **ret,
+                size_t *ret_size,
+                CaOrigin **ret_origin) {
+
         char id[CA_CHUNK_ID_FORMAT_MAX], *target = NULL;
         const char *four, *combined;
+        CaFileRoot *root = NULL;
+        CaOrigin *origin = NULL;
         CaLocation *l = NULL;
         uint64_t size, n = 0;
         void *p = NULL;
@@ -423,32 +443,59 @@ int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *
 
                         r = ca_encoder_get_data(s->encoder, &q, &w);
                         if (r < 0)
-                                return r;
+                                goto finish;
 
                         m = MIN(w, size - n);
-
                         memcpy((uint8_t*) p + n, q, m);
                         n += m;
+
+                        if (origin) {
+                                r = ca_encoder_current_location(s->encoder, 0, &l);
+                                if (r < 0)
+                                        goto finish;
+
+                                r = ca_location_patch_size(&l, m);
+                                if (r < 0) {
+                                        l = ca_location_unref(l);
+                                        goto finish;
+                                }
+
+                                r = ca_location_patch_root(&l, root);
+                                if (r < 0) {
+                                        l = ca_location_unref(l);
+                                        goto finish;
+                                }
+
+                                r = ca_origin_put(origin, l);
+                                l = ca_location_unref(l);
+                                if (r < 0)
+                                        goto finish;
+                        }
 
                         if (n >= size) {
                                 CaChunkID test_id;
 
                                 r = ca_chunk_id_make(&s->chunk_digest, p, size, &test_id);
                                 if (r < 0)
-                                        return r;
+                                        goto finish;
 
                                 if (!ca_chunk_id_equal(chunk_id, &test_id)) {
 
                                         /* fprintf(stderr, "SEED CHUNK CORRUPTED (%" PRIu64 "):\n", size); */
                                         /* hexdump(stderr, p, MIN(1024U, size)); */
 
-                                        return -ESTALE;
+                                        r = -ESTALE;
+                                        goto finish;
                                 }
 
                                 /* fprintf(stderr, "SEED CHUNK GOOD\n"); */
 
                                 *ret = p;
                                 *ret_size = size;
+
+                                if (ret_origin)
+                                        *ret_origin = origin;
+
                                 return 0;
                         }
                         break;
@@ -459,9 +506,15 @@ int ca_seed_get(CaSeed *s, const CaChunkID *chunk_id, const void **ret, size_t *
                 }
 
                 step = ca_encoder_step(s->encoder);
-                if (step < 0)
-                        return step;
+                if (step < 0) {
+                        r = step;
+                        goto finish;
+                }
         }
+
+finish:
+        ca_origin_unref(origin);
+        return r;
 }
 
 int ca_seed_has(CaSeed *s, const CaChunkID *chunk_id) {
@@ -548,5 +601,34 @@ int ca_seed_set_chunk_size_max(CaSeed *s, size_t cmax) {
                 return -EINVAL;
 
         s->chunker.chunk_size_max = cmax;
+        return 0;
+}
+
+int ca_seed_get_file_root(CaSeed *s, CaFileRoot **ret) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!s->root) {
+                int base_fd;
+
+                if (s->base_fd >= 0)
+                        base_fd = s->base_fd;
+                else if (s->encoder) {
+                        base_fd = ca_encoder_get_base_fd(s->encoder);
+                        if (base_fd < 0)
+                                return base_fd;
+                } else
+                        return -EUNATCH;
+
+                r = ca_file_root_new(NULL, base_fd, &s->root);
+                if (r < 0)
+                        return r;
+        }
+
+        *ret = s->root;
         return 0;
 }

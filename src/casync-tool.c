@@ -32,6 +32,7 @@ static enum {
 static bool arg_verbose = false;
 static bool arg_respect_nodump = true;
 static bool arg_punch_holes = true;
+static bool arg_reflink = true;
 static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
@@ -56,7 +57,8 @@ static void help(void) {
                "     --seed=PATH             Additional file or directory to use as seed\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n"
                "     --respect-nodump=no     Don't respect chattr(1)'s -d 'nodump' flag\n"
-               "     --punch-holes=no        Don't create sparse files\n\n"
+               "     --punch-holes=no        Don't create sparse files\n"
+               "     --reflink=no            Don't create reflinks from seeds\n\n"
                "Input/output selector:\n"
                "     --what=archive          Operate on archive file\n"
                "     --what=archive-index    Operate on archive index file\n"
@@ -115,6 +117,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_WHAT,
                 ARG_RESPECT_NODUMP,
                 ARG_PUNCH_HOLES,
+                ARG_REFLINK,
         };
 
         static const struct option options[] = {
@@ -130,6 +133,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "what",           required_argument, NULL, ARG_WHAT           },
                 { "respect-nodump", required_argument, NULL, ARG_RESPECT_NODUMP },
                 { "punch-holes",    required_argument, NULL, ARG_PUNCH_HOLES    },
+                { "reflink",        required_argument, NULL, ARG_REFLINK        },
                 {}
         };
 
@@ -254,7 +258,7 @@ static int parse_argv(int argc, char *argv[]) {
                         r = parse_boolean(optarg);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to parse --respect-nodump= parameter: %s\n", optarg);
-                                return -EINVAL;
+                                return r;
                         }
 
                         arg_respect_nodump = r;
@@ -264,10 +268,20 @@ static int parse_argv(int argc, char *argv[]) {
                         r = parse_boolean(optarg);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to parse --punch-holes= parameter: %s\n", optarg);
-                                return -EINVAL;
+                                return r;
                         }
 
                         arg_punch_holes = r;
+                        break;
+
+                case ARG_REFLINK:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --reflink= parameter: %s\n", optarg);
+                                return r;
+                        }
+
+                        arg_reflink = r;
                         break;
 
                 case '?':
@@ -1099,6 +1113,12 @@ static int extract(int argc, char *argv[]) {
         r = ca_sync_set_punch_holes(s, arg_punch_holes);
         if (r < 0) {
                 fprintf(stderr, "Failed to configure hole punching: %s\n", strerror(-r));
+                goto finish;
+        }
+
+        r = ca_sync_set_reflink(s, arg_reflink);
+        if (r < 0) {
+                fprintf(stderr, "Failed to configure reflinking: %s\n", strerror(-r));
                 goto finish;
         }
 
