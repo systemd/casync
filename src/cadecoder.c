@@ -600,8 +600,8 @@ static bool validate_mode(CaDecoder *d, uint64_t m) {
                 return false;
         }
 
-        if (S_ISLNK(m) && ((m & 07777) != 0777))
-                return false;
+        if (S_ISLNK(m))
+                return (m & 07777) == 0777;
 
         if (d->feature_flags & (CA_FORMAT_WITH_PERMISSIONS|CA_FORMAT_WITH_ACL))
                 return true;
