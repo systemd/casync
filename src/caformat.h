@@ -141,6 +141,7 @@ enum {
 
         CA_FORMAT_WITH_UNIX = /* Conservative UNIX file properties */
                 CA_FORMAT_WITH_16BIT_UIDS|
+                CA_FORMAT_WITH_PERMISSIONS|
                 CA_FORMAT_WITH_SEC_TIME|
                 CA_FORMAT_WITH_SYMLINKS|
                 CA_FORMAT_WITH_DEVICE_NODES|
