@@ -12,10 +12,11 @@ int reflink_fd(
                 uint64_t source_offset,
                 int destination_fd,
                 uint64_t destination_offset,
-                uint64_t size) {
+                uint64_t size,
+                uint64_t *ret_reflinked) {
 
         struct stat a, b;
-        uint64_t add;
+        uint64_t add, reflinked;
 
         /* Creates a reflink on btrfs and other file systems that know the concept. The input parameters are aligned to
          * match the fundamental block size (for now assumed to be 4K), and possibly to EOF. */
@@ -60,13 +61,16 @@ int reflink_fd(
 
         /* Extend to EOF if we can */
         if (source_offset + size >= (uint64_t) a.st_size &&
-            destination_offset + size >= (uint64_t) b.st_size)
+            destination_offset + size >= (uint64_t) b.st_size) {
+                reflinked = size;
                 size = 0;
-        else {
+        } else {
                 /* Round down size to multiple of 4096 */
                 size = (size / FS_BLOCK_SIZE) * FS_BLOCK_SIZE;
                 if (size <= 0)
                         return -EBADR;
+
+                reflinked = size;
         }
 
         if (ioctl(destination_fd, FICLONERANGE,
@@ -77,6 +81,9 @@ int reflink_fd(
                           .dest_offset = destination_offset,
                   }) < 0)
                 return -errno;
+
+        if (ret_reflinked)
+                *ret_reflinked = reflinked;
 
         return 0;
 }

@@ -110,5 +110,6 @@ int ca_sync_seek_path(CaSync *s, const char *path);
 int ca_sync_get_payload(CaSync *s, const void **ret, size_t *ret_size);
 
 int ca_sync_get_punch_holes_bytes(CaSync *s, uint64_t *ret);
+int ca_sync_get_reflink_bytes(CaSync *s, uint64_t *ret);
 
 #endif

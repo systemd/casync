@@ -2864,5 +2864,25 @@ int ca_sync_get_punch_holes_bytes(CaSync *s, uint64_t *ret) {
                 return 0;
         }
 
-        return ca_decoder_get_punch_holes_byte(s->decoder, ret);
+        return ca_decoder_get_punch_holes_bytes(s->decoder, ret);
+}
+
+int ca_sync_get_reflink_bytes(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        if (!s->reflink)
+                return -ENODATA;
+
+        if (!s->decoder) {
+                *ret = 0;
+                return 0;
+        }
+
+        return ca_decoder_get_reflink_bytes(s->decoder, ret);
 }

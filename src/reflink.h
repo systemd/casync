@@ -3,6 +3,6 @@
 
 #include <inttypes.h>
 
-int reflink_fd(int source_fd, uint64_t source_offset, int destination_fd, uint64_t destination_offset, uint64_t size);
+int reflink_fd(int source_fd, uint64_t source_offset, int destination_fd, uint64_t destination_offset, uint64_t size, uint64_t *ret_reflinked);
 
 #endif

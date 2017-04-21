@@ -585,7 +585,17 @@ static int verbose_print_done(CaSync *s) {
                         return r;
                 }
 
-                fprintf(stderr, "Zero bytes written as holes (sparse files): %" PRIu64 "\n", n_bytes);
+                fprintf(stderr, "Zero bytes written as sparse files: %" PRIu64 "\n", n_bytes);
+        }
+
+        r = ca_sync_get_reflink_bytes(s, &n_bytes);
+        if (!IN_SET(r, -ENODATA, -ENOTTY)) {
+                if (r < 0) {
+                        fprintf(stderr, "Failed to determine number of reflink bytes: %s\n", strerror(-r));
+                        return r;
+                }
+
+                fprintf(stderr, "Bytes cloned through reflinks: %" PRIu64 "\n", n_bytes);
         }
 
         return 1;

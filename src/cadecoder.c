@@ -167,6 +167,7 @@ struct CaDecoder {
         bool reflink;
 
         uint64_t n_punch_holes_bytes;
+        uint64_t n_reflink_bytes;
 };
 
 static inline bool CA_DECODER_IS_SEEKING(CaDecoder *d) {
@@ -2686,6 +2687,7 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
                 assert(l);
 
                 if (l->designator == CA_LOCATION_PAYLOAD) {
+                        uint64_t reflinked;
                         int source_fd;
 
                         source_fd = ca_location_open(l);
@@ -2696,7 +2698,7 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
                         if (source_fd < 0)
                                 return source_fd;
 
-                        r = reflink_fd(source_fd, l->offset, n->fd, offset, l->size);
+                        r = reflink_fd(source_fd, l->offset, n->fd, offset, l->size, &reflinked);
                         safe_close(source_fd);
                         if (r == -EBADR) /* the offsets are not multiples of 512 */
                                 continue;
@@ -2706,6 +2708,8 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
                                 break;
                         if (r < 0)
                                 return r;
+
+                        d->n_reflink_bytes += reflinked;
                 }
 
                 offset += l->size;
@@ -3945,7 +3949,7 @@ int ca_decoder_set_reflink(CaDecoder *d, bool enabled) {
         return 0;
 }
 
-int ca_decoder_get_punch_holes_byte(CaDecoder *d, uint64_t *ret) {
+int ca_decoder_get_punch_holes_bytes(CaDecoder *d, uint64_t *ret) {
         if (!d)
                 return -EINVAL;
         if (!ret)
@@ -3955,5 +3959,18 @@ int ca_decoder_get_punch_holes_byte(CaDecoder *d, uint64_t *ret) {
                 return -ENODATA;
 
         *ret = d->n_punch_holes_bytes;
+        return 0;
+}
+
+int ca_decoder_get_reflink_bytes(CaDecoder *d, uint64_t *ret) {
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!d->reflink)
+                return -ENODATA;
+
+        *ret = d->n_reflink_bytes;
         return 0;
 }
