@@ -2818,6 +2818,8 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                 node = ca_encoder_current_node(e);
                 assert(node);
 
+                node->dirent_idx = 0;
+
                 ca_encoder_enter_state(e, CA_ENCODER_ENTRY);
 
                 e->payload_offset = location->offset;
