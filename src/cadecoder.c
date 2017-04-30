@@ -65,6 +65,7 @@ typedef struct CaDecoderNode {
         uint64_t end_offset;     /* offset of the byte behind the goodbye marker */
 
         char *name;
+        char *temporary_name;
         CaFormatEntry *entry;
         CaFormatGoodbye *goodbye;
 
@@ -247,6 +248,7 @@ static void ca_decoder_node_free(CaDecoderNode *n) {
                 n->fd = -1;
 
         n->name = mfree(n->name);
+        n->temporary_name = mfree(n->temporary_name);
         n->entry = mfree(n->entry);
         n->user_name = mfree(n->user_name);
         n->group_name = mfree(n->group_name);
@@ -2282,6 +2284,7 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
 
         assert(child->entry);
         assert(child->name);
+        assert(!child->temporary_name);
 
         mode = read_le64(&child->entry->mode);
 
@@ -2295,58 +2298,83 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
                 }
 
                 child->fd = openat(dir_fd, child->name, O_CLOEXEC|O_NOCTTY|O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+                if (child->fd < 0) {
+
+                        /* If there's something else already in place, then let's create a temporary directory first */
+                        if (!IN_SET(errno, ENOTDIR, ELOOP))
+                                return -errno;
+
+                        r = tempfn_random(child->name, &child->temporary_name);
+                        if (r < 0)
+                                return r;
+
+                        if (mkdirat(dir_fd, child->temporary_name, 0700) < 0)
+                                return -errno;
+
+                        child->fd = openat(dir_fd, child->temporary_name, O_CLOEXEC|O_NOCTTY|O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+                        if (child->fd < 0) {
+                                r = -errno;
+                                (void) unlinkat(dir_fd, child->temporary_name, AT_REMOVEDIR);
+                                return r;
+                        }
+                }
+
+                break;
+
+        case S_IFREG:
+
+                r = tempfn_random(child->name, &child->temporary_name);
+                if (r < 0)
+                        return r;
+
+                child->fd = openat(dir_fd, child->temporary_name, O_CLOEXEC|O_NOCTTY|O_WRONLY|O_NOFOLLOW|O_CREAT|O_EXCL, 0600 | mode);
                 if (child->fd < 0)
                         return -errno;
 
                 break;
 
-        case S_IFREG:
-                child->fd = openat(dir_fd, child->name, O_CLOEXEC|O_NOCTTY|O_WRONLY|O_NOFOLLOW|O_CREAT|O_TRUNC, 0600 | mode);
-                if (child->fd < 0) {
-                        r = -errno;
-                        if (r == -EACCES) {
-                                /* If the file exists and is read-only, the open() will fail, in that case, remove it try again */
-                                if (unlinkat(dir_fd, child->name, 0) >= 0)
-                                        child->fd = openat(dir_fd, child->name, O_CLOEXEC|O_NOCTTY|O_WRONLY|O_NOFOLLOW|O_CREAT|O_TRUNC, 0600 | mode);
-                        }
-
-                        if (child->fd < 0)
-                                return r;
-                }
-
-                break;
-
         case S_IFLNK:
 
-                if (symlinkat(child->symlink_target, dir_fd, child->name) < 0) {
-                        if (errno != EEXIST)
-                                return -errno;
-                }
+                r = tempfn_random(child->name, &child->temporary_name);
+                if (r < 0)
+                        return r;
+
+                if (symlinkat(child->symlink_target, dir_fd, child->temporary_name) < 0)
+                        return -errno;
+
                 break;
 
         case S_IFIFO:
 
-                if (mkfifoat(dir_fd, child->name, mode) < 0) {
-                        if (errno != EEXIST)
-                                return -errno;
-                }
+                r = tempfn_random(child->name, &child->temporary_name);
+                if (r < 0)
+                        return r;
+
+                if (mkfifoat(dir_fd, child->temporary_name, mode) < 0)
+                        return -errno;
                 break;
 
         case S_IFBLK:
         case S_IFCHR:
 
-                if (mknodat(dir_fd, child->name, mode, child->rdev) < 0) {
-                        if (errno != EEXIST)
-                                return -errno;
-                }
+                r = tempfn_random(child->name, &child->temporary_name);
+                if (r < 0)
+                        return r;
+
+                if (mknodat(dir_fd, child->temporary_name, mode, child->rdev) < 0)
+                        return -errno;
+
                 break;
 
         case S_IFSOCK:
 
-                if (mknodat(dir_fd, child->name, mode, 0) < 0) {
-                        if (errno != EEXIST)
-                                return -errno;
-                }
+                r = tempfn_random(child->name, &child->temporary_name);
+                if (r < 0)
+                        return r;
+
+                if (mknodat(dir_fd, child->temporary_name, mode, 0) < 0)
+                        return -errno;
+
                 break;
 
         default:
@@ -2720,6 +2748,7 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
 
 static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *child) {
         statfs_f_type_t magic = 0;
+        const char *name;
         struct stat st;
         mode_t mode;
         int r, dir_fd;
@@ -2745,13 +2774,15 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
         assert(child->entry);
 
+        name = child->temporary_name ?: child->name;
+
         if (child->fd >= 0)
                 r = fstat(child->fd, &st);
         else {
                 if (!n)
                         return -EINVAL;
 
-                r = fstatat(dir_fd, child->name, &st, AT_SYMLINK_NOFOLLOW);
+                r = fstatat(dir_fd, name, &st, AT_SYMLINK_NOFOLLOW);
         }
         if (r < 0)
                 return -errno;
@@ -2787,7 +2818,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 buf = newa(char, l+2);
 
-                z = readlinkat(dir_fd, child->name, buf, l+1);
+                z = readlinkat(dir_fd, name, buf, l+1);
                 if (z < 0)
                         return -errno;
                 if ((size_t) z != l)
@@ -2829,7 +2860,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                                 if (!n)
                                         return -EINVAL;
 
-                                r = fchownat(dir_fd, child->name, uid, gid, AT_SYMLINK_NOFOLLOW);
+                                r = fchownat(dir_fd, name, uid, gid, AT_SYMLINK_NOFOLLOW);
                         }
                         if (r < 0)
                                 return -errno;
@@ -2862,7 +2893,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                                 if (!n)
                                         return -EINVAL;
 
-                                r = fchmodat(dir_fd, child->name, new_mode, AT_SYMLINK_NOFOLLOW);
+                                r = fchmodat(dir_fd, name, new_mode, AT_SYMLINK_NOFOLLOW);
                         }
                         if (r < 0)
                                 return -errno;
@@ -2878,7 +2909,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                                 if (!n)
                                         return -EINVAL;
 
-                                r = fchmodat(dir_fd, child->name, read_le64(&child->entry->mode) & 07777, AT_SYMLINK_NOFOLLOW);
+                                r = fchmodat(dir_fd, name, read_le64(&child->entry->mode) & 07777, AT_SYMLINK_NOFOLLOW);
                         }
                         if (r < 0)
                                 return -errno;
@@ -2894,7 +2925,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         if (!n)
                                 return -EINVAL;
 
-                        path_fd = openat(dir_fd, child->name, O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_PATH);
+                        path_fd = openat(dir_fd, name, O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_PATH);
                         if (path_fd < 0)
                                 return -errno;
                 }
@@ -3065,10 +3096,21 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         if (!n)
                                 return -EINVAL;
 
-                        r = utimensat(dir_fd, child->name, ts, AT_SYMLINK_NOFOLLOW);
+                        r = utimensat(dir_fd, name, ts, AT_SYMLINK_NOFOLLOW);
                 }
                 if (r < 0)
                         return -errno;
+        }
+
+        if (child->temporary_name && child->name) {
+                /* Move the final result into place. Note that the chattr() file attributes we only apply after this,
+                 * as they might make prohibit us from renaming the file (consider the "immutable" flag) */
+
+                if (renameat(dir_fd, child->temporary_name, dir_fd, child->name) < 0)
+                        return -errno;
+
+                child->temporary_name = mfree(child->temporary_name);
+                name = child->name;
         }
 
         if ((d->feature_flags & CA_FORMAT_WITH_CHATTR) != 0 && child->fd >= 0) {
