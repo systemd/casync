@@ -33,6 +33,7 @@ static bool arg_verbose = false;
 static bool arg_respect_nodump = true;
 static bool arg_punch_holes = true;
 static bool arg_reflink = true;
+static bool arg_seed_output = true;
 static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
@@ -58,7 +59,8 @@ static void help(void) {
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n"
                "     --respect-nodump=no     Don't respect chattr(1)'s -d 'nodump' flag\n"
                "     --punch-holes=no        Don't create sparse files\n"
-               "     --reflink=no            Don't create reflinks from seeds\n\n"
+               "     --reflink=no            Don't create reflinks from seeds\n"
+               "     --seed-output=no        Don't implicitly add pre-existing output as seed\n\n"
                "Input/output selector:\n"
                "     --what=archive          Operate on archive file\n"
                "     --what=archive-index    Operate on archive index file\n"
@@ -118,6 +120,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_RESPECT_NODUMP,
                 ARG_PUNCH_HOLES,
                 ARG_REFLINK,
+                ARG_SEED_OUTPUT,
         };
 
         static const struct option options[] = {
@@ -134,6 +137,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "respect-nodump", required_argument, NULL, ARG_RESPECT_NODUMP },
                 { "punch-holes",    required_argument, NULL, ARG_PUNCH_HOLES    },
                 { "reflink",        required_argument, NULL, ARG_REFLINK        },
+                { "seed-output",    required_argument, NULL, ARG_SEED_OUTPUT    },
                 {}
         };
 
@@ -282,6 +286,16 @@ static int parse_argv(int argc, char *argv[]) {
                         }
 
                         arg_reflink = r;
+                        break;
+
+                case ARG_SEED_OUTPUT:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --seed-output= parameter: %s\n", optarg);
+                                return r;
+                        }
+
+                        arg_seed_output = r;
                         break;
 
                 case '?':
@@ -1056,9 +1070,11 @@ static int extract(int argc, char *argv[]) {
                 if (r < 0)
                         goto finish;
 
-                r = ca_sync_add_seed_path(s, output);
-                if (r < 0 && r != -ENOENT)
-                        fprintf(stderr, "Failed to add existing file as seed %s, ignoring: %s\n", output, strerror(-r));
+                if (arg_seed_output) {
+                        r = ca_sync_add_seed_path(s, output);
+                        if (r < 0 && r != -ENOENT)
+                                fprintf(stderr, "Failed to add existing file as seed %s, ignoring: %s\n", output, strerror(-r));
+                }
         }
 
         if (arg_rate_limit_bps != UINT64_MAX) {
