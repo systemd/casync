@@ -12,5 +12,6 @@ typedef enum RemoveFlags {
 
 int rm_rf_children(int fd, RemoveFlags flags, struct stat *root_dev);
 int rm_rf(const char *path, RemoveFlags flags);
+int rm_rf_at(int dir_fd, const char *path, RemoveFlags flags);
 
 #endif

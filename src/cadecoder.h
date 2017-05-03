@@ -28,6 +28,7 @@ int ca_decoder_get_feature_flags(CaDecoder *d, uint64_t *ret);
 
 int ca_decoder_set_punch_holes(CaDecoder *d, bool enabled);
 int ca_decoder_set_reflink(CaDecoder *d, bool enabled);
+int ca_decoder_set_delete(CaDecoder *d, bool enabled);
 
 /* Output: a file descriptor to a directory tree, block device node, or regular file */
 int ca_decoder_set_base_fd(CaDecoder *d, int fd);

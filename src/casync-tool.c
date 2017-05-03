@@ -31,6 +31,7 @@ static enum {
 } arg_what = _WHAT_INVALID;
 static bool arg_verbose = false;
 static bool arg_respect_nodump = true;
+static bool arg_delete = true;
 static bool arg_punch_holes = true;
 static bool arg_reflink = true;
 static bool arg_seed_output = true;
@@ -58,6 +59,7 @@ static void help(void) {
                "     --seed=PATH             Additional file or directory to use as seed\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n"
                "     --respect-nodump=no     Don't respect chattr(1)'s -d 'nodump' flag\n"
+               "     --delete=no             Don't delete existing files not listed in archive after extraction\n"
                "     --punch-holes=no        Don't create sparse files\n"
                "     --reflink=no            Don't create reflinks from seeds\n"
                "     --seed-output=no        Don't implicitly add pre-existing output as seed\n\n"
@@ -121,6 +123,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_PUNCH_HOLES,
                 ARG_REFLINK,
                 ARG_SEED_OUTPUT,
+                ARG_DELETE,
         };
 
         static const struct option options[] = {
@@ -135,6 +138,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "without",        required_argument, NULL, ARG_WITHOUT        },
                 { "what",           required_argument, NULL, ARG_WHAT           },
                 { "respect-nodump", required_argument, NULL, ARG_RESPECT_NODUMP },
+                { "delete",         required_argument, NULL, ARG_DELETE         },
                 { "punch-holes",    required_argument, NULL, ARG_PUNCH_HOLES    },
                 { "reflink",        required_argument, NULL, ARG_REFLINK        },
                 { "seed-output",    required_argument, NULL, ARG_SEED_OUTPUT    },
@@ -286,6 +290,16 @@ static int parse_argv(int argc, char *argv[]) {
                         }
 
                         arg_reflink = r;
+                        break;
+
+                case ARG_DELETE:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --delete= parameter: %s\n", optarg);
+                                return r;
+                        }
+
+                        arg_delete = r;
                         break;
 
                 case ARG_SEED_OUTPUT:

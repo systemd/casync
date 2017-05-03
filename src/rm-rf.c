@@ -123,10 +123,11 @@ int rm_rf_children(int fd, RemoveFlags flags, struct stat *root_dev) {
         return ret;
 }
 
-int rm_rf(const char *path, RemoveFlags flags) {
+int rm_rf_at(int dir_fd, const char *path, RemoveFlags flags) {
         struct statfs s;
         int fd, r;
 
+        assert(dir_fd == AT_FDCWD || dir_fd >= 0);
         assert(path);
 
         /* We refuse to clean the root file system with this call. This is extra paranoia to never cause a really
@@ -134,14 +135,23 @@ int rm_rf(const char *path, RemoveFlags flags) {
         if (streq(path, "/"))
                 return -EPERM;
 
-        fd = open(path, O_RDONLY|O_NONBLOCK|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW|O_NOATIME);
+        fd = openat(dir_fd, path, O_RDONLY|O_NONBLOCK|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW|O_NOATIME);
         if (fd < 0) {
 
-                if (errno != ENOTDIR && errno != ELOOP)
+                if (!IN_SET(errno, ENOTDIR, ELOOP))
                         return -errno;
 
+                /* At this point we know it's not a directory. */
+
                 if (!(flags & REMOVE_PHYSICAL)) {
-                        if (statfs(path, &s) < 0)
+
+                        fd = openat(dir_fd, path, O_PATH|O_CLOEXEC|O_NOFOLLOW);
+                        if (fd < 0)
+                                return -errno;
+
+                        r = fstatfs(fd, &s);
+                        safe_close(fd);
+                        if (r < 0)
                                 return -errno;
 
                         if (!is_temporary_fs(&s))
@@ -149,7 +159,7 @@ int rm_rf(const char *path, RemoveFlags flags) {
                 }
 
                 if ((flags & REMOVE_ROOT) && !(flags & REMOVE_ONLY_DIRECTORIES))
-                        if (unlink(path) < 0 && errno != ENOENT)
+                        if (unlinkat(dir_fd, path, 0) < 0 && errno != ENOENT)
                                 return -errno;
 
                 return 0;
@@ -158,11 +168,15 @@ int rm_rf(const char *path, RemoveFlags flags) {
         r = rm_rf_children(fd, flags, NULL);
 
         if (flags & REMOVE_ROOT) {
-                if (rmdir(path) < 0) {
+                if (unlinkat(dir_fd, path, AT_REMOVEDIR) < 0) {
                         if (r == 0 && errno != ENOENT)
                                 r = -errno;
                 }
         }
 
         return r;
+}
+
+int rm_rf(const char *path, RemoveFlags flags) {
+        return rm_rf_at(AT_FDCWD, path, flags);
 }

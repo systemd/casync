@@ -19,6 +19,7 @@
 #include "def.h"
 #include "realloc-buffer.h"
 #include "reflink.h"
+#include "rm-rf.h"
 #include "siphash24.h"
 #include "util.h"
 
@@ -96,6 +97,13 @@ typedef struct CaDecoderNode {
 
         /* Only for S_ISREG(), the origin if we know it */
         CaOrigin *payload_origin;
+
+        /* Only for S_ISDIR(), so that we can remove files that aren't there anymore */
+        char **dirents;
+        size_t n_dirents;
+        size_t n_dirents_allocated;
+
+        bool dirents_invalid;
 } CaDecoderNode;
 
 typedef enum CaDecoderState {
@@ -164,8 +172,9 @@ struct CaDecoder {
 
         int boundary_fd;
 
-        bool punch_holes;
-        bool reflink;
+        bool punch_holes:1;
+        bool reflink:1;
+        bool delete:1;
 
         uint64_t n_punch_holes_bytes;
         uint64_t n_reflink_bytes;
@@ -213,6 +222,7 @@ CaDecoder *ca_decoder_new(void) {
 
         d->punch_holes = true;
         d->reflink = true;
+        d->delete = true;
 
         return d;
 }
@@ -280,6 +290,9 @@ static void ca_decoder_node_free(CaDecoderNode *n) {
         n->end_offset = UINT64_MAX;
 
         n->payload_origin = ca_origin_unref(n->payload_origin);
+
+        n->dirents = strv_free(n->dirents);
+        n->n_dirents = n->n_dirents_allocated = 0;
 }
 
 static void ca_decoder_flush_nodes(CaDecoder *d, size_t leave) {
@@ -1341,6 +1354,8 @@ static int ca_decoder_do_seek(CaDecoder *d, CaDecoderNode *n) {
                 return 1;
         }
 
+        n->dirents_invalid = true;
+
         if (n->goodbye) {
                 const CaFormatGoodbyeItem *item;
                 uint64_t so;
@@ -2140,6 +2155,22 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
 
                 }
 
+                if (d->delete && !n->dirents_invalid) {
+                        char *nd;
+
+                        nd = strdup(filename->name);
+                        if (!nd)
+                                return -ENOMEM;
+
+                        if (!GREEDY_REALLOC(n->dirents, n->n_dirents_allocated, n->n_dirents + 2)) {
+                                free(nd);
+                                return -ENOMEM;
+                        }
+
+                        n->dirents[n->n_dirents++] = nd;
+                        n->dirents[n->n_dirents] = NULL;
+                }
+
                 child = ca_decoder_init_child(d);
                 if (!child)
                         return -EFBIG;
@@ -2746,6 +2777,94 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
         return 0;
 }
 
+static int comparison_fn_strcmpp(const void *x, const void *y) {
+        const char* const *a = x, * const* b = y;
+
+        return strcmp(*a, *b);
+}
+
+static inline void* safe_bsearch(
+                const void *key, const void *base,
+                size_t nmemb, size_t size,
+                comparison_fn_t fn) {
+
+        /* A wrapper that makes sure we can bsearch and don't have to pass a non-NULL base for nmemb == 0 */
+
+        if (nmemb == 0)
+                return NULL;
+
+        return bsearch(key, base, nmemb, size, fn);
+}
+
+static int ca_decoder_node_delete(CaDecoder *d, CaDecoderNode *n) {
+        int r, fd_copy;
+        mode_t mode;
+        DIR *dd;
+
+        assert(d);
+        assert(n);
+
+        /* If enabled, delete all files and directories below the selected directory that weren't listed in our
+         * archive. */
+
+        if (!d->delete)
+                return 0;
+
+        if (n->fd < 0)
+                return 0;
+
+        mode = ca_decoder_node_mode(n);
+        if (!S_ISDIR(mode))
+                return 0;
+
+        if (n->dirents_invalid)
+                return -ENODATA;
+
+        fd_copy = fcntl(n->fd, F_DUPFD_CLOEXEC, 3);
+        if (fd_copy < 0)
+                return -errno;
+
+        dd = fdopendir(fd_copy);
+        if (!dd) {
+                safe_close(fd_copy);
+                return -errno;
+        }
+
+        for (;;) {
+                struct dirent *de;
+                const char *key;
+
+                errno = 0;
+                de = readdir(dd);
+                if (!de) {
+                        if (errno != 0) {
+                                r = -errno;
+                                goto finish;
+                        }
+
+                        break;
+                }
+
+                if (dot_or_dot_dot(de->d_name))
+                        continue;
+
+                key = de->d_name;
+
+                if (safe_bsearch(&key, n->dirents, n->n_dirents, sizeof(char*), comparison_fn_strcmpp))
+                        continue;
+
+                r = rm_rf_at(n->fd, de->d_name, REMOVE_ROOT|REMOVE_PHYSICAL);
+                if (r < 0)
+                        goto finish;
+        }
+
+        r = 0;
+
+finish:
+        closedir(dd);
+        return r;
+}
+
 static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *child) {
         statfs_f_type_t magic = 0;
         const char *name;
@@ -2830,6 +2949,12 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
         if (S_ISREG(st.st_mode)) {
                 r = ca_decoder_node_reflink(d, child);
+                if (r < 0)
+                        return r;
+        }
+
+        if (S_ISDIR(st.st_mode)) {
+                r = ca_decoder_node_delete(d, child);
                 if (r < 0)
                         return r;
         }
@@ -3988,6 +4113,15 @@ int ca_decoder_set_reflink(CaDecoder *d, bool enabled) {
                 return -EINVAL;
 
         d->reflink = enabled;
+        return 0;
+}
+
+int ca_decoder_set_delete(CaDecoder *d, bool enabled) {
+
+        if (!d)
+                return -EINVAL;
+
+        d->delete = enabled;
         return 0;
 }
 

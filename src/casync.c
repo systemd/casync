@@ -97,8 +97,9 @@ typedef struct CaSync {
 
         uint64_t chunk_skip;
 
-        bool punch_holes;
-        bool reflink;
+        bool punch_holes:1;
+        bool reflink:1;
+        bool delete:1;
 
         CaFileRoot *archive_root;
 } CaSync;
@@ -218,6 +219,25 @@ int ca_sync_set_reflink(CaSync *s, bool enabled) {
         }
 
         s->reflink = enabled;
+
+        return 0;
+}
+
+int ca_sync_set_delete(CaSync *s, bool enabled) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        if (s->decoder) {
+                r = ca_decoder_set_delete(s->decoder, enabled);
+                if (r < 0)
+                        return r;
+        }
+
+        s->delete = enabled;
 
         return 0;
 }
