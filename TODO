@@ -1,14 +1,20 @@
+BEFORE FIRST BLOG STORY:
+* fuse mount logic
+* hardlink from seed
+* permit shifting UID/GIDs
+* replace adler32 by something better (buzhash)
+* when listing archive contents, seek over payload
+* decoder: rework seek by file offset to match seek by path semantics of async CA_DECODER_SEEK events
+* propagate feature flags into index, and then into seed
+
+LATER:
 * verify
 * diff
-* fuse mount logic
 * save/restore btrfs file/subvol flags
 * save/restore hardlinks?
 * check fs features when restoring
 * encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
-* hardlink/reflink from seed
 * exclude patterns
-* permit shifting UID/GIDs
-* delete old files in destination after sync
 * build seed while extracting
 * optionally make seeds persistent
 * stop at mount points
@@ -18,7 +24,6 @@
 * casync-http: parallel http GETs
 * casync-http: try all configured stores one after the other before sending MISSING
 * add support for compressed index files and archive files
-* replace adler32 by something better (buzhash)
 * define mime types for our files
 * define http-based url protocol prefix for caibx+caidx
 * support accessing base trees through native protocol
@@ -26,9 +31,6 @@
 * rework caindex to read multiple chunks per read (use reallocbuffer like elsewhere)
 * permit 511 (or 4095?) redundant NUL bytes at the end of archive and index files, so that they could in theory stored on block devices
 * archive digest can't sanely process subdirectories right now, since it will include trailing data that belongs to the next objects already
-* when listing archive contents, seek over payload
-* when restoring file objects, do so atomically by using temporary file and rename (except: directories)
-* decoder: rework seek by file offset to match seek by path semantics of async CA_DECODER_SEEK events
-* propagate feature flags into index, and then into seed
 * seed: cache GOODBYE name table data so that we can regenerate the right bits when needed
-* decoder: count how many bytes on disk we saved due to sparse files, and due to reflinks
+* when extracting, optionally extract less than the archive contains
+* when installing a file, and this fails because the destination already exists and is a dir, rm_rf it
