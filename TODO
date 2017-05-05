@@ -4,7 +4,6 @@ BEFORE FIRST BLOG STORY:
 * permit shifting UID/GIDs
 * replace adler32 by something better (buzhash)
 * when listing archive contents, seek over payload
-* decoder: rework seek by file offset to match seek by path semantics of async CA_DECODER_SEEK events
 * propagate feature flags into index, and then into seed
 
 LATER:
