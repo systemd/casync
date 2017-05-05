@@ -115,6 +115,10 @@ typedef enum CaDecoderState {
         CA_DECODER_IN_DIRECTORY,
         CA_DECODER_GOODBYE,
         CA_DECODER_EOF,
+        /* As the result of ca_decoder_seek_offset() we'll traverse through these two states ... */
+        CA_DECODER_PREPARING_SEEK_TO_OFFSET,
+        CA_DECODER_SEEKING_TO_OFFSET,
+        /* As the result of ca_decoder_seek_path() we'll traverse through these eight states ... */
         CA_DECODER_PREPARING_SEEK_TO_FILENAME,
         CA_DECODER_SEEKING_TO_FILENAME,
         CA_DECODER_PREPARING_SEEK_TO_ENTRY,
@@ -146,7 +150,7 @@ struct CaDecoder {
         /* Where we are from the stream start */
         uint64_t archive_offset;
 
-        /* Where we are from the start of the current payload we are looking at */
+        /* Only in CA_DECODER_IN_PAYLOAD: Where we are from the start of the current payload we are looking at */
         uint64_t payload_offset;
 
         /* How far cadecoder_step() will jump ahead */
@@ -183,6 +187,8 @@ struct CaDecoder {
 static inline bool CA_DECODER_IS_SEEKING(CaDecoder *d) {
         return IN_SET(d->state,
                       CA_DECODER_ENTERED_FOR_SEEK,
+                      CA_DECODER_PREPARING_SEEK_TO_OFFSET,
+                      CA_DECODER_SEEKING_TO_OFFSET,
                       CA_DECODER_PREPARING_SEEK_TO_FILENAME,
                       CA_DECODER_SEEKING_TO_FILENAME,
                       CA_DECODER_PREPARING_SEEK_TO_ENTRY,
@@ -2152,7 +2158,6 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
 
                                 assert(r > 0);
                         }
-
                 }
 
                 if (d->delete && !n->dirents_invalid) {
@@ -3407,6 +3412,22 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 ca_decoder_enter_state(d, CA_DECODER_EOF);
                 return CA_DECODER_FINISHED;
 
+        case CA_DECODER_PREPARING_SEEK_TO_OFFSET:
+                assert(S_ISREG(mode) || S_ISBLK(mode));
+
+                ca_decoder_enter_state(d, CA_DECODER_SEEKING_TO_OFFSET);
+                ca_decoder_apply_seek_offset(d);
+
+                return CA_DECODER_SEEK;
+
+        case CA_DECODER_SEEKING_TO_OFFSET:
+
+                ca_decoder_enter_state(d, CA_DECODER_IN_PAYLOAD);
+                d->payload_offset = d->seek_offset;
+                ca_decoder_reset_seek(d);
+
+                return ca_decoder_step_node(d, n);
+
         case CA_DECODER_PREPARING_SEEK_TO_FILENAME:
                 assert(S_ISDIR(mode));
 
@@ -3956,32 +3977,41 @@ int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret) {
 }
 
 int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset) {
-        CaDecoderNode *n;
         mode_t mode;
+
+        /* Seek to the specified offset in the archive. Only supported when we decode a naked file, i.e. not a
+         * directory tree serialization */
 
         if (!d)
                 return -EINVAL;
-        if (d->node_idx != 0)
+        if (offset == UINT64_MAX)
                 return -EINVAL;
 
-        /* Only supported when we decode a naked file, i.e. not a directory tree serialization */
-
-        n = ca_decoder_current_node(d);
-        if (!n)
+        if (d->n_nodes <= 0)
                 return -EUNATCH;
+        if (d->node_idx != 0)
+                return -EINVAL;
+        if (d->nodes[0].end_offset == UINT64_MAX) /* The top node must have a size set to be considered seekable */
+                return -ESPIPE;
 
-        mode = ca_decoder_node_mode(n);
+        if (offset > d->nodes[0].end_offset) {
+                ca_decoder_enter_state(d, CA_DECODER_NOWHERE);
+                return 0;
+        }
+        if (offset == d->nodes[0].end_offset) {
+                ca_decoder_enter_state(d, CA_DECODER_EOF);
+                return 0;
+        }
+
+        mode = ca_decoder_node_mode(d->nodes);
         if (!S_ISREG(mode) && !S_ISBLK(mode))
                 return -EISDIR;
 
-        d->archive_offset = d->payload_offset = offset;
-        d->step_size = 0;
-        d->eof = false;
+        ca_decoder_reset_seek(d);
 
-        realloc_buffer_empty(&d->buffer);
-        ca_origin_flush(d->buffer_origin);
+        d->seek_offset = offset;
 
-        ca_decoder_enter_state(d, CA_DECODER_IN_PAYLOAD);
+        ca_decoder_enter_state(d, CA_DECODER_PREPARING_SEEK_TO_OFFSET);
 
         return 0;
 }
@@ -4073,6 +4103,7 @@ int ca_decoder_get_seek_offset(CaDecoder *d, uint64_t *ret) {
                 return -EUNATCH;
 
         if (!IN_SET(d->state,
+                    CA_DECODER_SEEKING_TO_OFFSET,
                     CA_DECODER_SEEKING_TO_FILENAME,
                     CA_DECODER_SEEKING_TO_ENTRY,
                     CA_DECODER_SEEKING_TO_GOODBYE,

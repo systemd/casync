@@ -44,6 +44,8 @@ int ca_decoder_step(CaDecoder *d);
 
 /* If ca_decoder_step() returned CA_DECODER_REQUEST, which offset it desired now */
 int ca_decoder_get_request_offset(CaDecoder *d, uint64_t *offset);
+
+/* If ca_decoder_step() returned CA_DECODER_SEEK, where are we supposed to seek now? */
 int ca_decoder_get_seek_offset(CaDecoder *d, uint64_t *ret);
 
 /* Input: archive stream data */

@@ -2716,12 +2716,52 @@ int ca_sync_current_archive_offset(CaSync *s, uint64_t *ret) {
         return ca_encoder_current_archive_offset(s->encoder, ret);
 }
 
+static int ca_sync_acquire_archive_size(CaSync *s) {
+        int r;
+
+        assert(s);
+
+        /* Makes sure the decoder knows how large the archive is. This is a requirement for working seeks, as the seek
+         * tables are located at the end of archives */
+
+        if (s->archive_size != UINT64_MAX)
+                return 0;
+
+        if (s->archive_fd >= 0) {
+                struct stat st;
+
+                if (fstat(s->archive_fd, &st) < 0)
+                        return -errno;
+
+                if (!S_ISREG(st.st_mode))
+                        return -ESPIPE;
+
+                s->archive_size = st.st_size;
+
+        } else if (s->index) {
+                r = ca_index_get_blob_size(s->index, &s->archive_size);
+                if (r < 0)
+                        return r;
+        } else
+                return -EOPNOTSUPP;
+
+        r = ca_decoder_set_archive_size(s->decoder, s->archive_size);
+        if (r < 0)
+                return r;
+
+        return 1;
+}
+
 int ca_sync_seek_offset(CaSync *s, uint64_t offset) {
-        uint64_t chunk_skip = 0;
         int r;
 
         if (!s)
                 return -EINVAL;
+        if (offset == UINT64_MAX)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
 
         r = ca_sync_start(s);
         if (r < 0)
@@ -2730,21 +2770,9 @@ int ca_sync_seek_offset(CaSync *s, uint64_t offset) {
         if (!s->decoder)
                 return -ESPIPE;
 
-        if (s->index) {
-
-                r = ca_index_seek(s->index, offset, &chunk_skip);
-                if (r < 0)
-                        return r;
-
-        } else if (s->archive_fd >= 0) {
-                off_t f;
-
-                f = lseek(s->archive_fd, (off_t) offset, SEEK_SET);
-                if (f == (off_t) -1)
-                        return -errno;
-
-        } else
-                return -EOPNOTSUPP;
+        r = ca_sync_acquire_archive_size(s);
+        if (r < 0)
+                return r;
 
         r = ca_decoder_seek_offset(s->decoder, offset);
         if (r < 0)
@@ -2753,8 +2781,7 @@ int ca_sync_seek_offset(CaSync *s, uint64_t offset) {
         s->archive_eof = false;
         s->remote_index_eof = false;
         s->next_chunk_valid = false;
-
-        s->chunk_skip = chunk_skip;
+        s->chunk_skip = 0;
 
         return 0;
 }
@@ -2777,28 +2804,9 @@ int ca_sync_seek_path(CaSync *s, const char *path) {
         if (!s->decoder)
                 return -ESPIPE;
 
-        if (s->archive_size == UINT64_MAX) {
-
-                if (s->archive_fd >= 0) {
-                        struct stat st;
-
-                        if (fstat(s->archive_fd, &st) < 0)
-                                return -errno;
-
-                        if (S_ISREG(st.st_mode))
-                                s->archive_size = st.st_size;
-
-                } else if (s->index) {
-                        r = ca_index_get_blob_size(s->index, &s->archive_size);
-                        if (r < 0)
-                                return r;
-                } else
-                        return -EOPNOTSUPP;
-
-                r = ca_decoder_set_archive_size(s->decoder, s->archive_size);
-                if (r < 0)
-                        return r;
-        }
+        r = ca_sync_acquire_archive_size(s);
+        if (r < 0)
+                return r;
 
         r = ca_decoder_seek_path(s->decoder, path);
         if(r < 0)
@@ -2836,35 +2844,22 @@ int ca_sync_get_archive_size(CaSync *s, uint64_t *ret_size) {
         if (!ret_size)
                 return -EINVAL;
 
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
         r = ca_sync_start(s);
         if (r < 0)
                 return r;
 
         if (!s->decoder)
-                return -EINVAL;
+                return -ESPIPE;
 
-        if (s->index)
-                return ca_index_get_blob_size(s->index, ret_size);
+        r = ca_sync_acquire_archive_size(s);
+        if (r < 0)
+                return r;
 
-        if (s->archive_fd >= 0) {
-                struct stat st;
-
-                if (s->archive_size != UINT64_MAX) {
-                        *ret_size = s->archive_size;
-                        return 0;
-                }
-
-                if (fstat(s->archive_fd, &st) < 0)
-                        return -errno;
-
-                if (!S_ISREG(st.st_mode))
-                        return -ESPIPE;
-
-                *ret_size = s->archive_size = st.st_size;
-                return 0;
-        }
-
-        return -ENOTTY;
+        *ret_size = s->archive_size;
+        return 0;
 }
 
 int ca_sync_get_punch_holes_bytes(CaSync *s, uint64_t *ret) {
