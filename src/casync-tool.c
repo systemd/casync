@@ -534,41 +534,9 @@ static int verbose_print_path(CaSync *s, const char *verb) {
         return 1;
 }
 
-static int verbose_print_size(CaSync *s) {
-        uint64_t n_chunks = 0, size = 0;
+static int verbose_print_done_make(CaSync *s) {
+        uint64_t n_chunks = 0, size = 0, covering;
         char buffer[128];
-        int r;
-
-        assert(s);
-
-        if (!arg_verbose)
-                return 0;
-
-        r = ca_sync_current_archive_chunks(s, &n_chunks);
-        if (r < 0 && r != -ENODATA) {
-                fprintf(stderr, "Failed to determine number of chunks: %s\n", strerror(-r));
-                return r;
-        }
-
-        r = ca_sync_current_archive_offset(s, &size);
-        if (r < 0 && r != -ENODATA) {
-                fprintf(stderr, "Failed to determine archive size: %s\n", strerror(-r));
-                return r;
-        }
-
-        if (size > 0)
-                fprintf(stderr, "Archive size: %s\n", format_bytes(buffer, sizeof(buffer), size));
-        if (n_chunks > 0)
-                fprintf(stderr, "Number of chunks: %" PRIu64 "\n", n_chunks);
-
-        if (size > 0 && n_chunks > 0)
-                fprintf(stderr, "Effective average chunk size: %s\n", format_bytes(buffer, sizeof(buffer), size/n_chunks));
-
-        return 1;
-}
-
-static int verbose_print_done(CaSync *s) {
-        uint64_t covering, n_bytes;
         int r;
 
         assert(s);
@@ -605,6 +573,36 @@ static int verbose_print_done(CaSync *s) {
                         free(t);
                 }
         }
+
+        r = ca_sync_current_archive_chunks(s, &n_chunks);
+        if (r < 0 && r != -ENODATA) {
+                fprintf(stderr, "Failed to determine number of chunks: %s\n", strerror(-r));
+                return r;
+        }
+
+        r = ca_sync_current_archive_offset(s, &size);
+        if (r < 0 && r != -ENODATA) {
+                fprintf(stderr, "Failed to determine archive size: %s\n", strerror(-r));
+                return r;
+        }
+
+        if (size > 0)
+                fprintf(stderr, "Archive size: %s\n", format_bytes(buffer, sizeof(buffer), size));
+        if (n_chunks > 0)
+                fprintf(stderr, "Number of chunks: %" PRIu64 "\n", n_chunks);
+
+        if (size > 0 && n_chunks > 0)
+                fprintf(stderr, "Effective average chunk size: %s\n", format_bytes(buffer, sizeof(buffer), size/n_chunks));
+
+        return 1;
+}
+
+static int verbose_print_done_extract(CaSync *s) {
+        uint64_t n_bytes;
+        int r;
+
+        if (!arg_verbose)
+                return 0;
 
         r = ca_sync_get_punch_holes_bytes(s, &n_bytes);
         if (!IN_SET(r, -ENODATA, -ENOTTY)) {
@@ -850,8 +848,7 @@ static int make(int argc, char *argv[]) {
                         CaChunkID digest;
                         char t[CA_CHUNK_ID_FORMAT_MAX];
 
-                        verbose_print_size(s);
-                        verbose_print_done(s);
+                        verbose_print_done_make(s);
 
                         assert_se(ca_sync_get_digest(s, &digest) >= 0);
                         printf("%s\n", ca_chunk_id_format(&digest, t));
@@ -1196,7 +1193,7 @@ static int extract(int argc, char *argv[]) {
                 switch (r) {
 
                 case CA_SYNC_FINISHED:
-                        verbose_print_done(s);
+                        verbose_print_done_extract(s);
                         r = 0;
                         goto finish;
 
@@ -1548,8 +1545,6 @@ static int list(int argc, char *argv[]) {
                 switch (r) {
 
                 case CA_SYNC_FINISHED:
-                        verbose_print_done(s);
-
                         r = 0;
                         goto finish;
 
@@ -2005,8 +2000,6 @@ static int digest(int argc, char *argv[]) {
                 case CA_SYNC_FINISHED: {
                         CaChunkID digest;
                         char t[CA_CHUNK_ID_FORMAT_MAX];
-
-                        verbose_print_done(s);
 
                         assert_se(ca_sync_get_digest(s, &digest) >= 0);
                         printf("%s\n", ca_chunk_id_format(&digest, t));
