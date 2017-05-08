@@ -1,27 +1,40 @@
 #!/bin/bash -ex
 
+if [ `id -u` == 0 ] ; then
+    PARAMS=""
+else
+    PARAMS="--without=16bit-uids --without=32bit-uids --without=user-names --without=device-nodes --without=acl --without=fcaps"
+fi
+
 CASYNC_PROTOCOL_PATH=@top_builddir@
 export CASYNC_PROTOCOL_PATH
 
 SCRATCH_DIR=/var/tmp/test-casync.$RANDOM
 mkdir -p $SCRATCH_DIR/src
-cp -a @top_srcdir@ $SCRATCH_DIR/src
+
+if [ `id -u` == 0 ] ; then
+    cp -a @top_srcdir@/ $SCRATCH_DIR/src/
+else
+    # If we lack privileges we use rsync rather than cp to copy, as it will just skip over device nodes
+    rsync -a @top_srcdir@ $SCRATCH_DIR/src
+fi
+
 cd $SCRATCH_DIR/src
 
-@top_builddir@/casync list > $SCRATCH_DIR/test.list
-@top_builddir@/casync mtree > $SCRATCH_DIR/test.mtree
-@top_builddir@/casync digest > $SCRATCH_DIR/test.digest
+@top_builddir@/casync $PARAMS list > $SCRATCH_DIR/test.list
+@top_builddir@/casync $PARAMS mtree > $SCRATCH_DIR/test.mtree
+@top_builddir@/casync $PARAMS digest > $SCRATCH_DIR/test.digest
 
-@top_builddir@/casync make $SCRATCH_DIR/test.catar
-@top_builddir@/casync list $SCRATCH_DIR/test.catar > $SCRATCH_DIR/test.catar.list
-@top_builddir@/casync mtree $SCRATCH_DIR/test.catar > $SCRATCH_DIR/test.catar.mtree
-@top_builddir@/casync digest $SCRATCH_DIR/test.catar > $SCRATCH_DIR/test.catar.digest
+@top_builddir@/casync $PARAMS make $SCRATCH_DIR/test.catar
+@top_builddir@/casync $PARAMS list $SCRATCH_DIR/test.catar > $SCRATCH_DIR/test.catar.list
+@top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/test.catar > $SCRATCH_DIR/test.catar.mtree
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/test.catar > $SCRATCH_DIR/test.catar.digest
 sha256sum $SCRATCH_DIR/test.catar | cut -c -64 > $SCRATCH_DIR/test.catar.digest2
 
-@top_builddir@/casync make $SCRATCH_DIR/test.caidx
-@top_builddir@/casync list $SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test.caidx.list
-@top_builddir@/casync mtree $SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test.caidx.mtree
-@top_builddir@/casync digest $SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test.caidx.digest
+@top_builddir@/casync $PARAMS make $SCRATCH_DIR/test.caidx
+@top_builddir@/casync $PARAMS list $SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test.caidx.list
+@top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test.caidx.mtree
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test.caidx.digest
 
 diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test.catar.list
 diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test.caidx.list
@@ -33,8 +46,8 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.caidx.digest
 
 ### Test Extraction
 
-@top_builddir@/casync extract $SCRATCH_DIR/test.catar $SCRATCH_DIR/extract-catar
-@top_builddir@/casync extract $SCRATCH_DIR/test.caidx $SCRATCH_DIR/extract-caidx
+@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/test.catar $SCRATCH_DIR/extract-catar
+@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/test.caidx $SCRATCH_DIR/extract-caidx
 
 set +e
 
@@ -43,12 +56,12 @@ diff -ur --no-dereference . $SCRATCH_DIR/extract-caidx
 
 set -e
 
-@top_builddir@/casync list $SCRATCH_DIR/extract-catar > $SCRATCH_DIR/test.extract-catar.list
-@top_builddir@/casync list $SCRATCH_DIR/extract-caidx > $SCRATCH_DIR/test.extract-caidx.list
-@top_builddir@/casync mtree $SCRATCH_DIR/extract-catar > $SCRATCH_DIR/test.extract-catar.mtree
-@top_builddir@/casync mtree $SCRATCH_DIR/extract-caidx > $SCRATCH_DIR/test.extract-caidx.mtree
-@top_builddir@/casync digest $SCRATCH_DIR/extract-catar > $SCRATCH_DIR/test.extract-catar.digest
-@top_builddir@/casync digest $SCRATCH_DIR/extract-caidx > $SCRATCH_DIR/test.extract-caidx.digest
+@top_builddir@/casync $PARAMS list $SCRATCH_DIR/extract-catar > $SCRATCH_DIR/test.extract-catar.list
+@top_builddir@/casync $PARAMS list $SCRATCH_DIR/extract-caidx > $SCRATCH_DIR/test.extract-caidx.list
+@top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/extract-catar > $SCRATCH_DIR/test.extract-catar.mtree
+@top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/extract-caidx > $SCRATCH_DIR/test.extract-caidx.mtree
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-catar > $SCRATCH_DIR/test.extract-catar.digest
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-caidx > $SCRATCH_DIR/test.extract-caidx.digest
 
 diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test.extract-catar.list
 diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test.extract-caidx.list
@@ -61,18 +74,18 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.extract-caidx.digest
 
 ### Test seeking
 
-@top_builddir@/casync make $SCRATCH_DIR/seek.catar
-@top_builddir@/casync make $SCRATCH_DIR/seek.caidx
+@top_builddir@/casync $PARAMS make $SCRATCH_DIR/seek.catar
+@top_builddir@/casync $PARAMS make $SCRATCH_DIR/seek.caidx
 
-@top_builddir@/casync extract $SCRATCH_DIR/seek.catar $SCRATCH_DIR/extract-seek-catar casync/test-files
-@top_builddir@/casync extract $SCRATCH_DIR/seek.caidx $SCRATCH_DIR/extract-seek-caidx casync/test-files
+@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/seek.catar $SCRATCH_DIR/extract-seek-catar casync/test-files
+@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/seek.caidx $SCRATCH_DIR/extract-seek-caidx casync/test-files
 
-@top_builddir@/casync mtree casync/test-files > $SCRATCH_DIR/original-seek.mtree
-@top_builddir@/casync digest casync/test-files > $SCRATCH_DIR/original-seek.digest
-@top_builddir@/casync mtree $SCRATCH_DIR/extract-seek-catar/test-files > $SCRATCH_DIR/extract-seek-catar.mtree
-@top_builddir@/casync digest $SCRATCH_DIR/extract-seek-catar/test-files > $SCRATCH_DIR/extract-seek-catar.digest
-@top_builddir@/casync mtree $SCRATCH_DIR/extract-seek-caidx/test-files > $SCRATCH_DIR/extract-seek-caidx.mtree
-@top_builddir@/casync digest $SCRATCH_DIR/extract-seek-caidx/test-files > $SCRATCH_DIR/extract-seek-caidx.digest
+@top_builddir@/casync $PARAMS mtree casync/test-files > $SCRATCH_DIR/original-seek.mtree
+@top_builddir@/casync $PARAMS digest casync/test-files > $SCRATCH_DIR/original-seek.digest
+@top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/extract-seek-catar/test-files > $SCRATCH_DIR/extract-seek-catar.mtree
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-seek-catar/test-files > $SCRATCH_DIR/extract-seek-catar.digest
+@top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/extract-seek-caidx/test-files > $SCRATCH_DIR/extract-seek-caidx.mtree
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-seek-caidx/test-files > $SCRATCH_DIR/extract-seek-caidx.digest
 
 diff -q $SCRATCH_DIR/original-seek.digest $SCRATCH_DIR/extract-seek-catar.digest
 diff -q $SCRATCH_DIR/original-seek.digest $SCRATCH_DIR/extract-seek-caidx.digest
@@ -88,12 +101,12 @@ export CASYNC_SSH_PATH
 CASYNC_REMOTE_PATH=@top_builddir@/casync
 export CASYNC_REMOTE_PATH
 
-@top_builddir@/casync list localhost:$SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test-remote.caidx.list
-@top_builddir@/casync mtree localhost:$SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test-remote.caidx.mtree
-@top_builddir@/casync digest localhost:$SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test-remote.caidx.digest
-@top_builddir@/casync list localhost:$SCRATCH_DIR/test.catar > $SCRATCH_DIR/test-remote.catar.list
-@top_builddir@/casync mtree localhost:$SCRATCH_DIR/test.catar > $SCRATCH_DIR/test-remote.catar.mtree
-@top_builddir@/casync digest localhost:$SCRATCH_DIR/test.catar > $SCRATCH_DIR/test-remote.catar.digest
+@top_builddir@/casync $PARAMS list localhost:$SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test-remote.caidx.list
+@top_builddir@/casync $PARAMS mtree localhost:$SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test-remote.caidx.mtree
+@top_builddir@/casync $PARAMS digest localhost:$SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test-remote.caidx.digest
+@top_builddir@/casync $PARAMS list localhost:$SCRATCH_DIR/test.catar > $SCRATCH_DIR/test-remote.catar.list
+@top_builddir@/casync $PARAMS mtree localhost:$SCRATCH_DIR/test.catar > $SCRATCH_DIR/test-remote.catar.mtree
+@top_builddir@/casync $PARAMS digest localhost:$SCRATCH_DIR/test.catar > $SCRATCH_DIR/test-remote.catar.digest
 
 diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test-remote.caidx.list
 diff -q $SCRATCH_DIR/test.mtree $SCRATCH_DIR/test-remote.caidx.mtree
@@ -104,19 +117,19 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test-remote.catar.digest
 
 rm -rf $SCRATCH_DIR/default.castr
 
-@top_builddir@/casync make localhost:$SCRATCH_DIR/test2.caidx
-@top_builddir@/casync list $SCRATCH_DIR/test2.caidx > $SCRATCH_DIR/test2.caidx.list
-@top_builddir@/casync mtree $SCRATCH_DIR/test2.caidx > $SCRATCH_DIR/test2.caidx.mtree
-@top_builddir@/casync digest $SCRATCH_DIR/test2.caidx > $SCRATCH_DIR/test2.caidx.digest
+@top_builddir@/casync $PARAMS make localhost:$SCRATCH_DIR/test2.caidx
+@top_builddir@/casync $PARAMS list $SCRATCH_DIR/test2.caidx > $SCRATCH_DIR/test2.caidx.list
+@top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/test2.caidx > $SCRATCH_DIR/test2.caidx.mtree
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/test2.caidx > $SCRATCH_DIR/test2.caidx.digest
 
 diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test2.caidx.list
 diff -q $SCRATCH_DIR/test.mtree $SCRATCH_DIR/test2.caidx.mtree
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test2.caidx.digest
 
-@top_builddir@/casync make localhost:$SCRATCH_DIR/test2.catar
-@top_builddir@/casync list $SCRATCH_DIR/test2.catar > $SCRATCH_DIR/test2.catar.list
-@top_builddir@/casync mtree $SCRATCH_DIR/test2.catar > $SCRATCH_DIR/test2.catar.mtree
-@top_builddir@/casync digest $SCRATCH_DIR/test2.catar > $SCRATCH_DIR/test2.catar.digest
+@top_builddir@/casync $PARAMS make localhost:$SCRATCH_DIR/test2.catar
+@top_builddir@/casync $PARAMS list $SCRATCH_DIR/test2.catar > $SCRATCH_DIR/test2.catar.list
+@top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/test2.catar > $SCRATCH_DIR/test2.catar.mtree
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/test2.catar > $SCRATCH_DIR/test2.catar.digest
 
 diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test2.catar.list
 diff -q $SCRATCH_DIR/test.mtree $SCRATCH_DIR/test2.catar.mtree
@@ -132,13 +145,13 @@ HTTP_PID=$!
 
 sleep 3
 
-@top_builddir@/casync list http://localhost:4321/test2.caidx > $SCRATCH_DIR/test3.caidx.list
-@top_builddir@/casync mtree http://localhost:4321/test2.caidx > $SCRATCH_DIR/test3.caidx.mtree
-@top_builddir@/casync digest http://localhost:4321/test2.caidx > $SCRATCH_DIR/test3.caidx.digest
+@top_builddir@/casync $PARAMS list http://localhost:4321/test2.caidx > $SCRATCH_DIR/test3.caidx.list
+@top_builddir@/casync $PARAMS mtree http://localhost:4321/test2.caidx > $SCRATCH_DIR/test3.caidx.mtree
+@top_builddir@/casync $PARAMS digest http://localhost:4321/test2.caidx > $SCRATCH_DIR/test3.caidx.digest
 
-@top_builddir@/casync list http://localhost:4321/test2.catar > $SCRATCH_DIR/test3.catar.list
-@top_builddir@/casync mtree http://localhost:4321/test2.catar > $SCRATCH_DIR/test3.catar.mtree
-@top_builddir@/casync digest http://localhost:4321/test2.catar > $SCRATCH_DIR/test3.catar.digest
+@top_builddir@/casync $PARAMS list http://localhost:4321/test2.catar > $SCRATCH_DIR/test3.catar.list
+@top_builddir@/casync $PARAMS mtree http://localhost:4321/test2.catar > $SCRATCH_DIR/test3.catar.mtree
+@top_builddir@/casync $PARAMS digest http://localhost:4321/test2.catar > $SCRATCH_DIR/test3.catar.digest
 
 diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test3.caidx.list
 diff -q $SCRATCH_DIR/test.mtree $SCRATCH_DIR/test3.caidx.mtree
