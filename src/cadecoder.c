@@ -3620,7 +3620,8 @@ int ca_decoder_get_request_offset(CaDecoder *d, uint64_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        return d->archive_offset;
+        *ret = d->archive_offset;
+        return 0;
 }
 
 int ca_decoder_put_data(CaDecoder *d, const void *p, size_t size, CaOrigin *origin) {
