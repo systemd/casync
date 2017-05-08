@@ -31,6 +31,5 @@ LATER:
 * archive digest can't sanely process subdirectories right now, since it will include trailing data that belongs to the next objects already
 * seed: cache GOODBYE name table data so that we can regenerate the right bits when needed
 * when extracting, optionally make use of reduced feature bits than the archive contains
-* when installing a file, and this fails because the destination already exists and is a dir, rm_rf it
 * optionally import from/export to classic tar ball (and zip?)
 * optionally interpret aufs/union mount whiteout files?
