@@ -1,7 +1,6 @@
 BEFORE FIRST BLOG STORY:
 * fuse mount logic
 * hardlink from seed
-* permit shifting UID/GIDs
 * replace adler32 by something better (buzhash)
 * propagate feature flags into index, and then into seed
 
