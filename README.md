@@ -87,8 +87,6 @@ but there are other systems that use similar algorithms, in particular:
 ```
 # casync make --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart
 # casync extract --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart
-# casync put --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart.catar (NOT IMPLEMENTED YET)
-# casync get --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart.catar (NOT IMPLEMENTED YET)
 # casync list --store=/var/lib/backup.castr /home/lennart.caidx
 # casync digest --store=/var/lib/backup.castr /home/lennart.caidx
 # casync mtree -pool=/var/lib/backup.castr /home/lennart.caidx
@@ -100,8 +98,6 @@ but there are other systems that use similar algorithms, in particular:
 ## Operations on blob index files
 
 ```
-# casync put --store=/var/lib/backup.castr fedora25.caibx /home/lennart/Fedora25.raw (NOT IMPLEMENTED YET)
-# casync get --store=/var/lib/backup.castr fedora25.caibx /home/lennart/Fedora25.raw (NOT IMPLEMENTED YET)
 # casync digest --store=/var/lib/backup.castr fedora25.caibx
 # casync verify --store=/var/lib/backup.castr fedora25.caibx /home/lennart/Fedora25.raw (NOT IMPLEMENTED YET)
 # casync mkdev --store=/var/lib/backup.castr fedora25.caibx
@@ -126,14 +122,6 @@ but there are other systems that use similar algorithms, in particular:
 # casync mtree http://www.foobar.com/lennart.caidx
 # casync extract --seed=/home/lennart http://www.foobar.com/lennart.caidx /home/lennart2
 # casync mount --seed=/home/lennart http://www.foobar.com/lennart.caidx /home/lennart2 (NOT IMPLEMENTED YET)
-```
-
-## Operations between two directories
-
-```
-# casync clone /home/lennart /home/lennart2 (NOT IMPLEMENTED YET)
-# casync clone foobar:/home/lennart /home/lennart2 (NOT IMPLEMENTED YET)
-# casync clone /home/lennart foobar:/home/lennart2 (NOT IMPLEMENTED YET)
 ```
 
 ## Maintainance
