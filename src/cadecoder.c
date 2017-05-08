@@ -1326,6 +1326,7 @@ static int path_match_component(const char *p, const char *component) {
 static int ca_decoder_do_seek(CaDecoder *d, CaDecoderNode *n) {
         char *child_name;
         const char *p;
+        mode_t mode;
         int r;
 
         if (!d)
@@ -1364,6 +1365,13 @@ static int ca_decoder_do_seek(CaDecoder *d, CaDecoderNode *n) {
                 ca_decoder_enter_state(d, CA_DECODER_PREPARING_SEEK_TO_ENTRY);
 
                 return 1;
+        }
+
+        /* If we are supposed to descend further, but this is not actually a directory, then complain immediately */
+        mode = ca_decoder_node_mode(n);
+        if (!S_ISDIR(mode)) {
+                ca_decoder_enter_state(d, CA_DECODER_NOWHERE);
+                return 0;
         }
 
         n->dirents_invalid = true;
