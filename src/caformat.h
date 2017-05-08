@@ -177,6 +177,7 @@ enum {
                 CA_FORMAT_WITH_32BIT_UIDS|
                 CA_FORMAT_WITH_USER_NAMES|
                 CA_FORMAT_WITH_DEVICE_NODES|
+                CA_FORMAT_WITH_FLAG_SYSTEM|
                 CA_FORMAT_WITH_FLAG_APPEND|
                 CA_FORMAT_WITH_FLAG_IMMUTABLE|
                 CA_FORMAT_WITH_ACL|
