@@ -1,6 +1,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include "caformat.h"
 #include "casync.h"
 #include "util.h"
 
@@ -10,12 +11,20 @@ int main(int argc, char *argv[]) {
         int r, base_fd;
         CaChunkID digest;
         char t[CA_CHUNK_ID_FORMAT_MAX];
+        uint64_t flags;
 
         assert_se(asprintf(&teststore, "/var/tmp/teststore.%" PRIx64, random_u64()) >= 0);
         assert_se(asprintf(&testindex, "/var/tmp/testindex.%" PRIx64, random_u64()) >= 0);
         assert_se(asprintf(&testtree, "/var/tmp/testtree.%" PRIx64, random_u64()) >= 0);
 
         assert_se(s = ca_sync_new_encode());
+
+        flags = CA_FORMAT_WITH_BEST|CA_FORMAT_RESPECT_FLAG_NODUMP;
+
+        if (geteuid() != 0)
+                flags &= ~(CA_FORMAT_WITH_FLAG_IMMUTABLE|CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_USER_NAMES|CA_FORMAT_WITH_DEVICE_NODES|CA_FORMAT_WITH_ACL|CA_FORMAT_WITH_FCAPS);
+
+        assert_se(ca_sync_set_feature_flags(s, flags) >= 0);
 
         base_fd = open(".", O_RDONLY|O_CLOEXEC|O_DIRECTORY);
         assert_se(base_fd >= 0);
