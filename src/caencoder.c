@@ -1420,6 +1420,15 @@ static int ca_encoder_shall_store_child_node(CaEncoder *e) {
         if (!child)
                 return -EUNATCH;
 
+        if (!(e->feature_flags & CA_FORMAT_WITH_SYMLINKS) && S_ISLNK(child->stat.st_mode))
+                return false;
+        if (!(e->feature_flags & CA_FORMAT_WITH_DEVICE_NODES) && (S_ISBLK(child->stat.st_mode) || S_ISCHR(child->stat.st_mode)))
+                return false;
+        if (!(e->feature_flags & CA_FORMAT_WITH_FIFOS) && S_ISFIFO(child->stat.st_mode))
+                return false;
+        if (!(e->feature_flags & CA_FORMAT_WITH_SOCKETS) && S_ISSOCK(child->stat.st_mode))
+                return false;
+
         r = ca_encoder_node_read_chattr(e, child);
         if (r < 0)
                 return r;
