@@ -19,6 +19,7 @@ enum {
         CA_DECODER_SEEK,       /* Please seek */
         CA_DECODER_FOUND,      /* Seek completed successfully */
         CA_DECODER_NOT_FOUND,  /* Seek to file was requested, but file didn't exist */
+        CA_DECODER_SKIP,       /* Please skip some bytes */
 };
 
 CaDecoder *ca_decoder_new(void);
@@ -26,9 +27,11 @@ CaDecoder *ca_decoder_unref(CaDecoder *d);
 
 int ca_decoder_get_feature_flags(CaDecoder *d, uint64_t *ret);
 
+/* Various booleans to configure the mode of operation */
 int ca_decoder_set_punch_holes(CaDecoder *d, bool enabled);
 int ca_decoder_set_reflink(CaDecoder *d, bool enabled);
 int ca_decoder_set_delete(CaDecoder *d, bool enabled);
+int ca_decoder_set_payload(CaDecoder *d, bool enabled);
 
 /* Output: a file descriptor to a directory tree, block device node, or regular file */
 int ca_decoder_set_base_fd(CaDecoder *d, int fd);
@@ -42,11 +45,14 @@ int ca_decoder_set_archive_size(CaDecoder *d, uint64_t size);
 
 int ca_decoder_step(CaDecoder *d);
 
-/* If ca_decoder_step() returned CA_DECODER_REQUEST, which offset it desired now */
+/* If ca_decoder_step() returned CA_DECODER_REQUEST, which offset we are at now */
 int ca_decoder_get_request_offset(CaDecoder *d, uint64_t *offset);
 
-/* If ca_decoder_step() returned CA_DECODER_SEEK, where are we supposed to seek now? */
+/* If ca_decoder_step() returned CA_DECODER_SEEK, where are we supposed to seek now? (returns absolute position) */
 int ca_decoder_get_seek_offset(CaDecoder *d, uint64_t *ret);
+
+/* If ca_decoder_step() returned CA_DECODER_SKIP, how many bytes are we supposed to skip? (returns relative number of bytes) */
+int ca_decoder_get_skip_size(CaDecoder *d, uint64_t *ret);
 
 /* Input: archive stream data */
 int ca_decoder_put_data(CaDecoder *d, const void *p, size_t size, CaOrigin *origin);

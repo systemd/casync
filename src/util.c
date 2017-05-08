@@ -1086,3 +1086,39 @@ void* greedy_realloc0(void **p, size_t *allocated, size_t need, size_t size) {
 
         return q;
 }
+
+int skip_bytes_fd(int fd, uint64_t n_bytes) {
+        void *p;
+        size_t m;
+
+        if (fd < 0)
+                return -EBADF;
+        if (n_bytes == 0)
+                return 0;
+
+        if (lseek(fd, n_bytes, SEEK_CUR) == (off_t) -1) {
+                if (errno != -ESPIPE)
+                        return -errno;
+        } else
+                return 0;
+
+        m = (size_t) MIN(n_bytes, (uint64_t) PIPE_BUF);
+        p = alloca(m);
+
+        for (;;) {
+                ssize_t k;
+
+                k = read(fd, p, m);
+                if (k < 0)
+                        return -errno;
+                if (k == 0)
+                        return -ENXIO;
+
+                n_bytes -= k;
+
+                if (n_bytes == 0)
+                        return 0;
+
+                m = (size_t) MIN(n_bytes, (uint64_t) PIPE_BUF);
+        }
+}

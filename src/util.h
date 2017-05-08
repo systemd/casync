@@ -581,4 +581,6 @@ void* greedy_realloc0(void **p, size_t *allocated, size_t need, size_t size);
             sizeof(type) <= 4 ? 10 :                                    \
             sizeof(type) <= 8 ? 20 : sizeof(int[-2*(sizeof(type) > 8)])))
 
+int skip_bytes_fd(int fd, uint64_t n_bytes);
+
 #endif

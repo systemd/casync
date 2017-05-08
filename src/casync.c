@@ -100,6 +100,7 @@ typedef struct CaSync {
         bool punch_holes:1;
         bool reflink:1;
         bool delete:1;
+        bool payload:1;
 
         CaFileRoot *archive_root;
 } CaSync;
@@ -120,6 +121,8 @@ static CaSync *ca_sync_new(void) {
         s->archive_size = UINT64_MAX;
         s->punch_holes = true;
         s->reflink = true;
+        s->delete = true;
+        s->payload = true;
 
         return s;
 }
@@ -238,6 +241,25 @@ int ca_sync_set_delete(CaSync *s, bool enabled) {
         }
 
         s->delete = enabled;
+
+        return 0;
+}
+
+int ca_sync_set_payload(CaSync *s, bool enabled) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        if (s->decoder) {
+                r = ca_decoder_set_payload(s->decoder, enabled || s->remote_archive);
+                if (r < 0)
+                        return r;
+        }
+
+        s->payload = enabled;
 
         return 0;
 }
@@ -1131,8 +1153,13 @@ static int ca_sync_start(CaSync *s) {
                 r = ca_decoder_set_punch_holes(s->decoder, s->punch_holes);
                 if (r < 0)
                         return r;
-
                 r = ca_decoder_set_reflink(s->decoder, s->reflink);
+                if (r < 0)
+                        return r;
+                r = ca_decoder_set_delete(s->decoder, s->delete);
+                if (r < 0)
+                        return r;
+                r = ca_decoder_set_payload(s->decoder, s->payload || s->remote_archive);
                 if (r < 0)
                         return r;
         }
@@ -1493,7 +1520,16 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                 uint64_t chunk_size;
                 const void *p;
 
-                if (!s->next_chunk_valid) {
+                for (;;) {
+                        if (s->next_chunk_valid) {
+
+                                if (s->chunk_skip < s->next_chunk_size)
+                                        break;
+
+                                s->chunk_skip -= s->next_chunk_size;
+                                s->next_chunk_valid = false;
+                        }
+
                         r = ca_index_read_chunk(s->index, &s->next_chunk, NULL, &s->next_chunk_size);
                         if (r == -EAGAIN) /* Not enough data */
                                 return CA_SYNC_POLL;
@@ -1680,6 +1716,35 @@ static int ca_sync_process_decoder_seek(CaSync *s) {
         return CA_SYNC_STEP;
 }
 
+static int ca_sync_process_decoder_skip(CaSync *s) {
+        uint64_t size;
+        int r;
+
+        assert(s);
+        assert(s->decoder);
+
+        r = ca_decoder_get_skip_size(s->decoder, &size);
+        if (r < 0)
+                return r;
+
+        if (s->index) {
+
+                if (s->chunk_skip + size < s->chunk_skip)
+                        return -EOVERFLOW;
+
+                s->chunk_skip += size;
+
+        } else if (s->archive_fd >= 0) {
+
+                r = skip_bytes_fd(s->archive_fd, size);
+                if (r < 0)
+                        return r;
+        } else
+                return -EOPNOTSUPP;
+
+        return CA_SYNC_STEP;
+}
+
 static int ca_sync_step_decode(CaSync *s) {
         int step, r;
 
@@ -1721,6 +1786,9 @@ static int ca_sync_step_decode(CaSync *s) {
 
         case CA_DECODER_SEEK:
                 return ca_sync_process_decoder_seek(s);
+
+        case CA_DECODER_SKIP:
+                return ca_sync_process_decoder_skip(s);
 
         case CA_DECODER_FOUND:
                 if (s->archive_digest)

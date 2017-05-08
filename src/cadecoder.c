@@ -128,6 +128,7 @@ typedef enum CaDecoderState {
         CA_DECODER_PREPARING_SEEK_TO_GOODBYE_SIZE,
         CA_DECODER_SEEKING_TO_GOODBYE_SIZE,
         CA_DECODER_NOWHERE,
+        CA_DECODER_SKIPPING,
 } CaDecoderState;
 
 struct CaDecoder {
@@ -163,6 +164,8 @@ struct CaDecoder {
         uint64_t seek_offset; /* Where to seek to, if we already know */
         uint64_t seek_end_offset; /* If we are seeking somewhere and know the end of the object we seek into, we store it here*/
 
+        uint64_t skip_bytes; /* How many bytes to skip if we are in CA_DECODER_SKIPPING state */
+
         /* Cached name → UID/GID translation */
         uid_t cached_uid;
         gid_t cached_gid;
@@ -179,6 +182,7 @@ struct CaDecoder {
         bool punch_holes:1;
         bool reflink:1;
         bool delete:1;
+        bool payload:1;
 
         uint64_t n_punch_holes_bytes;
         uint64_t n_reflink_bytes;
@@ -229,6 +233,7 @@ CaDecoder *ca_decoder_new(void) {
         d->punch_holes = true;
         d->reflink = true;
         d->delete = true;
+        d->payload = true;
 
         return d;
 }
@@ -3399,7 +3404,24 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                         return CA_DECODER_FINISHED;
                 }
 
+                /* If the caller doesn't want the payload, and we don't need it either, but know how large it is, then let's skip over it */
+                if (!d->payload && n->size != UINT64_MAX && n->fd < 0) {
+
+                        d->skip_bytes = n->size - d->payload_offset;
+                        ca_decoder_enter_state(d, CA_DECODER_SKIPPING);
+
+                        return CA_DECODER_SKIP;
+                }
+
                 return CA_DECODER_REQUEST;
+
+        case CA_DECODER_SKIPPING:
+
+                d->archive_offset += d->skip_bytes;
+                d->skip_bytes = 0;
+
+                ca_decoder_enter_state(d, CA_DECODER_EOF);
+                return CA_DECODER_FINISHED;
 
         case CA_DECODER_IN_DIRECTORY:
                 assert(S_ISDIR(mode));
@@ -4091,16 +4113,14 @@ int ca_decoder_seek_path(CaDecoder *d, const char *path) {
 }
 
 int ca_decoder_get_seek_offset(CaDecoder *d, uint64_t *ret) {
-        CaDecoderNode *n;
+
+        /* Called by the consumer whenever we issued a CA_DECODER_SEEK event, and informs the caller to which absolute
+         * byte index to seek to. */
 
         if (!d)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
-
-        n = ca_decoder_current_node(d);
-        if (!n)
-                return -EUNATCH;
 
         if (!IN_SET(d->state,
                     CA_DECODER_SEEKING_TO_OFFSET,
@@ -4111,9 +4131,28 @@ int ca_decoder_get_seek_offset(CaDecoder *d, uint64_t *ret) {
                 return -ENODATA;
 
         if (d->seek_offset == UINT64_MAX)
-                return -EUNATCH;
+                return -ENODATA;
 
         *ret = d->seek_offset;
+        return 0;
+}
+
+int ca_decoder_get_skip_size(CaDecoder *d, uint64_t *ret) {
+        /* Called by the consumer whenever we issued a CA_DECODER_SKIP event, and informs the caller how many bytes to
+         * skip in the input stream. */
+
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (d->state != CA_DECODER_SKIPPING)
+                return -ENODATA;
+
+        if (d->skip_bytes == 0)
+                return -ENODATA;
+
+        *ret = d->skip_bytes;
         return 0;
 }
 
@@ -4153,6 +4192,15 @@ int ca_decoder_set_delete(CaDecoder *d, bool enabled) {
                 return -EINVAL;
 
         d->delete = enabled;
+        return 0;
+}
+
+int ca_decoder_set_payload(CaDecoder *d, bool enabled) {
+
+        if (!d)
+                return -EINVAL;
+
+        d->payload = enabled;
         return 0;
 }
 

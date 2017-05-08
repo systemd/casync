@@ -1513,6 +1513,15 @@ static int list(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
+        if (streq(argv[0], "list") && operation != LIST_DIRECTORY) {
+                /* If we shall just list the archive contents we don't need the payload contents, hence let's skip over it */
+                r = ca_sync_set_payload(s, false);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to enable skipping over payload: %s\n", strerror(-r));
+                        goto finish;
+                }
+        }
+
         if (seek_path) {
                 r = ca_sync_seek_path(s, seek_path);
                 if (r < 0) {
