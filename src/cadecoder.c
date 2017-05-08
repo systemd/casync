@@ -186,6 +186,9 @@ struct CaDecoder {
 
         uint64_t n_punch_holes_bytes;
         uint64_t n_reflink_bytes;
+
+        uid_t uid_shift;
+        uid_t uid_range; /* uid_range == 0 means "full range" */
 };
 
 static inline bool CA_DECODER_IS_SEEKING(CaDecoder *d) {
@@ -2448,7 +2451,33 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
         return 0;
 }
 
+static uid_t ca_decoder_shift_uid(CaDecoder *d, uid_t uid) {
+        uid_t result;
+
+        assert(d);
+
+        if (!uid_is_valid(uid))
+                return UID_INVALID;
+
+        if (d->uid_range != 0)
+                result = uid % d->uid_range;
+        else
+                result = uid;
+
+        if (d->uid_shift + result < d->uid_shift)
+                return UID_INVALID;
+
+        result += d->uid_shift;
+
+        return result;
+}
+
+static gid_t ca_decoder_shift_gid(CaDecoder *d, gid_t gid) {
+        return (gid_t) ca_decoder_shift_uid(d, (uid_t) gid);
+}
+
 static int name_to_uid(CaDecoder *d, const char *name, uid_t *ret) {
+        uid_t parsed_uid;
         long bufsize;
         int r;
 
@@ -2461,8 +2490,16 @@ static int name_to_uid(CaDecoder *d, const char *name, uid_t *ret) {
                 return 1;
         }
 
-        if (parse_uid(name, ret) >= 0)
+        if (parse_uid(name, &parsed_uid) >= 0) {
+                uid_t shifted_uid;
+
+                shifted_uid = ca_decoder_shift_uid(d, parsed_uid);
+                if (!uid_is_valid(shifted_uid))
+                        return -EINVAL;
+
+                *ret = shifted_uid;
                 return 1;
+        }
 
         bufsize = sysconf(_SC_GETPW_R_SIZE_MAX);
         if (bufsize <= 0)
@@ -2496,6 +2533,7 @@ static int name_to_uid(CaDecoder *d, const char *name, uid_t *ret) {
 }
 
 static int name_to_gid(CaDecoder *d, const char *name, gid_t *ret) {
+        gid_t parsed_gid;
         long bufsize;
         int r;
 
@@ -2508,8 +2546,16 @@ static int name_to_gid(CaDecoder *d, const char *name, gid_t *ret) {
                 return 1;
         }
 
-        if (parse_gid(name, ret) >= 0)
+        if (parse_gid(name, &parsed_gid) >= 0) {
+                uid_t shifted_gid;
+
+                shifted_gid = ca_decoder_shift_gid(d, parsed_gid);
+                if (!gid_is_valid(shifted_gid))
+                        return -EINVAL;
+
+                *ret = shifted_gid;
                 return 1;
+        }
 
         bufsize = sysconf(_SC_GETGR_R_SIZE_MAX);
         if (bufsize <= 0)
@@ -2588,8 +2634,13 @@ static int ca_decoder_acl_add_user_entries(CaDecoder *d, acl_t *acl, CaDecoderAC
                         r = name_to_uid(d, i->user.name, &uid);
                         if (r < 0)
                                 return r;
-                } else
-                        uid = read_le64(&i->user.uid);
+                } else {
+                        uid = (uid_t) read_le64(&i->user.uid);
+
+                        uid = ca_decoder_shift_uid(d, uid);
+                        if (!uid_is_valid(uid))
+                                return -EINVAL;
+                }
 
                 r = acl_add_entry_full(acl, ACL_USER, &uid, read_le64(&i->user.permissions));
                 if (r < 0)
@@ -2613,8 +2664,13 @@ static int ca_decoder_acl_add_group_entries(CaDecoder *d, acl_t* acl, CaDecoderA
                         r = name_to_gid(d, i->group.name, &gid);
                         if (r < 0)
                                 return r;
-                } else
-                        gid = read_le64(&i->group.gid);
+                } else {
+                        gid = (gid_t) read_le64(&i->group.gid);
+
+                        gid = ca_decoder_shift_gid(d, gid);
+                        if (!gid_is_valid(gid))
+                                return -EINVAL;
+                }
 
                 r = acl_add_entry_full(acl, ACL_GROUP, &gid, read_le64(&i->group.permissions));
                 if (r < 0)
@@ -2986,15 +3042,25 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         r = name_to_uid(d, child->user_name, &uid);
                         if (r < 0)
                                 return r;
-                } else
-                        uid = read_le64(&child->entry->uid);
+                } else {
+                        uid = (uid_t) read_le64(&child->entry->uid);
+
+                        uid = ca_decoder_shift_uid(d, uid);
+                        if (!uid_is_valid(uid))
+                                return -EINVAL;
+                }
 
                 if (child->group_name) {
                         r = name_to_gid(d, child->group_name, &gid);
                         if (r < 0)
                                 return r;
-                } else
-                        gid = read_le64(&child->entry->gid);
+                } else {
+                        gid = (gid_t) read_le64(&child->entry->gid);
+
+                        gid = ca_decoder_shift_gid(d, gid);
+                        if (!gid_is_valid(gid))
+                                return -EINVAL;
+                }
 
                 if (st.st_uid != uid || st.st_gid != gid) {
 
@@ -3887,6 +3953,7 @@ int ca_decoder_current_size(CaDecoder *d, uint64_t *ret) {
 }
 
 int ca_decoder_current_uid(CaDecoder *d, uid_t *ret) {
+        uid_t uid, shifted_uid;
         CaDecoderNode *n;
 
         if (!d)
@@ -3908,11 +3975,17 @@ int ca_decoder_current_uid(CaDecoder *d, uid_t *ret) {
         if (!n->entry)
                 return -ENODATA;
 
-        *ret = (uid_t) read_le64(&n->entry->uid);
+        uid = (uid_t) read_le64(&n->entry->uid);
+        shifted_uid = ca_decoder_shift_uid(d, uid);
+        if (!uid_is_valid(shifted_uid))
+                return -EINVAL;
+
+        *ret = shifted_uid;
         return 0;
 }
 
 int ca_decoder_current_gid(CaDecoder *d, gid_t *ret) {
+        gid_t gid, shifted_gid;
         CaDecoderNode *n;
 
         if (!d)
@@ -3934,7 +4007,12 @@ int ca_decoder_current_gid(CaDecoder *d, gid_t *ret) {
         if (!n->entry)
                 return -ENODATA;
 
-        *ret = (uid_t) read_le64(&n->entry->gid);
+        gid = (gid_t) read_le64(&n->entry->gid);
+        shifted_gid = ca_decoder_shift_gid(d, gid);
+        if (!gid_is_valid(shifted_gid))
+                return -EINVAL;
+
+        *ret = shifted_gid;
         return 0;
 }
 
@@ -4263,5 +4341,21 @@ int ca_decoder_get_reflink_bytes(CaDecoder *d, uint64_t *ret) {
                 return -ENODATA;
 
         *ret = d->n_reflink_bytes;
+        return 0;
+}
+
+int ca_decoder_set_uid_shift(CaDecoder *d, uid_t u) {
+        if (!d)
+                return -EINVAL;
+
+        d->uid_shift = u;
+        return 0;
+}
+
+int ca_decoder_set_uid_range(CaDecoder *d, uid_t u) {
+        if (!d)
+                return -EINVAL;
+
+        d->uid_range = u;
         return 0;
 }

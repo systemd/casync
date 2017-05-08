@@ -35,6 +35,9 @@ int ca_sync_set_reflink(CaSync *s, bool enabled);
 int ca_sync_set_delete(CaSync *s, bool enabled);
 int ca_sync_set_payload(CaSync *s, bool enabled);
 
+int ca_sync_set_uid_shift(CaSync *s, uid_t uid);
+int ca_sync_set_uid_range(CaSync *s, uid_t uid);
+
 /* Mode mask to use for created archive or index files */
 int ca_sync_set_make_mode(CaSync *sync, mode_t mode);
 

@@ -42,6 +42,8 @@ static size_t arg_chunk_size_avg = 0;
 static uint64_t arg_rate_limit_bps = UINT64_MAX;
 static uint64_t arg_with = 0;
 static uint64_t arg_without = 0;
+static uid_t arg_uid_shift = 0, arg_uid_range = 0x10000U;
+static bool arg_uid_shift_apply = false;
 
 static void help(void) {
         printf("%1$s [OPTIONS...] make [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
@@ -62,7 +64,9 @@ static void help(void) {
                "     --delete=no             Don't delete existing files not listed in archive after extraction\n"
                "     --punch-holes=no        Don't create sparse files\n"
                "     --reflink=no            Don't create reflinks from seeds\n"
-               "     --seed-output=no        Don't implicitly add pre-existing output as seed\n\n"
+               "     --seed-output=no        Don't implicitly add pre-existing output as seed\n"
+               "     --uid-shift=yes|SHIFT   Shift UIDs/GIDs\n"
+               "     --uid-range=RANGE       Restrict UIDs/GIDs to range\n\n"
                "Input/output selector:\n"
                "     --what=archive          Operate on archive file\n"
                "     --what=archive-index    Operate on archive index file\n"
@@ -127,6 +131,8 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_REFLINK,
                 ARG_SEED_OUTPUT,
                 ARG_DELETE,
+                ARG_UID_SHIFT,
+                ARG_UID_RANGE,
         };
 
         static const struct option options[] = {
@@ -145,6 +151,8 @@ static int parse_argv(int argc, char *argv[]) {
                 { "punch-holes",    required_argument, NULL, ARG_PUNCH_HOLES    },
                 { "reflink",        required_argument, NULL, ARG_REFLINK        },
                 { "seed-output",    required_argument, NULL, ARG_SEED_OUTPUT    },
+                { "uid-shift",      required_argument, NULL, ARG_UID_SHIFT,     },
+                { "uid-range",      required_argument, NULL, ARG_UID_RANGE,     },
                 {}
         };
 
@@ -315,6 +323,54 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_seed_output = r;
                         break;
 
+                case ARG_UID_SHIFT: {
+                        uid_t uid;
+
+                        r = parse_uid(optarg, &uid);
+                        if (r < 0) {
+                                r = parse_boolean(optarg);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to parse --uid-shift= parameter: %s\n", optarg);
+                                        return r;
+                                }
+
+                                arg_uid_shift_apply = r;
+                        } else {
+                                arg_uid_shift = uid;
+                                arg_uid_shift_apply = true;
+                        }
+
+                        break;
+                }
+
+                case ARG_UID_RANGE: {
+                        uint64_t u;
+
+                        /* The valid values for the range are 1..0x100000000. However, we store this in a 32bit uid_t,
+                         * which requires us to map 0x100000000 to 0. */
+                        r = safe_atou64(optarg, &u);
+                        if (r < 0 || u == 0 || u > UINT64_C(0x100000000)) {
+                                r = parse_boolean(optarg);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to parse --uid-range= parameter: %s\n", optarg);
+                                        return r;
+                                }
+
+                                arg_uid_shift_apply = r;
+
+                        } else {
+
+                                if (u == UINT64_C(0x100000000))
+                                        arg_uid_range = 0;
+                                else
+                                        arg_uid_range = (uid_t) u;
+
+                                arg_uid_shift_apply = true;
+                        }
+
+                        break;
+                }
+
                 case '?':
                         return -EINVAL;
 
@@ -424,12 +480,23 @@ static int load_feature_flags(CaSync *s) {
                 flags |= CA_FORMAT_RESPECT_FLAG_NODUMP;
 
         r = ca_sync_set_feature_flags(s, flags);
-        if (r == -ENOTTY) /* sync object does not have an encoder */
-                return 0;
-
-        if (r < 0) {
+        if (r < 0 && r != -ENOTTY) { /* sync object does not have an encoder */
                 fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
                 return r;
+        }
+
+        if (arg_uid_shift_apply) {
+                r = ca_sync_set_uid_shift(s, arg_uid_shift);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set UID shift: %s\n", strerror(-r));
+                        return r;
+                }
+
+                r = ca_sync_set_uid_range(s, arg_uid_range);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set UID range: %s\n", strerror(-r));
+                        return r;
+                }
         }
 
         return 0;

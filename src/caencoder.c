@@ -152,6 +152,9 @@ struct CaEncoder {
 
         char *cached_user_name;
         char *cached_group_name;
+
+        uid_t uid_shift;
+        uid_t uid_range; /* uid_range == 0 means "full range" */
 };
 
 CaEncoder *ca_encoder_new(void) {
@@ -792,12 +795,39 @@ finish:
         return r;
 }
 
+static uid_t ca_encoder_shift_uid(CaEncoder *e, uid_t uid) {
+        uid_t result;
+
+        assert(e);
+
+        if (!uid_is_valid(uid))
+                return UID_INVALID;
+
+        if (uid < e->uid_shift)
+                return UID_INVALID;
+
+        result = uid - e->uid_shift;
+
+        if (e->uid_range != 0)
+                result %= e->uid_range;
+
+        return result;
+}
+
+static gid_t ca_encoder_shift_gid(CaEncoder *e, gid_t gid) {
+        /* Let's rely on the fact that UIDs and GIDs have identical numeric behaviour */
+        return (gid_t) ca_encoder_shift_uid(e, (uid_t) gid);
+}
+
 static int uid_to_name(CaEncoder *e, uid_t uid, char **ret) {
         long bufsize;
         int r;
 
         assert(e);
         assert(ret);
+
+        if (!uid_is_valid(uid))
+                return -EINVAL;
 
         if (uid == 0) {
                 /* Don't store name for root, it's clear anyway */
@@ -829,6 +859,7 @@ static int uid_to_name(CaEncoder *e, uid_t uid, char **ret) {
                 }
                 free(buf);
                 if (r != ERANGE) {
+                        uid_t shifted_uid;
                         /* User name cannot be retrieved */
 
                         if (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) {
@@ -836,7 +867,11 @@ static int uid_to_name(CaEncoder *e, uid_t uid, char **ret) {
                                 return 0;
                         }
 
-                        if (asprintf(ret, UID_FMT, uid) < 0)
+                        shifted_uid = ca_encoder_shift_uid(e, uid);
+                        if (!uid_is_valid(shifted_uid))
+                                return -EINVAL;
+
+                        if (asprintf(ret, UID_FMT, shifted_uid) < 0)
                                 return -ENOMEM;
 
                         return 1;
@@ -883,13 +918,18 @@ static int gid_to_name(CaEncoder *e, gid_t gid, char **ret) {
 
                 free(buf);
                 if (r != ERANGE) {
+                        gid_t shifted_gid;
 
                         if (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) {
                                 *ret = NULL;
                                 return 0;
                         }
 
-                        if (asprintf(ret, GID_FMT, gid) < 0)
+                        shifted_gid = ca_encoder_shift_gid(e, gid);
+                        if (!gid_is_valid(shifted_gid))
+                                return -EINVAL;
+
+                        if (asprintf(ret, GID_FMT, shifted_gid) < 0)
                                 return -ENOMEM;
 
                         return 1;
@@ -1031,7 +1071,7 @@ static int ca_encoder_node_process_acl(
                         break;
 
                 case ACL_USER: {
-                        uid_t uid;
+                        uid_t uid, shifted_uid;
                         char *name;
 
                         q = acl_get_qualifier(entry);
@@ -1044,7 +1084,11 @@ static int ca_encoder_node_process_acl(
                         if (!uid_is_valid(uid))
                                 return -EINVAL;
 
-                        if ((e->feature_flags & CA_FORMAT_WITH_16BIT_UIDS) && uid > UINT16_MAX)
+                        shifted_uid = ca_encoder_shift_uid(e, uid);
+                        if (!uid_is_valid(shifted_uid))
+                                return -EINVAL;
+
+                        if ((e->feature_flags & CA_FORMAT_WITH_16BIT_UIDS) && shifted_uid > UINT16_MAX)
                                 return -EPROTONOSUPPORT;
 
                         if (e->feature_flags & CA_FORMAT_WITH_USER_NAMES) {
@@ -1062,13 +1106,13 @@ static int ca_encoder_node_process_acl(
                         (*user_entries)[(*n_user_entries)++] = (CaEncoderACLEntry) {
                                 .name = name,
                                 .permissions = permissions,
-                                .uid = (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) ? uid : 0,
+                                .uid = (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) ? shifted_uid : 0,
                         };
                         break;
                 }
 
                 case ACL_GROUP: {
-                        gid_t gid;
+                        gid_t gid, shifted_gid;
                         char *name;
 
                         q = acl_get_qualifier(entry);
@@ -1081,7 +1125,11 @@ static int ca_encoder_node_process_acl(
                         if (!gid_is_valid(gid))
                                 return -EINVAL;
 
-                        if ((e->feature_flags & CA_FORMAT_WITH_16BIT_UIDS) && gid > UINT16_MAX)
+                        shifted_gid = ca_encoder_shift_gid(e, gid);
+                        if (!gid_is_valid(shifted_gid))
+                                return -EINVAL;
+
+                        if ((e->feature_flags & CA_FORMAT_WITH_16BIT_UIDS) && shifted_gid > UINT16_MAX)
                                 return -EPROTONOSUPPORT;
 
                         if (e->feature_flags & CA_FORMAT_WITH_USER_NAMES) {
@@ -1099,7 +1147,7 @@ static int ca_encoder_node_process_acl(
                         (*group_entries)[(*n_group_entries)++] = (CaEncoderACLEntry) {
                                 .name = name,
                                 .permissions = permissions,
-                                .gid = (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) ? gid : 0,
+                                .gid = (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) ? shifted_gid : 0,
                         };
                         break;
                 }
@@ -1953,18 +2001,24 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         if (r < 0)
                 return r;
 
-        if (!uid_is_valid(n->stat.st_uid) ||
-            !gid_is_valid(n->stat.st_gid))
-                return -EINVAL;
-
-        if ((e->feature_flags & CA_FORMAT_WITH_16BIT_UIDS) &&
-            (n->stat.st_uid > UINT16_MAX ||
-             n->stat.st_gid > UINT16_MAX))
-                return -EPROTONOSUPPORT;
-
         if (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) {
-                uid = n->stat.st_uid;
-                gid = n->stat.st_gid;
+                uid_t shifted_uid;
+                gid_t shifted_gid;
+
+                shifted_uid = ca_encoder_shift_uid(e, n->stat.st_uid);
+                if (!uid_is_valid(shifted_uid))
+                        return -EINVAL;
+
+                shifted_gid = ca_encoder_shift_gid(e, n->stat.st_gid);
+                if (!gid_is_valid(shifted_gid))
+                        return -EINVAL;
+
+                if ((e->feature_flags & CA_FORMAT_WITH_16BIT_UIDS) &&
+                    (shifted_uid > UINT16_MAX || shifted_gid > UINT16_MAX))
+                        return -EPROTONOSUPPORT;
+
+                uid = shifted_uid;
+                gid = shifted_gid;
         } else
                 uid = gid = 0;
 
@@ -2503,6 +2557,7 @@ int ca_encoder_current_size(CaEncoder *e, uint64_t *ret) {
 
 int ca_encoder_current_uid(CaEncoder *e, uid_t *ret) {
         CaEncoderNode *n;
+        uid_t shifted_uid;
 
         if (!e)
                 return -EINVAL;
@@ -2519,12 +2574,17 @@ int ca_encoder_current_uid(CaEncoder *e, uid_t *ret) {
                         return -EUNATCH;
         }
 
-        *ret = n->stat.st_uid;
+        shifted_uid = ca_encoder_shift_uid(e, n->stat.st_uid);
+        if (!uid_is_valid(shifted_uid))
+                return -EINVAL;
+
+        *ret = shifted_uid;
         return 0;
 }
 
 int ca_encoder_current_gid(CaEncoder *e, gid_t *ret) {
         CaEncoderNode *n;
+        gid_t shifted_gid;
 
         if (!e)
                 return -EINVAL;
@@ -2541,7 +2601,11 @@ int ca_encoder_current_gid(CaEncoder *e, gid_t *ret) {
                         return -EUNATCH;
         }
 
-        *ret = n->stat.st_gid;
+        shifted_gid = ca_encoder_shift_gid(e, n->stat.st_gid);
+        if (!gid_is_valid(shifted_gid))
+                return -EINVAL;
+
+        *ret = shifted_gid;
         return 0;
 }
 
@@ -2954,5 +3018,21 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                 return -EINVAL;
         }
 
+        return 0;
+}
+
+int ca_encoder_set_uid_shift(CaEncoder *e, uid_t u) {
+        if (!e)
+                return -EINVAL;
+
+        e->uid_shift = u;
+        return 0;
+}
+
+int ca_encoder_set_uid_range(CaEncoder *e, uid_t u) {
+        if (!e)
+                return -EINVAL;
+
+        e->uid_range = u;
         return 0;
 }

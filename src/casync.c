@@ -103,6 +103,9 @@ typedef struct CaSync {
         bool payload:1;
 
         CaFileRoot *archive_root;
+
+        uid_t uid_shift;
+        uid_t uid_range; /* uid_range == 0 means "full range" */
 } CaSync;
 
 static CaSync *ca_sync_new(void) {
@@ -261,6 +264,50 @@ int ca_sync_set_payload(CaSync *s, bool enabled) {
 
         s->payload = enabled;
 
+        return 0;
+}
+
+int ca_sync_set_uid_shift(CaSync *s, uid_t u) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+
+        if (s->decoder) {
+                r = ca_decoder_set_uid_shift(s->decoder, u);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->encoder) {
+                r = ca_encoder_set_uid_shift(s->encoder, u);
+                if (r < 0)
+                        return r;
+        }
+
+        s->uid_shift = u;
+        return 0;
+}
+
+int ca_sync_set_uid_range(CaSync *s, uid_t u) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+
+        if (s->decoder) {
+                r = ca_decoder_set_uid_range(s->decoder, u);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->encoder) {
+                r = ca_encoder_set_uid_range(s->encoder, u);
+                if (r < 0)
+                        return r;
+        }
+
+        s->uid_range = u;
         return 0;
 }
 
@@ -1048,6 +1095,13 @@ static int ca_sync_start(CaSync *s) {
                 }
 
                 s->base_fd = -1;
+
+                r = ca_encoder_set_uid_shift(s->encoder, s->uid_shift);
+                if (r < 0)
+                        return r;
+                r = ca_encoder_set_uid_range(s->encoder, s->uid_range);
+                if (r < 0)
+                        return r;
         }
 
         if (s->direction == CA_SYNC_DECODE && !s->decoder) {
@@ -1160,6 +1214,12 @@ static int ca_sync_start(CaSync *s) {
                 if (r < 0)
                         return r;
                 r = ca_decoder_set_payload(s->decoder, s->payload || s->remote_archive);
+                if (r < 0)
+                        return r;
+                r = ca_decoder_set_uid_shift(s->decoder, s->uid_shift);
+                if (r < 0)
+                        return r;
+                r = ca_decoder_set_uid_range(s->decoder, s->uid_range);
                 if (r < 0)
                         return r;
         }
