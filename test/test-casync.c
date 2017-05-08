@@ -22,7 +22,7 @@ int main(int argc, char *argv[]) {
         flags = CA_FORMAT_WITH_BEST|CA_FORMAT_RESPECT_FLAG_NODUMP;
 
         if (geteuid() != 0)
-                flags &= ~(CA_FORMAT_WITH_FLAG_IMMUTABLE|CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_USER_NAMES|CA_FORMAT_WITH_DEVICE_NODES|CA_FORMAT_WITH_ACL|CA_FORMAT_WITH_FCAPS);
+                flags &= ~CA_FORMAT_WITH_PRIVILEGED;
 
         assert_se(ca_sync_set_feature_flags(s, flags) >= 0);
 

@@ -97,12 +97,14 @@ static const struct {
         { "flag-nocomp",      CA_FORMAT_WITH_FLAG_NOCOMP      },
         { "flag-projinherit", CA_FORMAT_WITH_FLAG_PROJINHERIT },
         { "xattrs",           CA_FORMAT_WITH_XATTRS           },
-        { "fcaps",            CA_FORMAT_WITH_FCAPS            },
         { "acl",              CA_FORMAT_WITH_ACL              },
+        { "fcaps",            CA_FORMAT_WITH_FCAPS            },
         { "best",             CA_FORMAT_WITH_BEST             },
         { "unix",             CA_FORMAT_WITH_UNIX             },
         { "fat",              CA_FORMAT_WITH_FAT              },
         { "chattr",           CA_FORMAT_WITH_CHATTR           },
+        { "fat-attrs",        CA_FORMAT_WITH_FAT_ATTRS        },
+        { "privileged",       CA_FORMAT_WITH_PRIVILEGED       },
 };
 
 int ca_with_feature_flags_parse_one(const char *name, uint64_t *ret) {

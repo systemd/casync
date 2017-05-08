@@ -172,6 +172,16 @@ enum {
                 CA_FORMAT_WITH_FLAG_SYSTEM|
                 CA_FORMAT_WITH_FLAG_ARCHIVE,
 
+        CA_FORMAT_WITH_PRIVILEGED = /* All bits that may only be restored with privileges */
+                CA_FORMAT_WITH_16BIT_UIDS|
+                CA_FORMAT_WITH_32BIT_UIDS|
+                CA_FORMAT_WITH_USER_NAMES|
+                CA_FORMAT_WITH_DEVICE_NODES|
+                CA_FORMAT_WITH_FLAG_APPEND|
+                CA_FORMAT_WITH_FLAG_IMMUTABLE|
+                CA_FORMAT_WITH_ACL|
+                CA_FORMAT_WITH_FCAPS,
+
         CA_FORMAT_FEATURE_FLAGS_MAX        = 0xFFFFFFFF | CA_FORMAT_RESPECT_FLAG_NODUMP,
 };
 

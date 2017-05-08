@@ -3,7 +3,7 @@
 if [ `id -u` == 0 ] ; then
     PARAMS=""
 else
-    PARAMS="--without=16bit-uids --without=32bit-uids --without=user-names --without=device-nodes --without=acl --without=fcaps"
+    PARAMS="--without=privileged"
 fi
 
 CASYNC_PROTOCOL_PATH=@top_builddir@
