@@ -1002,7 +1002,7 @@ static int ca_encoder_node_process_acl(
              r = acl_get_entry(acl, ACL_NEXT_ENTRY, &entry)) {
 
                 uint64_t permissions;
-                const void *q;
+                void *q;
                 acl_tag_t tag;
 
                 if (acl_get_tag_type(entry, &tag) < 0)
@@ -1039,6 +1039,7 @@ static int ca_encoder_node_process_acl(
                                 return -errno;
 
                         uid = *(uid_t*) q;
+                        acl_free(q);
 
                         if (!uid_is_valid(uid))
                                 return -EINVAL;
@@ -1075,6 +1076,7 @@ static int ca_encoder_node_process_acl(
                                 return -errno;
 
                         gid = *(gid_t*) q;
+                        acl_free(q);
 
                         if (!gid_is_valid(gid))
                                 return -EINVAL;
