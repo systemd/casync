@@ -3623,12 +3623,16 @@ int ca_decoder_step(CaDecoder *d) {
 }
 
 int ca_decoder_get_request_offset(CaDecoder *d, uint64_t *ret) {
+        uint64_t sum;
+
         if (!d)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
 
-        *ret = d->archive_offset;
+        sum = d->archive_offset + realloc_buffer_size(&d->buffer);
+
+        *ret = sum;
         return 0;
 }
 
