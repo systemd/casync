@@ -271,6 +271,7 @@ static void ca_decoder_node_free(CaDecoderNode *n) {
         n->name = mfree(n->name);
         n->temporary_name = mfree(n->temporary_name);
         n->entry = mfree(n->entry);
+        n->goodbye = mfree(n->goodbye);
         n->user_name = mfree(n->user_name);
         n->group_name = mfree(n->group_name);
         n->symlink_target = mfree(n->symlink_target);
