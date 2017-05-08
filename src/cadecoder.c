@@ -3250,8 +3250,34 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 /* Move the final result into place. Note that the chattr() file attributes we only apply after this,
                  * as they might make prohibit us from renaming the file (consider the "immutable" flag) */
 
-                if (renameat(dir_fd, child->temporary_name, dir_fd, child->name) < 0)
-                        return -errno;
+                if (renameat(dir_fd, child->temporary_name, dir_fd, child->name) < 0) {
+
+                        if (!IN_SET(errno, ENOTDIR, EISDIR))
+                                return -errno;
+
+                        /* The destination exists already, and we couldn't rename the file overriding it. This most
+                         * likely happened because we tried to move a directory over a regular file or vice
+                         * versa. Let's now try to swap the temporary file and the destination. If that works, we can
+                         * remove the temporary file, and expose atomic behaviour to the outside. */
+
+                        if (renameat2(dir_fd, child->temporary_name, dir_fd, child->name, RENAME_EXCHANGE) < 0) {
+
+                                /* If that didn't work (kernel too old?), then let's remove the destination first, and
+                                 * then try again. Of course in this mode we lose atomicity, but it's the best we can
+                                 * do */
+
+                                (void) rm_rf_at(dir_fd, child->name, REMOVE_ROOT|REMOVE_PHYSICAL);
+
+                                if (renameat(dir_fd, child->temporary_name, dir_fd, child->name) < 0)
+                                        return -errno;
+                        } else {
+                                /* The exchange worked! In that case the temporary name is now the old version, let's remove it */
+
+                                r = rm_rf_at(dir_fd, child->temporary_name, REMOVE_ROOT|REMOVE_PHYSICAL);
+                                if (r < 0)
+                                        return r;
+                        }
+                }
 
                 child->temporary_name = mfree(child->temporary_name);
                 name = child->name;
