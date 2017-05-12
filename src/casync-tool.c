@@ -1696,7 +1696,7 @@ static int list(int argc, char *argv[]) {
 
                                 r = mtree_escape(path, &escaped);
                                 if (r < 0) {
-                                        free(escaped);
+                                        free(path);
                                         r = log_oom();
                                         goto finish;
                                 }
