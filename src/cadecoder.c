@@ -121,6 +121,8 @@ typedef enum CaDecoderState {
         /* As the result of ca_decoder_seek_path() we'll traverse through these eight states ... */
         CA_DECODER_PREPARING_SEEK_TO_FILENAME,
         CA_DECODER_SEEKING_TO_FILENAME,
+        CA_DECODER_PREPARING_SEEK_TO_NEXT_SIBLING,
+        CA_DECODER_SEEKING_TO_NEXT_SIBLING,
         CA_DECODER_PREPARING_SEEK_TO_ENTRY,
         CA_DECODER_SEEKING_TO_ENTRY,
         CA_DECODER_PREPARING_SEEK_TO_GOODBYE,
@@ -160,6 +162,7 @@ struct CaDecoder {
         /* If we are seeking, the path we are seeking to */
         char *seek_path; /* full */
         const char *seek_subpath; /* the subpath left to seek */
+        bool seek_next_sibling; /* if true then we'll seek to the entry one after the specified path */
         uint64_t seek_idx; /* Current counter of filenames with the same hash value */
         uint64_t seek_offset; /* Where to seek to, if we already know */
         uint64_t seek_end_offset; /* If we are seeking somewhere and know the end of the object we seek into, we store it here*/
@@ -198,6 +201,8 @@ static inline bool CA_DECODER_IS_SEEKING(CaDecoder *d) {
                       CA_DECODER_SEEKING_TO_OFFSET,
                       CA_DECODER_PREPARING_SEEK_TO_FILENAME,
                       CA_DECODER_SEEKING_TO_FILENAME,
+                      CA_DECODER_PREPARING_SEEK_TO_NEXT_SIBLING,
+                      CA_DECODER_SEEKING_TO_NEXT_SIBLING,
                       CA_DECODER_PREPARING_SEEK_TO_ENTRY,
                       CA_DECODER_SEEKING_TO_ENTRY,
                       CA_DECODER_PREPARING_SEEK_TO_GOODBYE,
@@ -308,6 +313,7 @@ static void ca_decoder_node_free(CaDecoderNode *n) {
 
         n->dirents = strv_free(n->dirents);
         n->n_dirents = n->n_dirents_allocated = 0;
+        n->dirents_invalid = false;
 }
 
 static void ca_decoder_flush_nodes(CaDecoder *d, size_t leave) {
@@ -1334,6 +1340,8 @@ static int ca_decoder_do_seek(CaDecoder *d, CaDecoderNode *n) {
 
         if (!d->seek_subpath)
                 return -EUNATCH;
+        if (n->entry_offset == UINT64_MAX)
+                return -EUNATCH;
 
         /* Seeking works like this: depending on how much information we have:
          *
@@ -1352,27 +1360,44 @@ static int ca_decoder_do_seek(CaDecoder *d, CaDecoderNode *n) {
         if (r < 0)
                 return r;
         if (r == 0) {
-                /* We are already at the goal? If so, let's seek to the beginning of the entry */
+                if (d->seek_next_sibling) {
 
-                if (n->entry_offset == UINT64_MAX)
-                        return -EUNATCH;
+                        /* We are at the entry whose next sibling we shall seek to? If so, do so */
 
-                d->seek_offset = n->entry_offset;
-                d->seek_end_offset = n->end_offset;
+                        if (n->end_offset == UINT64_MAX)
+                                return -EUNATCH;
 
-                ca_decoder_enter_state(d, CA_DECODER_PREPARING_SEEK_TO_ENTRY);
+                        r = ca_decoder_leave_child(d);
+                        if (r == 0) {
+                                /* We are at the top already? */
+                                ca_decoder_enter_state(d, CA_DECODER_NOWHERE);
+                                return 0;
+                        }
+
+                        d->seek_offset = n->end_offset;
+                        d->seek_end_offset = UINT64_MAX;
+                        ca_decoder_enter_state(d, CA_DECODER_PREPARING_SEEK_TO_NEXT_SIBLING);
+
+                } else {
+                        /* We are already at the goal? If so, let's seek to the beginning of the entry */
+
+                        d->seek_offset = n->entry_offset;
+                        d->seek_end_offset = n->end_offset;
+                        ca_decoder_enter_state(d, CA_DECODER_PREPARING_SEEK_TO_ENTRY);
+                }
 
                 return 1;
-        }
+        } else {
 
-        /* If we are supposed to descend further, but this is not actually a directory, then complain immediately */
-        mode = ca_decoder_node_mode(n);
-        if (!S_ISDIR(mode)) {
-                ca_decoder_enter_state(d, CA_DECODER_NOWHERE);
-                return 0;
-        }
+                /* If we are supposed to descend further, but this is not actually a directory, then complain immediately */
+                mode = ca_decoder_node_mode(n);
+                if (!S_ISDIR(mode)) {
+                        ca_decoder_enter_state(d, CA_DECODER_NOWHERE);
+                        return 0;
+                }
 
-        n->dirents_invalid = true;
+                n->dirents_invalid = true;
+        }
 
         if (n->goodbye) {
                 const CaFormatGoodbyeItem *item;
@@ -2071,6 +2096,7 @@ static void ca_decoder_reset_seek(CaDecoder *d) {
         d->seek_idx = 0;
         d->seek_offset = UINT64_MAX;
         d->seek_end_offset = UINT64_MAX;
+        d->seek_next_sibling = false;
 }
 
 static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
@@ -2082,7 +2108,11 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
         int r;
 
         assert(d);
-        assert(IN_SET(d->state, CA_DECODER_IN_DIRECTORY, CA_DECODER_SEEKING_TO_FILENAME, CA_DECODER_SEEKING_TO_GOODBYE));
+        assert(IN_SET(d->state,
+                      CA_DECODER_IN_DIRECTORY,
+                      CA_DECODER_SEEKING_TO_FILENAME,
+                      CA_DECODER_SEEKING_TO_NEXT_SIBLING,
+                      CA_DECODER_SEEKING_TO_GOODBYE));
 
         sz = realloc_buffer_size(&d->buffer);
         if (sz < sizeof(CaFormatHeader))
@@ -2104,7 +2134,10 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
                 bool seek_continues = false, arrived = false;
                 uint64_t end_offset = UINT64_MAX;
 
-                if (!IN_SET(d->state, CA_DECODER_IN_DIRECTORY, CA_DECODER_SEEKING_TO_FILENAME))
+                if (!IN_SET(d->state,
+                            CA_DECODER_IN_DIRECTORY,
+                            CA_DECODER_SEEKING_TO_FILENAME,
+                            CA_DECODER_SEEKING_TO_NEXT_SIBLING))
                         return -EBADMSG;
 
                 if (l < offsetof(CaFormatFilename, name) + 1)
@@ -2120,7 +2153,29 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
                 if (!filename)
                         return -EBADMSG;
 
-                if (d->state == CA_DECODER_SEEKING_TO_FILENAME) {
+                switch (d->state) {
+
+                case CA_DECODER_IN_DIRECTORY:
+
+                        if (d->delete && !n->dirents_invalid) {
+                                char *nd;
+
+                                nd = strdup(filename->name);
+                                if (!nd)
+                                        return -ENOMEM;
+
+                                if (!GREEDY_REALLOC(n->dirents, n->n_dirents_allocated, n->n_dirents + 2)) {
+                                        free(nd);
+                                        return -ENOMEM;
+                                }
+
+                                n->dirents[n->n_dirents++] = nd;
+                                n->dirents[n->n_dirents] = NULL;
+                        }
+
+                        break;
+
+                case CA_DECODER_SEEKING_TO_FILENAME: {
                         int match;
                         assert(d->seek_path);
 
@@ -2146,7 +2201,19 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
                         end_offset = d->seek_end_offset;
                         d->seek_idx = 0;
 
-                        if (match == PATH_MATCH_FINAL) {
+                        if (match == PATH_MATCH_MORE || d->seek_next_sibling) {
+                                /* This entry lies within our path, but the seek is not complete yet */
+                                seek_continues = true;
+
+                                /* Move subpath ptr ahead to component we need to process next. */
+                                r = path_get_component(&d->seek_subpath, NULL);
+                                if (r < 0)
+                                        return r;
+
+                                assert(r > 0);
+
+                        } else {
+                                assert(match == PATH_MATCH_FINAL);
 
                                 /* We reached our goal, yay! */
                                 ca_decoder_reset_seek(d);
@@ -2156,36 +2223,20 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
 
                                 /* We arrived at the destination of the seek, report that */
                                 arrived = true;
-
-                        } else {
-                                assert(match == PATH_MATCH_MORE);
-
-                                /* This entry lies within our path, but the seek is not complete yet */
-                                seek_continues = true;
-
-                                /* Jump to component we need to process next. */
-                                r = path_get_component(&d->seek_subpath, NULL);
-                                if (r < 0)
-                                        return r;
-
-                                assert(r > 0);
                         }
+
+                        break;
                 }
 
-                if (d->delete && !n->dirents_invalid) {
-                        char *nd;
+                case CA_DECODER_SEEKING_TO_NEXT_SIBLING:
 
-                        nd = strdup(filename->name);
-                        if (!nd)
-                                return -ENOMEM;
+                        ca_decoder_reset_seek(d);
+                        arrived = true;
 
-                        if (!GREEDY_REALLOC(n->dirents, n->n_dirents_allocated, n->n_dirents + 2)) {
-                                free(nd);
-                                return -ENOMEM;
-                        }
+                        break;
 
-                        n->dirents[n->n_dirents++] = nd;
-                        n->dirents[n->n_dirents] = NULL;
+                default:
+                        break;
                 }
 
                 child = ca_decoder_init_child(d);
@@ -2216,7 +2267,7 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
 
         case CA_FORMAT_GOODBYE:
 
-                if (!IN_SET(d->state, CA_DECODER_IN_DIRECTORY, CA_DECODER_SEEKING_TO_GOODBYE))
+                if (!IN_SET(d->state, CA_DECODER_IN_DIRECTORY, CA_DECODER_SEEKING_TO_GOODBYE, CA_DECODER_SEEKING_TO_NEXT_SIBLING))
                         return -EBADMSG;
 
                 if (l < offsetof(CaFormatGoodbye, items) + sizeof(le64_t))
@@ -3520,6 +3571,9 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 return CA_DECODER_FINISHED;
 
         case CA_DECODER_IN_DIRECTORY:
+        case CA_DECODER_SEEKING_TO_FILENAME:
+        case CA_DECODER_SEEKING_TO_NEXT_SIBLING:
+        case CA_DECODER_SEEKING_TO_GOODBYE:
                 assert(S_ISDIR(mode));
 
                 return ca_decoder_parse_filename(d, n);
@@ -3554,9 +3608,13 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
 
                 return CA_DECODER_SEEK;
 
-        case CA_DECODER_SEEKING_TO_FILENAME:
+        case CA_DECODER_PREPARING_SEEK_TO_NEXT_SIBLING:
                 assert(S_ISDIR(mode));
-                return ca_decoder_parse_filename(d, n);
+
+                ca_decoder_enter_state(d, CA_DECODER_SEEKING_TO_NEXT_SIBLING);
+                ca_decoder_apply_seek_offset(d);
+
+                return CA_DECODER_SEEK;
 
         case CA_DECODER_PREPARING_SEEK_TO_ENTRY:
                 assert(S_ISDIR(mode));
@@ -3571,10 +3629,6 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 ca_decoder_apply_seek_offset(d);
 
                 return CA_DECODER_SEEK;
-
-        case CA_DECODER_SEEKING_TO_GOODBYE:
-                assert(S_ISDIR(mode));
-                return ca_decoder_parse_filename(d, n);
 
         case CA_DECODER_PREPARING_SEEK_TO_GOODBYE_SIZE:
                 assert(S_ISDIR(mode));
@@ -4147,7 +4201,7 @@ int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset) {
         return 0;
 }
 
-int ca_decoder_seek_path(CaDecoder *d, const char *path) {
+static int ca_decoder_seek_path_internal(CaDecoder *d, const char *path, bool next_sibling) {
 
         char *path_copy = NULL;
         const char *p;
@@ -4180,7 +4234,7 @@ int ca_decoder_seek_path(CaDecoder *d, const char *path) {
                 r = path_get_component(&q, &child_name);
                 if (r < 0)
                         return r;
-                if (r == 0)  /* Yay, we already found where we were supposed to go */
+                if (r == 0) /* Yay, we already found where we were supposed to go */
                         break;
 
                 if (new_idx + 1 >= d->n_nodes) {
@@ -4214,11 +4268,33 @@ int ca_decoder_seek_path(CaDecoder *d, const char *path) {
         d->seek_path = path_copy;
         d->seek_subpath = path_copy + (p - path);
         d->seek_idx = 0;
+        d->seek_next_sibling = next_sibling;
 
         d->node_idx = new_idx;
         ca_decoder_forget_children(d);
 
         return ca_decoder_do_seek(d, d->nodes + new_idx);
+}
+
+int ca_decoder_seek_path(CaDecoder *d, const char *path) {
+        return ca_decoder_seek_path_internal(d, path, false);
+}
+
+int ca_decoder_seek_next_sibling(CaDecoder *d) {
+        char *p;
+        int r;
+
+        if (!d)
+                return -EINVAL;
+
+        r = ca_decoder_current_path(d, &p);
+        if (r < 0)
+                return r;
+
+        r = ca_decoder_seek_path_internal(d, p, true);
+        free(p);
+
+        return r;
 }
 
 int ca_decoder_get_seek_offset(CaDecoder *d, uint64_t *ret) {
@@ -4234,6 +4310,7 @@ int ca_decoder_get_seek_offset(CaDecoder *d, uint64_t *ret) {
         if (!IN_SET(d->state,
                     CA_DECODER_SEEKING_TO_OFFSET,
                     CA_DECODER_SEEKING_TO_FILENAME,
+                    CA_DECODER_SEEKING_TO_NEXT_SIBLING,
                     CA_DECODER_SEEKING_TO_ENTRY,
                     CA_DECODER_SEEKING_TO_GOODBYE,
                     CA_DECODER_SEEKING_TO_GOODBYE_SIZE))

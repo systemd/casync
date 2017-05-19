@@ -35,6 +35,7 @@ static bool arg_delete = true;
 static bool arg_punch_holes = true;
 static bool arg_reflink = true;
 static bool arg_seed_output = true;
+static bool arg_recursive = true;
 static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
@@ -59,6 +60,7 @@ static void help(void) {
                "     --extra-store=PATH      Additional chunk store to look for chunks in\n"
                "     --chunk-size-avg=SIZE   The average number of bytes for a chunk file\n"
                "     --seed=PATH             Additional file or directory to use as seed\n"
+               "     --recursive=no          List non-recursively\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n"
                "     --respect-nodump=no     Don't respect chattr(1)'s -d 'nodump' flag\n"
                "     --delete=no             Don't delete existing files not listed in archive after extraction\n"
@@ -133,6 +135,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_DELETE,
                 ARG_UID_SHIFT,
                 ARG_UID_RANGE,
+                ARG_RECURSIVE,
         };
 
         static const struct option options[] = {
@@ -151,8 +154,9 @@ static int parse_argv(int argc, char *argv[]) {
                 { "punch-holes",    required_argument, NULL, ARG_PUNCH_HOLES    },
                 { "reflink",        required_argument, NULL, ARG_REFLINK        },
                 { "seed-output",    required_argument, NULL, ARG_SEED_OUTPUT    },
-                { "uid-shift",      required_argument, NULL, ARG_UID_SHIFT,     },
-                { "uid-range",      required_argument, NULL, ARG_UID_RANGE,     },
+                { "uid-shift",      required_argument, NULL, ARG_UID_SHIFT      },
+                { "uid-range",      required_argument, NULL, ARG_UID_RANGE      },
+                { "recursive",      required_argument, NULL, ARG_RECURSIVE      },
                 {}
         };
 
@@ -370,6 +374,16 @@ static int parse_argv(int argc, char *argv[]) {
 
                         break;
                 }
+
+                case ARG_RECURSIVE:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --recursive= parameter: %s\n", optarg);
+                                return r;
+                        }
+
+                        arg_recursive = r;
+                        break;
 
                 case '?':
                         return -EINVAL;
@@ -1397,6 +1411,7 @@ static int list(int argc, char *argv[]) {
         int r, input_fd = -1;
         char *input = NULL;
         CaSync *s = NULL;
+        bool toplevel_shown = false;
 
         if (argc > 3) {
                 fprintf(stderr, "Input path/URL and subtree path expected.\n");
@@ -1675,6 +1690,18 @@ static int list(int argc, char *argv[]) {
                         if (streq(argv[0], "list")) {
                                 printf("%s %s\n", ls_format_mode(mode, ls_mode), path);
                                 print_digest = false;
+
+                                if (!arg_recursive && toplevel_shown) {
+                                        r = ca_sync_seek_next_sibling(s);
+                                        if (r < 0) {
+                                                fprintf(stderr, "Failed to seek to next sibling: %s\n", strerror(-r));
+                                                free(path);
+                                                goto finish;
+                                        }
+                                }
+
+                                toplevel_shown = true;
+
                         } else {
                                 const char *target = NULL, *user = NULL, *group = NULL;
                                 uint64_t mtime = UINT64_MAX, size = UINT64_MAX;

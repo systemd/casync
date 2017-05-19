@@ -1741,12 +1741,23 @@ static int ca_sync_install_base(CaSync *s) {
         return 0;
 }
 
+static void ca_sync_reset_seek(CaSync *s) {
+        assert(s);
+
+        s->archive_eof = false;
+        s->remote_index_eof = false;
+        s->next_chunk_valid = false;
+        s->chunk_skip = 0;
+}
+
 static int ca_sync_process_decoder_seek(CaSync *s) {
         uint64_t offset;
         int r;
 
         assert(s);
         assert(s->decoder);
+
+        ca_sync_reset_seek(s);
 
         r = ca_decoder_get_seek_offset(s->decoder, &offset);
         if (r < 0)
@@ -1764,14 +1775,8 @@ static int ca_sync_process_decoder_seek(CaSync *s) {
                 if (f == (off_t) -1)
                         return -errno;
 
-                s->chunk_skip = 0;
-
         } else
                 return -EOPNOTSUPP;
-
-        s->archive_eof = false;
-        s->remote_index_eof = false;
-        s->next_chunk_valid = false;
 
         return CA_SYNC_STEP;
 }
@@ -2906,10 +2911,7 @@ int ca_sync_seek_offset(CaSync *s, uint64_t offset) {
         if (r < 0)
                 return r;
 
-        s->archive_eof = false;
-        s->remote_index_eof = false;
-        s->next_chunk_valid = false;
-        s->chunk_skip = 0;
+        ca_sync_reset_seek(s);
 
         return 0;
 }
@@ -2940,10 +2942,37 @@ int ca_sync_seek_path(CaSync *s, const char *path) {
         if(r < 0)
                 return r;
 
-        s->archive_eof = false;
-        s->remote_index_eof = false;
-        s->next_chunk_valid = false;
-        s->chunk_skip = 0;
+
+        ca_sync_reset_seek(s);
+
+        return 0;
+}
+
+int ca_sync_seek_next_sibling(CaSync *s) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        r = ca_sync_start(s);
+        if (r < 0)
+                return r;
+
+        if (!s->decoder)
+                return -ESPIPE;
+
+        r = ca_sync_acquire_archive_size(s);
+        if (r < 0)
+                return r;
+
+        r = ca_decoder_seek_next_sibling(s->decoder);
+        if(r < 0)
+                return r;
+
+        ca_sync_reset_seek(s);
 
         return 0;
 }
