@@ -8,9 +8,11 @@
 
 #include "cadecoder.h"
 #include "caencoder.h"
+#include "caformat.h"
 
 static int encode(int dfd, int fd) {
         CaEncoder *e = NULL;
+        uint64_t flags;
         int r;
 
         assert(dfd >= 0);
@@ -23,6 +25,15 @@ static int encode(int dfd, int fd) {
         }
 
         r = ca_encoder_set_base_fd(e, dfd);
+        if (r < 0)
+                goto finish;
+
+        flags = CA_FORMAT_WITH_BEST|CA_FORMAT_RESPECT_FLAG_NODUMP;
+
+        if (geteuid() != 0)
+                flags &= ~CA_FORMAT_WITH_PRIVILEGED;
+
+        r = ca_encoder_set_feature_flags(e, flags);
         if (r < 0)
                 goto finish;
 
