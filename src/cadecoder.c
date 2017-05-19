@@ -592,17 +592,12 @@ static bool validate_filename(const char *name, size_t n) {
         if (name[n-1] != 0)
                 return false;
 
-        if (name[0] == '.') {
-                if (name[1] == '.' && name[2] == 0)
-                        return false;
-
-                if (name[1] == 0)
-                        return false;
-        }
-
         for (p = name; p < name + n-1; p++)
                 if (*p == 0 || *p == '/')
                         return false;
+
+        if (dot_or_dot_dot(name))
+                return false;
 
         return true;
 }
