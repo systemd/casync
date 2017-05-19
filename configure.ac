@@ -34,6 +34,11 @@ AC_CHECK_DECLS([
 #include <linux/random.h>
 ]])
 
+AC_CHECK_TYPES([struct file_clone_range],
+               [], [], [[
+#include <linux/fs.h>
+]])
+
 AC_CHECK_SIZEOF(uid_t)
 AC_CHECK_SIZEOF(gid_t)
 AC_CHECK_SIZEOF(pid_t)

@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <linux/magic.h>
+#include <linux/types.h>
 
 #define new(t, n) ((t*) malloc((n) * sizeof(t)))
 #define new0(t, n) ((t*) calloc((n), sizeof(t)))
@@ -548,6 +549,19 @@ static inline const char *yes_no(bool b) {
 
 #ifndef CGROUP2_SUPER_MAGIC
 #define CGROUP2_SUPER_MAGIC 0x63677270
+#endif
+
+#ifndef FICLONERANGE
+#define FICLONERANGE	_IOW(0x94, 13, struct file_clone_range)
+#endif
+
+#ifndef HAVE_STRUCT_FILE_CLONE_RANGE
+struct file_clone_range {
+        __s64 src_fd;
+        __u64 src_offset;
+        __u64 src_length;
+        __u64 dest_offset;
+};
 #endif
 
 #define PTR_TO_INT(p) ((int) ((intptr_t) (p)))
