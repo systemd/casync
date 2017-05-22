@@ -11,6 +11,9 @@
 /* #undef EBADMSG */
 /* #define EBADMSG __LINE__ */
 
+/* #undef EINVAL */
+/* #define EINVAL __LINE__ */
+
 typedef enum CaIndexMode {
         CA_INDEX_WRITE,                  /* only cooked writing */
         CA_INDEX_READ,                   /* only cooked reading */

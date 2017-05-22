@@ -114,10 +114,13 @@ typedef enum CaDecoderState {
         CA_DECODER_IN_PAYLOAD,
         CA_DECODER_IN_DIRECTORY,
         CA_DECODER_GOODBYE,
+        CA_DECODER_FINALIZE,
         CA_DECODER_EOF,
+
         /* As the result of ca_decoder_seek_offset() we'll traverse through these two states ... */
         CA_DECODER_PREPARING_SEEK_TO_OFFSET,
         CA_DECODER_SEEKING_TO_OFFSET,
+
         /* As the result of ca_decoder_seek_path() we'll traverse through these eight states ... */
         CA_DECODER_PREPARING_SEEK_TO_FILENAME,
         CA_DECODER_SEEKING_TO_FILENAME,
@@ -129,6 +132,7 @@ typedef enum CaDecoderState {
         CA_DECODER_SEEKING_TO_GOODBYE,
         CA_DECODER_PREPARING_SEEK_TO_GOODBYE_SIZE,
         CA_DECODER_SEEKING_TO_GOODBYE_SIZE,
+
         CA_DECODER_NOWHERE,
         CA_DECODER_SKIPPING,
 } CaDecoderState;
@@ -3584,8 +3588,8 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                         return ca_decoder_step_node(d, n);
                 }
 
-                ca_decoder_enter_state(d, CA_DECODER_FINISHED);
-                return CA_DECODER_FINISHED;
+                ca_decoder_enter_state(d, CA_DECODER_FINALIZE);
+                return CA_DECODER_DONE_FILE;
         }
 
         case CA_DECODER_IN_PAYLOAD:
@@ -3596,8 +3600,8 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                         assert(d->payload_offset <= n->size);
 
                         if (d->payload_offset == n->size) {
-                                ca_decoder_enter_state(d, CA_DECODER_EOF);
-                                return CA_DECODER_FINISHED;
+                                ca_decoder_enter_state(d, CA_DECODER_FINALIZE);
+                                return CA_DECODER_DONE_FILE;
                         }
                 }
 
@@ -3621,8 +3625,8 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                                 return -EPIPE;
 
                         /* If we don't know the length and get an EOF, we are happy and just consider this the end of the payload */
-                        ca_decoder_enter_state(d, CA_DECODER_EOF);
-                        return CA_DECODER_FINISHED;
+                        ca_decoder_enter_state(d, CA_DECODER_FINALIZE);
+                        return CA_DECODER_DONE_FILE;
                 }
 
                 /* If the caller doesn't want the payload, and we don't need it either, but know how large it is, then let's skip over it */
@@ -3641,8 +3645,8 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 d->archive_offset += d->skip_bytes;
                 d->skip_bytes = 0;
 
-                ca_decoder_enter_state(d, CA_DECODER_EOF);
-                return CA_DECODER_FINISHED;
+                ca_decoder_enter_state(d, CA_DECODER_FINALIZE);
+                return CA_DECODER_DONE_FILE;
 
         case CA_DECODER_IN_DIRECTORY:
         case CA_DECODER_SEEKING_TO_FILENAME:
@@ -3655,8 +3659,37 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
         case CA_DECODER_GOODBYE:
                 assert(S_ISDIR(mode));
 
+                ca_decoder_enter_state(d, CA_DECODER_FINALIZE);
+                return CA_DECODER_DONE_FILE;
+
+        case CA_DECODER_FINALIZE: {
+                CaDecoderNode *saved_child = n;
+
+                r = ca_decoder_leave_child(d);
+                if (r < 0)
+                        return r;
+                if (r > 0) {
+                        /* We managed to one level up */
+                        n = ca_decoder_current_node(d);
+                        if (!n)
+                                return -EUNATCH;
+
+                        r = ca_decoder_finalize_child(d, n, saved_child);
+                        if (r < 0)
+                                return r;
+
+                        ca_decoder_enter_state(d, CA_DECODER_IN_DIRECTORY);
+                        return CA_DECODER_STEP;
+                }
+
+                /* We already are at the top level. Now also fix up the top-level entry */
+                r = ca_decoder_finalize_child(d, ca_decoder_current_parent_node(d), n);
+                if (r < 0)
+                        return r;
+
                 ca_decoder_enter_state(d, CA_DECODER_EOF);
                 return CA_DECODER_FINISHED;
+        }
 
         case CA_DECODER_PREPARING_SEEK_TO_OFFSET:
                 assert(S_ISREG(mode) || S_ISBLK(mode));
@@ -3788,7 +3821,7 @@ static int ca_decoder_advance_buffer(CaDecoder *d, CaDecoderNode *n) {
 }
 
 int ca_decoder_step(CaDecoder *d) {
-        CaDecoderNode *n, *saved_child;
+        CaDecoderNode *n;
         int r;
 
         if (!d)
@@ -3805,36 +3838,7 @@ int ca_decoder_step(CaDecoder *d) {
         if (r < 0)
                 return r;
 
-        r = ca_decoder_step_node(d, n);
-        if (r != CA_DECODER_FINISHED)
-                return r;
-
-        saved_child = n;
-
-        r = ca_decoder_leave_child(d);
-        if (r < 0)
-                return r;
-        if (r > 0) {
-                n = ca_decoder_current_node(d);
-                if (!n)
-                        return -EUNATCH;
-
-                r = ca_decoder_finalize_child(d, n, saved_child);
-                if (r < 0)
-                        return r;
-
-                ca_decoder_enter_state(d, CA_DECODER_IN_DIRECTORY);
-                return CA_DECODER_STEP;
-        }
-
-        /* Also fix up the top-level entry */
-        r = ca_decoder_finalize_child(d, ca_decoder_current_parent_node(d), n);
-        if (r < 0)
-                return r;
-
-        ca_decoder_forget_children(d);
-
-        return CA_DECODER_FINISHED;
+        return ca_decoder_step_node(d, n);
 }
 
 int ca_decoder_get_request_offset(CaDecoder *d, uint64_t *ret) {
@@ -3942,7 +3946,7 @@ int ca_decoder_current_path(CaDecoder *d, char **ret) {
         if (d->n_nodes <= 0)
                 return -EUNATCH;
 
-        for (i = 1; i < d->n_nodes; i++) {
+        for (i = 1; i <= d->node_idx; i++) {
                 CaDecoderNode *node;
                 size_t k, nn;
                 char *np, *q;

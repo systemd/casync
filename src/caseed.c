@@ -10,6 +10,9 @@
 #include "rm-rf.h"
 #include "util.h"
 
+/* #undef EINVAL */
+/* #define EINVAL __LINE__ */
+
 /* #undef ENXIO */
 /* #define ENXIO __LINE__ */
 
@@ -240,6 +243,8 @@ static int ca_seed_cache_chunks(CaSeed *s) {
         assert(s);
 
         r = ca_encoder_get_data(s->encoder, &p, &l);
+        if (r == -ENODATA)
+                return 0;
         if (r < 0)
                 return r;
 
@@ -343,13 +348,15 @@ int ca_seed_step(CaSeed *s) {
 
                 case CA_ENCODER_DATA:
                 case CA_ENCODER_NEXT_FILE:
+                case CA_ENCODER_DONE_FILE:
                 case CA_ENCODER_PAYLOAD:
 
                         r = ca_seed_cache_chunks(s);
                         if (r < 0)
                                 return r;
 
-                        return step == CA_ENCODER_NEXT_FILE ? CA_SEED_NEXT_FILE : CA_SEED_STEP;
+                        return step == CA_ENCODER_NEXT_FILE ? CA_SEED_NEXT_FILE :
+                                step == CA_ENCODER_DONE_FILE ? CA_SEED_DONE_FILE : CA_SEED_STEP;
 
                 default:
                         assert(false);
@@ -436,12 +443,15 @@ int ca_seed_get(CaSeed *s,
 
                 case CA_ENCODER_DATA:
                 case CA_ENCODER_NEXT_FILE:
+                case CA_ENCODER_DONE_FILE:
                 case CA_ENCODER_PAYLOAD: {
                         const void *q;
                         size_t w;
                         uint64_t m;
 
                         r = ca_encoder_get_data(s->encoder, &q, &w);
+                        if (r == -ENODATA)
+                                break;
                         if (r < 0)
                                 goto finish;
 

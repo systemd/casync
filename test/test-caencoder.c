@@ -18,6 +18,8 @@ static int encode(int dfd, int fd) {
         assert(dfd >= 0);
         assert(fd >= 0);
 
+        printf("ENCODING...\n");
+
         e = ca_encoder_new();
         if (!e) {
                 r = -ENOMEM;
@@ -40,24 +42,33 @@ static int encode(int dfd, int fd) {
         dfd = -1;
 
         for (;;) {
-                r = ca_encoder_step(e);
-                if (r < 0)
+                int step;
+                step = ca_encoder_step(e);
+                if (step < 0) {
+                        r = step;
                         goto finish;
+                }
 
-                switch (r) {
+                switch (step) {
 
                 case CA_ENCODER_FINISHED:
                         r = 0;
                         goto finish;
 
-                case CA_ENCODER_NEXT_FILE: {
-                        char *path;
+                case CA_ENCODER_NEXT_FILE:
+                case CA_ENCODER_DONE_FILE: {
+                        char *path = NULL;
+                        mode_t mode;
 
                         r = ca_encoder_current_path(e, &path);
                         if (r < 0)
                                 goto finish;
 
-                        fprintf(stderr, "Now looking at: %s\n", path);
+                        r = ca_encoder_current_mode(e, &mode);
+                        if (r < 0)
+                                goto finish;
+
+                        printf("%s %08o %s\n", step == CA_ENCODER_NEXT_FILE ? "→" : "←", mode, path);
                         free(path);
                 }
 
@@ -70,10 +81,10 @@ static int encode(int dfd, int fd) {
                         ssize_t n;
 
                         r = ca_encoder_get_data(e, &p, &sz);
+                        if (r == -ENODATA)
+                                break;
                         if (r < 0)
                                 goto finish;
-
-                        assert(r > 0);
 
                         n = write(fd, p, sz);
                         if (n < 0) {
@@ -128,6 +139,8 @@ static int decode(int fd) {
 
         assert(fd >= 0);
 
+        printf("DECODING...\n");
+
         d = ca_decoder_new();
         if (!d) {
                 r = -ENOMEM;
@@ -139,11 +152,13 @@ static int decode(int fd) {
                 goto finish;
 
         for (;;) {
-                r = ca_decoder_step(d);
-                if (r < 0)
+                int step;
+
+                step = ca_decoder_step(d);
+                if (step < 0)
                         goto finish;
 
-                switch (r) {
+                switch (step) {
 
                 case CA_DECODER_FINISHED:
                         r = 0;
@@ -171,6 +186,7 @@ static int decode(int fd) {
                         break;
                 }
 
+                case CA_DECODER_DONE_FILE:
                 case CA_DECODER_NEXT_FILE: {
                         char *path = NULL;
                         mode_t mode;
@@ -183,7 +199,7 @@ static int decode(int fd) {
                         if (r < 0)
                                 goto finish;
 
-                        printf("%08o %s\n", mode, path);
+                        printf("%s %08o %s\n", step == CA_DECODER_NEXT_FILE ? "→" : "←", mode, path);
                         free(path);
                         break;
                 }

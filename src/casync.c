@@ -1554,34 +1554,39 @@ static int ca_sync_step_encode(CaSync *s) {
 
                 return CA_SYNC_FINISHED;
 
-        case CA_ENCODER_DATA:
         case CA_ENCODER_NEXT_FILE:
-        case CA_ENCODER_PAYLOAD: {
+        case CA_ENCODER_DONE_FILE:
+        case CA_ENCODER_PAYLOAD:
+        case CA_ENCODER_DATA: {
                 const void *p;
                 size_t l;
 
                 r = ca_encoder_get_data(s->encoder, &p, &l);
-                if (r < 0)
-                        return r;
+                if (r >= 0) {
 
-                r = ca_sync_write_chunks(s, p, l);
-                if (r < 0)
-                        return r;
+                        r = ca_sync_write_chunks(s, p, l);
+                        if (r < 0)
+                                return r;
 
-                r = ca_sync_write_archive(s, p, l);
-                if (r < 0)
-                        return r;
+                        r = ca_sync_write_archive(s, p, l);
+                        if (r < 0)
+                                return r;
 
-                r = ca_sync_write_remote_archive(s, p, l);
-                if (r < 0)
-                        return r;
+                        r = ca_sync_write_remote_archive(s, p, l);
+                        if (r < 0)
+                                return r;
 
-                r = ca_sync_write_archive_digest(s, p, l);
-                if (r < 0)
+                        r = ca_sync_write_archive_digest(s, p, l);
+                        if (r < 0)
+                                return r;
+
+                } else if (r != -ENODATA)
                         return r;
 
                 return step == CA_ENCODER_NEXT_FILE ? CA_SYNC_NEXT_FILE :
-                        step == CA_ENCODER_PAYLOAD ? CA_SYNC_PAYLOAD : CA_SYNC_STEP;
+                       step == CA_ENCODER_DONE_FILE ? CA_SYNC_DONE_FILE :
+                       step == CA_ENCODER_PAYLOAD   ? CA_SYNC_PAYLOAD   :
+                                                      CA_SYNC_STEP;
         }
 
         default:
@@ -1866,6 +1871,9 @@ static int ca_sync_step_decode(CaSync *s) {
         case CA_DECODER_NEXT_FILE:
                 return CA_SYNC_NEXT_FILE;
 
+        case CA_DECODER_DONE_FILE:
+                return CA_SYNC_DONE_FILE;
+
         case CA_DECODER_STEP:
                 return CA_SYNC_STEP;
 
@@ -1952,6 +1960,9 @@ static int ca_sync_seed_step(CaSync *s) {
 
                 case CA_SEED_NEXT_FILE:
                         return CA_SYNC_SEED_NEXT_FILE;
+
+                case CA_SEED_DONE_FILE:
+                        return CA_SYNC_SEED_DONE_FILE;
 
                 default:
                         assert(false);

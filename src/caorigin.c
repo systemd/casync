@@ -3,6 +3,9 @@
 /* #undef EUNATCH */
 /* #define EUNATCH __LINE__ */
 
+/* #undef EINVAL */
+/* #define EINVAL __LINE__ */
+
 int ca_origin_new(CaOrigin **ret) {
         CaOrigin *origin;
 

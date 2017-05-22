@@ -744,6 +744,46 @@ static int verbose_print_done_extract(CaSync *s) {
         return 1;
 }
 
+static int process_step_generic(CaSync *s, int step) {
+        int r;
+
+        assert(s);
+
+        switch (step) {
+
+        case CA_SYNC_FINISHED:
+        case CA_SYNC_STEP:
+        case CA_SYNC_PAYLOAD:
+        case CA_SYNC_FOUND:
+                return 0;
+
+        case CA_SYNC_NEXT_FILE:
+                return verbose_print_path(s, "Processing");
+
+        case CA_SYNC_DONE_FILE:
+                return verbose_print_path(s, "Processed");
+
+        case CA_SYNC_SEED_NEXT_FILE:
+                return verbose_print_path(s, "Seeding");
+
+        case CA_SYNC_SEED_DONE_FILE:
+                return verbose_print_path(s, "Seeded");
+
+        case CA_SYNC_POLL:
+                r = ca_sync_poll(s, UINT64_MAX);
+                if (r < 0)
+                        fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
+
+                return r;
+
+        case CA_SYNC_NOT_FOUND:
+                fprintf(stderr, "Seek path not available in archive.\n");
+                return -ENOENT;
+        }
+
+        assert(false);
+}
+
 static int make(int argc, char *argv[]) {
 
         typedef enum MakeOperation {
@@ -980,19 +1020,25 @@ static int make(int argc, char *argv[]) {
                                 goto finish;
                         break;
 
+                case CA_SYNC_DONE_FILE:
+                        r = verbose_print_path(s, "Packed");
+                        if (r < 0)
+                                goto finish;
+                        break;
+
                 case CA_SYNC_STEP:
                 case CA_SYNC_PAYLOAD:
-                case CA_SYNC_FOUND:
-                        break;
-
                 case CA_SYNC_POLL:
-                        r = ca_sync_poll(s, UINT64_MAX);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
-                                goto finish;
-                        }
+                        r = process_step_generic(s, r);
+                        if (r < 0)
+                                return r;
+
                         break;
 
+                case CA_SYNC_FOUND:
+                case CA_SYNC_NOT_FOUND:
+                case CA_SYNC_SEED_NEXT_FILE:
+                case CA_SYNC_SEED_DONE_FILE:
                 default:
                         assert(false);
                 }
@@ -1314,39 +1360,31 @@ static int extract(int argc, char *argv[]) {
                         r = 0;
                         goto finish;
 
-                case CA_SYNC_STEP:
-                case CA_SYNC_PAYLOAD:
-                case CA_SYNC_FOUND:
-                        break;
-
-                case CA_SYNC_NEXT_FILE: {
+                case CA_SYNC_NEXT_FILE:
                         r = verbose_print_path(s, "Extracting");
                         if (r < 0)
                                 goto finish;
 
                         break;
-                }
 
-                case CA_SYNC_SEED_NEXT_FILE: {
-                        r = verbose_print_path(s, "Seeding");
+                case CA_SYNC_DONE_FILE:
+                        r = verbose_print_path(s, "Extracted");
                         if (r < 0)
                                 goto finish;
 
                         break;
-                }
 
+                case CA_SYNC_STEP:
+                case CA_SYNC_PAYLOAD:
+                case CA_SYNC_SEED_NEXT_FILE:
+                case CA_SYNC_SEED_DONE_FILE:
                 case CA_SYNC_POLL:
-                        r = ca_sync_poll(s, UINT64_MAX);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
-                                goto finish;
-                        }
-                        break;
-
+                case CA_SYNC_FOUND:
                 case CA_SYNC_NOT_FOUND:
-                        fprintf(stderr, "Seek path not available in archive: %s\n", seek_path);
-                        r = -ENOENT;
-                        goto finish;
+                        r = process_step_generic(s, r);
+                        if (r < 0)
+                                goto finish;
+                        break;
 
                 default:
                         assert(false);
@@ -1692,21 +1730,9 @@ static int list(int argc, char *argv[]) {
                         break;
                 }
 
-                case CA_SYNC_STEP:
-                case CA_SYNC_FOUND:
-                        break;
-
                 case CA_SYNC_NEXT_FILE: {
                         char *path, ls_mode[LS_FORMAT_MODE_MAX];
                         mode_t mode;
-
-                        if (print_digest) {
-                                r = do_print_digest(digest);
-                                if (r < 0)
-                                        goto finish;
-
-                                print_digest = false;
-                        }
 
                         r = ca_sync_current_mode(s, &mode);
                         if (r < 0) {
@@ -1847,26 +1873,30 @@ static int list(int argc, char *argv[]) {
                         break;
                 }
 
-                case CA_SYNC_SEED_NEXT_FILE: {
-                        r = verbose_print_path(s, "Seeding");
+                case CA_SYNC_DONE_FILE:
+
+                        if (print_digest) {
+                                r = do_print_digest(digest);
+                                if (r < 0)
+                                        goto finish;
+
+                                print_digest = false;
+                        }
+
+                        break;
+
+                case CA_SYNC_STEP:
+                case CA_SYNC_SEED_NEXT_FILE:
+                case CA_SYNC_SEED_DONE_FILE:
+                case CA_SYNC_POLL:
+                case CA_SYNC_FOUND:
+                case CA_SYNC_NOT_FOUND:
+
+                        r = process_step_generic(s, r);
                         if (r < 0)
                                 goto finish;
 
                         break;
-                }
-
-                case CA_SYNC_POLL:
-                        r = ca_sync_poll(s, UINT64_MAX);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
-                                goto finish;
-                        }
-                        break;
-
-                case CA_SYNC_NOT_FOUND:
-                        fprintf(stderr, "Seek path not available in archive: %s\n", seek_path);
-                        r = -ENOENT;
-                        goto finish;
 
                 default:
                         assert(false);
@@ -1876,14 +1906,6 @@ static int list(int argc, char *argv[]) {
 
                 if (arg_verbose)
                         progress();
-        }
-
-        if (print_digest) {
-                r = do_print_digest(digest);
-                if (r < 0)
-                        goto finish;
-
-                print_digest = false;
         }
 
 finish:
@@ -2148,35 +2170,17 @@ static int digest(int argc, char *argv[]) {
 
                 case CA_SYNC_STEP:
                 case CA_SYNC_PAYLOAD:
-                case CA_SYNC_FOUND:
-                        break;
-
                 case CA_SYNC_NEXT_FILE:
-                        r = verbose_print_path(s, "Processing");
-                        if (r < 0)
-                                goto finish;
-                        break;
-
-                case CA_SYNC_SEED_NEXT_FILE: {
-                        r = verbose_print_path(s, "Seeding");
-                        if (r < 0)
-                                goto finish;
-
-                        break;
-                }
-
+                case CA_SYNC_DONE_FILE:
+                case CA_SYNC_SEED_NEXT_FILE:
+                case CA_SYNC_SEED_DONE_FILE:
                 case CA_SYNC_POLL:
-                        r = ca_sync_poll(s, UINT64_MAX);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
-                                goto finish;
-                        }
-                        break;
-
+                case CA_SYNC_FOUND:
                 case CA_SYNC_NOT_FOUND:
-                        fprintf(stderr, "Seek path not available in archive: %s\n", seek_path);
-                        r = -ENOENT;
-                        goto finish;
+                        r = process_step_generic(s, r);
+                        if (r < 0)
+                                goto finish;
+                        break;
 
                 default:
                         assert(false);
@@ -2347,18 +2351,19 @@ static int mkdev(int argc, char *argv[]) {
 
                 switch (r) {
 
+                case CA_SYNC_FINISHED:
+                        fprintf(stderr, "Premature end of archive.\n");
+                        r = -EBADMSG;
+                        goto finish;
+
                 case CA_SYNC_STEP:
                 case CA_SYNC_PAYLOAD:
-                case CA_SYNC_FINISHED:
-                        break;
-
+                case CA_SYNC_SEED_NEXT_FILE:
+                case CA_SYNC_SEED_DONE_FILE:
                 case CA_SYNC_POLL:
-
-                        r = ca_sync_poll(s, UINT64_MAX);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
+                        r = process_step_generic(s, r);
+                        if (r < 0)
                                 goto finish;
-                        }
                         break;
 
                 default:
@@ -2439,10 +2444,6 @@ static int mkdev(int argc, char *argv[]) {
 
                         switch (r) {
 
-                        case CA_SYNC_STEP:
-                        case CA_SYNC_FOUND:
-                                break;
-
                         case CA_SYNC_FINISHED:
                                 /* We hit EOF but the reply is not yet completed, in this case, fill up with zeroes */
 
@@ -2516,12 +2517,16 @@ static int mkdev(int argc, char *argv[]) {
                                 break;
                         }
 
+                        case CA_SYNC_STEP:
+                        case CA_SYNC_SEED_NEXT_FILE:
+                        case CA_SYNC_SEED_DONE_FILE:
                         case CA_SYNC_POLL:
-                                r = ca_sync_poll(s, UINT64_MAX);
-                                if (r < 0) {
-                                        fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
+                        case CA_SYNC_FOUND:
+                        case CA_SYNC_NOT_FOUND:
+                                r = process_step_generic(s, r);
+                                if (r < 0)
                                         goto finish;
-                                }
+
                                 break;
 
                         default:

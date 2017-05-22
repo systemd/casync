@@ -14,7 +14,9 @@ enum {
         CA_SYNC_STEP,            /* Did something, call me again soon! */
         CA_SYNC_PAYLOAD,         /* Did something, and there's payload you might want to read */
         CA_SYNC_NEXT_FILE,       /* Started synchronizing a new file, find out which one with ca_sync_current_path() */
-        CA_SYNC_SEED_NEXT_FILE,  /* Started indexing a new file as sed, find out which one with ca_sync_current_path() */
+        CA_SYNC_DONE_FILE,       /* Done synchronizing a file, find out which one with ca_sync_current_path() */
+        CA_SYNC_SEED_NEXT_FILE,  /* Started indexing a new file as seed, find out which one with ca_sync_current_path() */
+        CA_SYNC_SEED_DONE_FILE,  /* Finished indexing a file as seed, find out which one with ca_sync_current_path() */
         CA_SYNC_POLL,            /* Can't proceed with remote feedback, please use ca_sync_poll() to wait for it */
         CA_SYNC_FOUND,           /* Entry looked for was found and is read next */
         CA_SYNC_NOT_FOUND,       /* Entry you were looking for couldn't be found */

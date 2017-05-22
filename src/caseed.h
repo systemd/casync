@@ -12,6 +12,7 @@ enum {
         CA_SEED_READY     = 0,
         CA_SEED_STEP      = 1,
         CA_SEED_NEXT_FILE = 2,
+        CA_SEED_DONE_FILE = 3,
 };
 
 CaSeed *ca_seed_new(void);

@@ -12,6 +12,7 @@ typedef struct CaEncoder CaEncoder;
 enum {
         CA_ENCODER_FINISHED,  /* The end of the stream has been reached */
         CA_ENCODER_NEXT_FILE, /* We started with the next file, and we generated some data */
+        CA_ENCODER_DONE_FILE, /* We finished with some file, and possibly generated some data */
         CA_ENCODER_PAYLOAD,   /* We just read some payload data, and we generated some data */
         CA_ENCODER_DATA,      /* We generated some data */
 };

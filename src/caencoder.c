@@ -125,6 +125,7 @@ typedef enum CaEncoderState {
         CA_ENCODER_NEXT_DIRENT,
         CA_ENCODER_FILENAME,
         CA_ENCODER_GOODBYE,
+        CA_ENCODER_FINALIZE,
         CA_ENCODER_EOF,
 } CaEncoderState;
 
@@ -1625,7 +1626,8 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                         }
                 }
 
-                return CA_ENCODER_FINISHED;
+                ca_encoder_enter_state(e, CA_ENCODER_FINALIZE);
+                return CA_ENCODER_DONE_FILE;
 
         case CA_ENCODER_IN_PAYLOAD: {
                 uint64_t size;
@@ -1637,8 +1639,8 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                         return r;
 
                 if (e->payload_offset >= size) {
-                        ca_encoder_enter_state(e, CA_ENCODER_EOF);
-                        return CA_ENCODER_FINISHED;
+                        ca_encoder_enter_state(e, CA_ENCODER_FINALIZE);
+                        return CA_ENCODER_DONE_FILE;
                 }
 
                 return CA_ENCODER_PAYLOAD;
@@ -1648,7 +1650,11 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
 
                 if (!n->name_table_incomplete) {
                         assert(n->n_name_table > 0);
-                        n->name_table[n->n_name_table-1].end_offset = e->archive_offset;
+
+                        if (e->archive_offset == UINT64_MAX)
+                                n->name_table_incomplete = true;
+                        else
+                                n->name_table[n->n_name_table-1].end_offset = e->archive_offset;
                 }
 
                 n->dirent_idx++;
@@ -1667,8 +1673,12 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                 for (;;) {
                         de = ca_encoder_node_current_dirent(n);
                         if (!de) {
-                                if (!n->name_table_incomplete && n->n_name_table > 0)
-                                        n->name_table[n->n_name_table-1].end_offset = e->archive_offset;
+                                if (!n->name_table_incomplete && n->n_name_table > 0) {
+                                        if (e->archive_offset == UINT64_MAX)
+                                                n->name_table_incomplete = true;
+                                        else
+                                                n->name_table[n->n_name_table-1].end_offset = e->archive_offset;
+                                }
 
                                 ca_encoder_enter_state(e, CA_ENCODER_GOODBYE);
                                 return CA_ENCODER_DATA;
@@ -1690,13 +1700,18 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                 }
 
                 if (!n->name_table_incomplete) {
-                        if (!GREEDY_REALLOC(n->name_table, n->n_name_table_allocated, n->n_name_table+1))
-                                return -ENOMEM;
 
-                        n->name_table[n->n_name_table++] = (CaEncoderNameTable) {
-                                .start_offset = e->archive_offset,
-                                .hash = siphash24(de->d_name, strlen(de->d_name), (const uint8_t[16]) CA_FORMAT_GOODBYE_HASH_KEY),
-                        };
+                        if (e->archive_offset == UINT64_MAX)
+                                n->name_table_incomplete = true;
+                        else {
+                                if (!GREEDY_REALLOC(n->name_table, n->n_name_table_allocated, n->n_name_table+1))
+                                        return -ENOMEM;
+
+                                n->name_table[n->n_name_table++] = (CaEncoderNameTable) {
+                                        .start_offset = e->archive_offset,
+                                        .hash = siphash24(de->d_name, strlen(de->d_name), (const uint8_t[16]) CA_FORMAT_GOODBYE_HASH_KEY),
+                                };
+                        }
                 }
 
                 ca_encoder_enter_state(e, CA_ENCODER_FILENAME);
@@ -1721,6 +1736,24 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
         }
 
         case CA_ENCODER_GOODBYE:
+
+                ca_encoder_enter_state(e, CA_ENCODER_FINALIZE);
+                return CA_ENCODER_DONE_FILE;
+
+        case CA_ENCODER_FINALIZE:
+                r = ca_encoder_leave_child(e);
+                if (r < 0)
+                        return r;
+                if (r > 0) {
+                        CaEncoderNode *parent;
+
+                        parent = ca_encoder_current_node(e);
+                        if (!parent)
+                                return -EUNATCH;
+
+                        ca_encoder_enter_state(e, CA_ENCODER_NEXT_DIRENT);
+                        return ca_encoder_step_node(e, parent);
+                }
 
                 ca_encoder_enter_state(e, CA_ENCODER_EOF);
                 return CA_ENCODER_FINISHED;
@@ -1747,7 +1780,7 @@ static void ca_encoder_advance_buffer(CaEncoder *e) {
 }
 
 int ca_encoder_step(CaEncoder *e) {
-        int r;
+        CaEncoderNode *n;
 
         if (!e)
                 return -EINVAL;
@@ -1757,28 +1790,11 @@ int ca_encoder_step(CaEncoder *e) {
 
         ca_encoder_advance_buffer(e);
 
-        for (;;) {
-                CaEncoderNode *n;
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
 
-                n = ca_encoder_current_node(e);
-                if (!n)
-                        return -EUNATCH;
-
-                r = ca_encoder_step_node(e, n);
-                if (r != CA_ENCODER_FINISHED)
-                        return r;
-
-                r = ca_encoder_leave_child(e);
-                if (r < 0)
-                        return r;
-                if (r == 0)
-                        break;
-
-                ca_encoder_enter_state(e, CA_ENCODER_NEXT_DIRENT);
-        }
-
-        ca_encoder_forget_children(e);
-        return CA_ENCODER_FINISHED;
+        return ca_encoder_step_node(e, n);
 }
 
 static int ca_encoder_get_payload_data(CaEncoder *e, CaEncoderNode *n) {
@@ -2360,7 +2376,7 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
                 break;
 
         default:
-                return -EUNATCH;
+                return -ENODATA;
         }
 
         if (r < 0)
@@ -2457,12 +2473,9 @@ int ca_encoder_current_path(CaEncoder *e, char **ret) {
         if (!ret)
                 return -EINVAL;
 
-        node = ca_encoder_current_child_node(e);
-        if (!node) {
-                node = ca_encoder_current_node(e);
-                if (!node)
-                        return -EUNATCH;
-        }
+        node = ca_encoder_current_node(e);
+        if (!node)
+                return -EUNATCH;
 
         return ca_encoder_node_path(e, node, ret);
 }
@@ -3005,6 +3018,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                         return r;
 
                 node->dirent_idx = node->n_dirents;
+                node->name_table_incomplete = node->n_dirents > 0;
                 ca_encoder_enter_state(e, CA_ENCODER_GOODBYE);
 
                 e->payload_offset = location->offset;

@@ -48,7 +48,11 @@ int main(int argc, char *argv[]) {
                 case CA_SYNC_STEP:
                 case CA_SYNC_PAYLOAD:
                 case CA_SYNC_NEXT_FILE:
+                case CA_SYNC_DONE_FILE:
                         break;
+
+                default:
+                        assert_se(false);
                 }
         }
 
@@ -70,6 +74,7 @@ step2:
                 assert_se(r >= 0);
 
                 switch (r) {
+
                 case CA_SYNC_FINISHED: {
                         assert_se(ca_sync_get_digest(s, &digest) >= 0);
                         printf("%s\n", ca_chunk_id_format(&digest, t));
@@ -79,7 +84,11 @@ step2:
                 case CA_SYNC_STEP:
                 case CA_SYNC_PAYLOAD:
                 case CA_SYNC_NEXT_FILE:
+                case CA_SYNC_DONE_FILE:
                         break;
+
+                default:
+                        assert_se(false);
                 }
         }
 
