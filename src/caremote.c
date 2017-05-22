@@ -1931,9 +1931,10 @@ int ca_remote_step(CaRemote *rr) {
         return CA_REMOTE_POLL;
 }
 
-int ca_remote_poll(CaRemote *rr, uint64_t timeout) {
+int ca_remote_poll(CaRemote *rr, uint64_t timeout_nsec, const sigset_t *ss) {
         struct pollfd pollfd[2];
         size_t n = 0;
+        int r;
 
         if (!rr)
                 return -EINVAL;
@@ -1957,7 +1958,15 @@ int ca_remote_poll(CaRemote *rr, uint64_t timeout) {
         if (n == 0)
                 return 0;
 
-        if (poll(pollfd, n, timeout == UINT64_MAX ? -1 : (int) ((timeout+999U)/1000U)) < 0)
+        if (timeout_nsec != UINT64_MAX) {
+                struct timespec ts;
+
+                ts = nsec_to_timespec(timeout_nsec);
+
+                r = ppoll(pollfd, n, &ts, ss);
+        } else
+                r = ppoll(pollfd, n, NULL, ss);
+        if (r < 0)
                 return -errno;
 
         return 1;

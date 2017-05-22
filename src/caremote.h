@@ -2,6 +2,7 @@
 #define foocaremotehfoo
 
 #include <inttypes.h>
+#include <signal.h>
 #include <stdbool.h>
 
 #include "cachunk.h"
@@ -55,7 +56,7 @@ int ca_remote_set_archive_fd(CaRemote *rr, int fd);
 
 int ca_remote_step(CaRemote *rr);
 
-int ca_remote_poll(CaRemote *rr, uint64_t timeout_usec);
+int ca_remote_poll(CaRemote *rr, uint64_t timeout_nsec, const sigset_t *ss);
 
 /* When we are in "pull" mode, interfaces for retrieving chunks, or enqueing requests for them */
 int ca_remote_request(CaRemote *rr, const CaChunkID *chunk_id, bool priority, CaChunkCompression desired_compression, const void **ret, size_t *ret_size, CaChunkCompression *ret_effective_compression);

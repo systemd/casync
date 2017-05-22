@@ -804,13 +804,12 @@ static int process_step_generic(CaSync *s, int step) {
                 else {
                         /* Wait for an event, temporarily and atomically unblocking SIGTERM/SIGINT while doing so */
                         r = ca_sync_poll(s, UINT64_MAX, &ss);
-
                         if ((r == -EINTR || r >= 0) && quit)
                                 r = -ESHUTDOWN;
                 }
 
                 /* Unblock SIGTERM/SIGINT again */
-                block_signal_handler(SIG_UNBLOCK, &ss);
+                block_signal_handler(SIG_UNBLOCK, NULL);
 
                 if (r == -ESHUTDOWN)
                         fprintf(stderr, "Got exit signal, quitting.\n");
@@ -1037,6 +1036,12 @@ static int make(int argc, char *argv[]) {
                 goto finish;
 
         for (;;) {
+                if (quit) {
+                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        r = -ESHUTDOWN;
+                        goto finish;
+                }
+
                 r = ca_sync_step(s);
                 if (r < 0) {
                         fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
@@ -1387,6 +1392,12 @@ static int extract(int argc, char *argv[]) {
         }
 
         for (;;) {
+                if (quit) {
+                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        r = -ESHUTDOWN;
+                        goto finish;
+                }
+
                 r = ca_sync_step(s);
                 if (r == -ENOMEDIUM) {
                         fprintf(stderr, "File, URL or resource not found.\n");
@@ -1741,6 +1752,12 @@ static int list(int argc, char *argv[]) {
         }
 
         for (;;) {
+                if (quit) {
+                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        r = -ESHUTDOWN;
+                        goto finish;
+                }
+
                 r = ca_sync_step(s);
                 if (r == -ENOMEDIUM) {
                         fprintf(stderr, "File, URL or resource not found.\n");
@@ -2190,6 +2207,12 @@ static int digest(int argc, char *argv[]) {
         }
 
         for (;;) {
+                if (quit) {
+                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        r = -ESHUTDOWN;
+                        goto finish;
+                }
+
                 r = ca_sync_step(s);
                 if (r == -ENOMEDIUM) {
                         fprintf(stderr, "File, URL or resource not found.\n");
@@ -2384,6 +2407,12 @@ static int mkdev(int argc, char *argv[]) {
         for (;;) {
                 uint64_t size;
 
+                if (quit) {
+                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        r = -ESHUTDOWN;
+                        goto finish;
+                }
+
                 r = ca_sync_get_archive_size(s, &size);
                 if (r >= 0) {
                         r = ca_block_device_set_size(nbd, (size + 511) & ~511);
@@ -2461,6 +2490,12 @@ static int mkdev(int argc, char *argv[]) {
         for (;;) {
                 uint64_t req_offset = 0, req_size = 0;
 
+                if (quit) {
+                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        r = -ESHUTDOWN;
+                        goto finish;
+                }
+
                 r = ca_block_device_step(nbd);
                 if (r < 0) {
                         fprintf(stderr, "Failed to read NBD request: %s\n", strerror(-r));
@@ -2483,7 +2518,7 @@ static int mkdev(int argc, char *argv[]) {
                                         r = -ESHUTDOWN;
                         }
 
-                        block_signal_handler(SIG_UNBLOCK, &ss);
+                        block_signal_handler(SIG_UNBLOCK, NULL);
 
                         if (r == -ESHUTDOWN) {
                                 fprintf(stderr, "Got exit signal, quitting.\n");
@@ -2520,6 +2555,12 @@ static int mkdev(int argc, char *argv[]) {
 
                 for (;;) {
                         bool done = false;
+
+                        if (quit) {
+                                fprintf(stderr, "Got exit signal, quitting.\n");
+                                r = -ESHUTDOWN;
+                                goto finish;
+                        }
 
                         r = ca_sync_step(s);
                         if (r == -ENOMEDIUM) {
@@ -2800,7 +2841,14 @@ static int pull(int argc, char *argv[]) {
 
         for (;;) {
                 unsigned put_count;
+                sigset_t ss;
                 int step;
+
+                if (quit) {
+                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        r = -ESHUTDOWN;
+                        goto finish;
+                }
 
                 step = ca_remote_step(rr);
                 if (step == -EPIPE || step == CA_REMOTE_FINISHED) /* When somebody pulls from us, he's welcome to terminate any time he likes */
@@ -2865,7 +2913,22 @@ static int pull(int argc, char *argv[]) {
                 if (step != CA_REMOTE_POLL)
                         continue;
 
-                r = ca_remote_poll(rr, UINT64_MAX);
+                block_signal_handler(SIG_BLOCK, &ss);
+
+                if (quit)
+                        r = -ESHUTDOWN;
+                else {
+                        r = ca_remote_poll(rr, UINT64_MAX, &ss);
+                        if ((r == -EINTR || r >= 0) && quit)
+                                r = -ESHUTDOWN;
+                }
+
+                block_signal_handler(SIG_UNBLOCK, NULL);
+
+                if (r == -ESHUTDOWN) {
+                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        goto finish;
+                }
                 if (r < 0) {
                         fprintf(stderr, "Failed to poll remoting engine: %s\n", strerror(-r));
                         goto finish;
@@ -2978,6 +3041,12 @@ static int push(int argc, char *argv[]) {
                 bool finished;
                 int step;
 
+                if (quit) {
+                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        r = -ESHUTDOWN;
+                        goto finish;
+                }
+
                 step = ca_remote_step(rr);
                 if (step < 0) {
                         fprintf(stderr, "Failed to process remote: %s\n", strerror(-step));
@@ -2990,14 +3059,32 @@ static int push(int argc, char *argv[]) {
 
                 switch (step) {
 
-                case CA_REMOTE_POLL:
-                        r = ca_remote_poll(rr, UINT64_MAX);
+                case CA_REMOTE_POLL: {
+                        sigset_t ss;
+
+                        block_signal_handler(SIG_BLOCK, &ss);
+
+                        if (quit)
+                                r = -ESHUTDOWN;
+                        else {
+                                r = ca_remote_poll(rr, UINT64_MAX, &ss);
+                                if ((r == -EINTR || r >= 0) && quit)
+                                        r = -ESHUTDOWN;
+                        }
+
+                        block_signal_handler(SIG_UNBLOCK, NULL);
+
+                        if (r == -ESHUTDOWN) {
+                                fprintf(stderr, "Got exit signal, quitting.\n");
+                                goto finish;
+                        }
                         if (r < 0) {
                                 fprintf(stderr, "Failed to run remoting engine: %s\n", strerror(-r));
                                 goto finish;
                         }
 
                         break;
+                }
 
                 case CA_REMOTE_STEP:
                 case CA_REMOTE_READ_ARCHIVE:

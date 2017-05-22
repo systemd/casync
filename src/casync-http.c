@@ -126,7 +126,7 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
                 if (r != CA_REMOTE_POLL)
                         continue;
 
-                r = ca_remote_poll(rr, UINT64_MAX);
+                r = ca_remote_poll(rr, UINT64_MAX, NULL);
                 if (r < 0) {
                         fprintf(stderr, "Failed to poll remoting engine: %s\n", strerror(-r));
                         return r;
