@@ -3,6 +3,7 @@
 #include <linux/nbd.h>
 #include <sys/ioctl.h>
 #include <sys/poll.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -152,6 +153,10 @@ int ca_block_device_open(CaBlockDevice *d) {
         }
 
         if (d->ioctl_process == 0) {
+
+                (void) prctl(PR_SET_PDEATHSIG, SIGKILL);
+                (void) prctl(PR_SET_NAME, "nbd-ioctl");
+
                 if (ioctl(d->device_fd, NBD_DO_IT) < 0)
                         _exit(EXIT_FAILURE);
 
