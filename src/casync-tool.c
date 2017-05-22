@@ -702,7 +702,7 @@ static int verbose_print_done_make(CaSync *s) {
                 fprintf(stderr, "Number of chunks: %" PRIu64 "\n", n_chunks);
         if (n_reused != UINT64_MAX) {
                 fprintf(stderr, "Reused chunks: %" PRIu64, n_reused);
-                if (n_chunks != UINT64_MAX)
+                if (n_chunks != UINT64_MAX && n_chunks > 0)
                         fprintf(stderr, " (%" PRIu64 "%%)\n", (n_reused*100U/n_chunks));
                 else
                         fputc('\n', stderr);
