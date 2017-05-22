@@ -32,3 +32,5 @@ LATER:
 * when extracting, optionally make use of reduced feature bits than the archive contains
 * optionally import from/export to classic tar ball (and zip?)
 * optionally interpret aufs/union mount whiteout files?
+* in mkdev and mount: issue sd_notify(READY=1) when ready
+* mkdev: generate named device node symlinks cleanly via udev rule
