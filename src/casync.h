@@ -107,6 +107,7 @@ int ca_sync_get_chunk_size_min(CaSync *s, size_t *ret);
 int ca_sync_get_chunk_size_max(CaSync *s, size_t *ret);
 
 int ca_sync_current_archive_chunks(CaSync *s, uint64_t *ret);
+int ca_sync_current_archive_reused_chunks(CaSync *s, uint64_t *ret);
 int ca_sync_current_archive_offset(CaSync *s, uint64_t *ret);
 
 int ca_sync_seek_offset(CaSync *s, uint64_t offset);

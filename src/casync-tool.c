@@ -619,7 +619,7 @@ static int verbose_print_path(CaSync *s, const char *verb) {
 }
 
 static int verbose_print_done_make(CaSync *s) {
-        uint64_t n_chunks = 0, size = 0, covering;
+        uint64_t n_chunks = UINT64_MAX, size = UINT64_MAX, n_reused = UINT64_MAX, covering;
         char buffer[128];
         int r;
 
@@ -664,18 +664,31 @@ static int verbose_print_done_make(CaSync *s) {
                 return r;
         }
 
+        r = ca_sync_current_archive_reused_chunks(s, &n_reused);
+        if (r < 0 && r != -ENODATA) {
+                fprintf(stderr, "Failed to determine number of reused chunks: %s\n", strerror(-r));
+                return r;
+        }
+
         r = ca_sync_current_archive_offset(s, &size);
         if (r < 0 && r != -ENODATA) {
                 fprintf(stderr, "Failed to determine archive size: %s\n", strerror(-r));
                 return r;
         }
 
-        if (size > 0)
+        if (size != UINT64_MAX)
                 fprintf(stderr, "Archive size: %s\n", format_bytes(buffer, sizeof(buffer), size));
-        if (n_chunks > 0)
+        if (n_chunks != UINT64_MAX)
                 fprintf(stderr, "Number of chunks: %" PRIu64 "\n", n_chunks);
+        if (n_reused != UINT64_MAX) {
+                fprintf(stderr, "Reused chunks: %" PRIu64, n_reused);
+                if (n_chunks != UINT64_MAX)
+                        fprintf(stderr, " (%" PRIu64 "%%)\n", (n_reused*100U/n_chunks));
+                else
+                        fputc('\n', stderr);
+        }
 
-        if (size > 0 && n_chunks > 0)
+        if (size != UINT64_MAX && n_chunks != UINT64_MAX)
                 fprintf(stderr, "Effective average chunk size: %s\n", format_bytes(buffer, sizeof(buffer), size/n_chunks));
 
         return 1;

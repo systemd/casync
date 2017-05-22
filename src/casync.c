@@ -91,6 +91,7 @@ typedef struct CaSync {
         uint64_t feature_flags;
 
         uint64_t n_written_chunks;
+        uint64_t n_reused_chunks;
         uint64_t n_prefetched_chunks;
 
         uint64_t archive_size;
@@ -1350,7 +1351,9 @@ static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l) {
 
         if (s->wstore) {
                 r = ca_store_put(s->wstore, &id, CA_CHUNK_UNCOMPRESSED, p, l);
-                if (r < 0 && r != -EEXIST)
+                if (r == -EEXIST)
+                        s->n_reused_chunks++;
+                else if (r < 0)
                         return r;
         }
 
@@ -2834,6 +2837,21 @@ int ca_sync_current_archive_chunks(CaSync *s, uint64_t *ret) {
                 return -ENODATA;
 
         *ret = s->n_written_chunks;
+        return 0;
+}
+
+int ca_sync_current_archive_reused_chunks(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_ENCODE)
+                return -ENODATA;
+        if (!s->wstore) /* we can count this only on local wstores */
+                return -ENODATA;
+
+        *ret = s->n_reused_chunks;
         return 0;
 }
 
