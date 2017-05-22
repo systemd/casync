@@ -1,9 +1,9 @@
 #!/bin/bash -ex
 
 if [ `id -u` == 0 ] ; then
-    PARAMS=""
+    PARAMS="-v"
 else
-    PARAMS="--without=privileged"
+    PARAMS="-v --without=privileged"
 fi
 
 CASYNC_PROTOCOL_PATH=@top_builddir@
