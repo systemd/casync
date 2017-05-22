@@ -1,0 +1,46 @@
+#!/bin/bash -ex
+
+PARAMS=-v
+
+CASYNC_PROTOCOL_PATH=@top_builddir@
+export CASYNC_PROTOCOL_PATH
+
+SCRATCH_DIR=/var/tmp/test-casync.$RANDOM
+mkdir -p $SCRATCH_DIR
+
+dd if=/dev/urandom of=$SCRATCH_DIR/blob bs=102400 count=80
+
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/blob > $SCRATCH_DIR/test.digest
+sha256sum $SCRATCH_DIR/blob | cut -c -64 > $SCRATCH_DIR/test.digest2
+
+@top_builddir@/casync $PARAMS make $SCRATCH_DIR/test.caibx $SCRATCH_DIR/blob
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/test.caibx > $SCRATCH_DIR/test.caibx.digest
+
+diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.digest2
+diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.caibx.digest
+
+@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/test.caibx $SCRATCH_DIR/blob2
+@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/test.caibx --seed=$SCRATCH_DIR/blob2 $SCRATCH_DIR/blob3
+
+sha256sum $SCRATCH_DIR/blob2 | cut -c -64 > $SCRATCH_DIR/extract.digest
+sha256sum $SCRATCH_DIR/blob3 | cut -c -64 > $SCRATCH_DIR/extract2.digest
+
+diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/extract.digest
+diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/extract2.digest
+
+if [ `id -u` == 0 ] ; then
+    modprobe nbd
+
+    @top_builddir@/casync $PARAMS mkdev $SCRATCH_DIR/test.caibx $SCRATCH_DIR/test-node &
+    MKDEV_PID=$!
+
+    sleep 3
+
+    dd if=$SCRATCH_DIR/test-node bs=102400 count=80 | sha256sum | cut -c -64 > $SCRATCH_DIR/mkdev.digest
+
+    diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/mkdev.digest
+
+    kill $MKDEV_PID
+fi
+
+rm -rf $SCRATCH_DIR

@@ -49,5 +49,6 @@
 /test-casync
 /test-cautil
 /test-script.sh
+/test-nbd.sh
 /test-util
 Makefile.in

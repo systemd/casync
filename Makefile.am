@@ -83,7 +83,8 @@ noinst_PROGRAMS = \
 
 TESTS = \
 	$(tests) \
-	test-script.sh
+	test-script.sh \
+	test-nbd.sh
 
 lib_SOURCES = \
 	src/cachunk.c \
@@ -335,23 +336,31 @@ test_caorigin_LDADD = \
 	$(LIBGCRYPT_LIBS) \
 	$(ACL_LIBS)
 
-## test-script.sh
+## test scripts
 
 test-script.sh: test/test-script.sh.in
 	sed -e "s,@top_srcdir\@,$(abs_top_srcdir)," \
 	-e "s,@top_builddir\@,$(abs_top_builddir)," $^ > $@
 	chmod +x $@
 
+test-nbd.sh: test/test-nbd.sh.in
+	sed -e "s,@top_srcdir\@,$(abs_top_srcdir)," \
+	-e "s,@top_builddir\@,$(abs_top_builddir)," $^ > $@
+	chmod +x $@
+
 noinst_SCRIPTS = \
-	test-script.sh
+	test-script.sh \
+	test-nbd.sh
 
 EXTRA_DIST = \
 	test/test-script.sh.in \
+	test/test-nbd.sh.in \
 	test/pseudo-ssh \
 	test/http-server.py
 
 CLEANFILES = \
-        test-script.sh
+	test-script.sh \
+	test-nbd.sh
 
 test-files:
 	test -e test-files/thisisafifo || mkfifo test-files/thisisafifo
