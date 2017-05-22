@@ -2,6 +2,7 @@
 #define fooca_synchfoo
 
 #include <inttypes.h>
+#include <signal.h>
 
 #include "cachunk.h"
 #include "cachunkid.h"
@@ -80,7 +81,7 @@ int ca_sync_add_seed_fd(CaSync *sync, int fd);
 int ca_sync_add_seed_path(CaSync *sync, const char *path);
 
 int ca_sync_step(CaSync *sync);
-int ca_sync_poll(CaSync *s, uint64_t timeout_usec);
+int ca_sync_poll(CaSync *s, uint64_t timeout_nsec, const sigset_t *ss);
 
 int ca_sync_current_path(CaSync *sync, char **ret);
 int ca_sync_current_mode(CaSync *sync, mode_t *ret);

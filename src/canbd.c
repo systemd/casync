@@ -294,8 +294,9 @@ int ca_block_device_put_data(CaBlockDevice *d, uint64_t offset, const void *data
         return 0;
 }
 
-int ca_block_device_poll(CaBlockDevice *d, uint64_t timeout_usec) {
+int ca_block_device_poll(CaBlockDevice *d, uint64_t timeout_nsec, const sigset_t *ss) {
         struct pollfd pollfd;
+        int r;
 
         if (!d)
                 return -EINVAL;
@@ -309,7 +310,15 @@ int ca_block_device_poll(CaBlockDevice *d, uint64_t timeout_usec) {
                 .events = POLLIN,
         };
 
-        if (poll(&pollfd, 1, timeout_usec == UINT64_MAX ? -1 : (int) ((timeout_usec + 999U)/1000U)) < 0)
+        if (timeout_nsec != UINT64_MAX) {
+                struct timespec ts;
+
+                ts = nsec_to_timespec(timeout_nsec);
+
+                r = ppoll(&pollfd, 1, &ts, ss);
+        } else
+                r = ppoll(&pollfd, 1, NULL, ss);
+        if (r < 0)
                 return -errno;
 
         return 1;

@@ -2812,7 +2812,7 @@ static int ca_sync_add_pollfd(CaRemote *rr, struct pollfd *pollfd) {
         return 2;
 }
 
-int ca_sync_poll(CaSync *s, uint64_t timeout_usec) {
+int ca_sync_poll(CaSync *s, uint64_t timeout_nsec, const sigset_t *ss) {
         struct pollfd *pollfd;
         size_t i, n = 0;
         int r;
@@ -2855,7 +2855,15 @@ int ca_sync_poll(CaSync *s, uint64_t timeout_usec) {
                 n += r;
         }
 
-        if (poll(pollfd, n, timeout_usec == UINT64_MAX ? -1 : (int) ((timeout_usec + 999U)/1000U)) < 0)
+        if (timeout_nsec != UINT64_MAX) {
+                struct timespec ts;
+
+                ts = nsec_to_timespec(timeout_nsec);
+
+                r = ppoll(pollfd, n, &ts, ss);
+        } else
+                r = ppoll(pollfd, n, NULL, ss);
+        if (r < 0)
                 return -errno;
 
         return n;

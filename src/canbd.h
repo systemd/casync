@@ -2,6 +2,7 @@
 #define foocanbdfoo
 
 #include <inttypes.h>
+#include <signal.h>
 #include <sys/types.h>
 
 typedef struct CaBlockDevice CaBlockDevice;
@@ -25,7 +26,7 @@ int ca_block_device_get_request_size(CaBlockDevice *d, uint64_t *ret);
 
 int ca_block_device_put_data(CaBlockDevice *d, uint64_t offset, const void *data, size_t size);
 
-int ca_block_device_poll(CaBlockDevice *d, uint64_t usec);
+int ca_block_device_poll(CaBlockDevice *d, uint64_t nsec, const sigset_t *ss);
 
 int ca_block_device_set_path(CaBlockDevice *d, const char *node);
 int ca_block_device_get_path(CaBlockDevice *d, const char **ret);

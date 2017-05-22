@@ -47,6 +47,30 @@ static uint64_t arg_without = 0;
 static uid_t arg_uid_shift = 0, arg_uid_range = 0x10000U;
 static bool arg_uid_shift_apply = false;
 
+static volatile sig_atomic_t quit = false;
+
+static void block_signal_handler(int how, sigset_t *old) {
+        sigset_t ss;
+
+        assert_se(sigemptyset(&ss) >= 0);
+        assert_se(sigaddset(&ss, SIGINT) >= 0);
+        assert_se(sigdelset(&ss, SIGTERM) >= 0);
+        assert_se(sigprocmask(how, &ss, old) >= 0);
+}
+
+static void signal_handler(int signo) {
+        quit = true;
+}
+
+static void install_signal_handler(bool b) {
+        const struct sigaction sa = {
+                .sa_handler = b ? signal_handler : SIG_DFL,
+        };
+
+        assert_se(sigaction(SIGINT, &sa, NULL) >= 0);
+        assert_se(sigaction(SIGTERM, &sa, NULL) >= 0);
+}
+
 static void help(void) {
         printf("%1$s [OPTIONS...] make [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
                "%1$s [OPTIONS...] extract [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
@@ -769,12 +793,32 @@ static int process_step_generic(CaSync *s, int step) {
         case CA_SYNC_SEED_DONE_FILE:
                 return verbose_print_path(s, "Seeded");
 
-        case CA_SYNC_POLL:
-                r = ca_sync_poll(s, UINT64_MAX);
-                if (r < 0)
+        case CA_SYNC_POLL: {
+                sigset_t ss;
+
+                /* Block SIGTERM/SIGINT for now */
+                block_signal_handler(SIG_BLOCK, &ss);
+
+                if (quit) /* Check if we are supposed to quit, if so, do so now */
+                        r = -ESHUTDOWN;
+                else {
+                        /* Wait for an event, temporarily and atomically unblocking SIGTERM/SIGINT while doing so */
+                        r = ca_sync_poll(s, UINT64_MAX, &ss);
+
+                        if ((r == -EINTR || r >= 0) && quit)
+                                r = -ESHUTDOWN;
+                }
+
+                /* Unblock SIGTERM/SIGINT again */
+                block_signal_handler(SIG_UNBLOCK, &ss);
+
+                if (r == -ESHUTDOWN)
+                        fprintf(stderr, "Got exit signal, quitting.\n");
+                else if (r < 0)
                         fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
 
                 return r;
+        }
 
         case CA_SYNC_NOT_FOUND:
                 fprintf(stderr, "Seek path not available in archive.\n");
@@ -2426,8 +2470,24 @@ static int mkdev(int argc, char *argv[]) {
                         break;
 
                 if (r == CA_BLOCK_DEVICE_POLL) {
-                        r = ca_block_device_poll(nbd, UINT64_MAX);
-                        if (r < 0) {
+                        sigset_t ss;
+
+                        block_signal_handler(SIG_BLOCK, &ss);
+
+                        if (quit)
+                                r = -ESHUTDOWN;
+                        else {
+                                r = ca_block_device_poll(nbd, UINT64_MAX, &ss);
+                                if ((r == -EINTR || r >= 0) && quit)
+                                        r = -ESHUTDOWN;
+                        }
+
+                        block_signal_handler(SIG_UNBLOCK, &ss);
+
+                        if (r == -ESHUTDOWN) {
+                                fprintf(stderr, "Got exit signal, quitting.\n");
+                                goto finish;
+                        } else if (r < 0) {
                                 fprintf(stderr, "Failed to poll for NBD requests: %s\n", strerror(-r));
                                 goto finish;
                         }
@@ -3168,7 +3228,11 @@ int main(int argc, char *argv[]) {
         if (r <= 0)
                 goto finish;
 
+        install_signal_handler(true);
+        block_signal_handler(SIG_UNBLOCK, NULL);
+
         r = dispatch_verb(argc - optind, argv + optind);
+        install_signal_handler(false);
 
 finish:
         free(arg_store);
