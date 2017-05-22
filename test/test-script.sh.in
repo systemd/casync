@@ -47,30 +47,46 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.caidx.digest
 ### Test Extraction
 
 @top_builddir@/casync $PARAMS extract $SCRATCH_DIR/test.catar $SCRATCH_DIR/extract-catar
+@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/test.catar --seed=$SCRATCH_DIR/extract-catar $SCRATCH_DIR/extract-catar2
 @top_builddir@/casync $PARAMS extract $SCRATCH_DIR/test.caidx $SCRATCH_DIR/extract-caidx
+@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/test.caidx --seed=$SCRATCH_DIR/extract-caidx $SCRATCH_DIR/extract-caidx2
 
 set +e
 
 diff -ur --no-dereference . $SCRATCH_DIR/extract-catar
+diff -ur --no-dereference . $SCRATCH_DIR/extract-catar2
 diff -ur --no-dereference . $SCRATCH_DIR/extract-caidx
+diff -ur --no-dereference . $SCRATCH_DIR/extract-caidx2
 
 set -e
 
 @top_builddir@/casync $PARAMS list $SCRATCH_DIR/extract-catar > $SCRATCH_DIR/test.extract-catar.list
+@top_builddir@/casync $PARAMS list $SCRATCH_DIR/extract-catar2 > $SCRATCH_DIR/test.extract-catar2.list
 @top_builddir@/casync $PARAMS list $SCRATCH_DIR/extract-caidx > $SCRATCH_DIR/test.extract-caidx.list
+@top_builddir@/casync $PARAMS list $SCRATCH_DIR/extract-caidx2 > $SCRATCH_DIR/test.extract-caidx2.list
 @top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/extract-catar > $SCRATCH_DIR/test.extract-catar.mtree
+@top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/extract-catar2 > $SCRATCH_DIR/test.extract-catar2.mtree
 @top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/extract-caidx > $SCRATCH_DIR/test.extract-caidx.mtree
+@top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/extract-caidx2 > $SCRATCH_DIR/test.extract-caidx2.mtree
 @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-catar > $SCRATCH_DIR/test.extract-catar.digest
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-catar2 > $SCRATCH_DIR/test.extract-catar2.digest
 @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-caidx > $SCRATCH_DIR/test.extract-caidx.digest
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-caidx2 > $SCRATCH_DIR/test.extract-caidx2.digest
 
 diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test.extract-catar.list
+diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test.extract-catar2.list
 diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test.extract-caidx.list
+diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/test.extract-caidx2.list
 
 diff -q $SCRATCH_DIR/test.mtree $SCRATCH_DIR/test.extract-catar.mtree
+diff -q $SCRATCH_DIR/test.mtree $SCRATCH_DIR/test.extract-catar2.mtree
 diff -q $SCRATCH_DIR/test.mtree $SCRATCH_DIR/test.extract-caidx.mtree
+diff -q $SCRATCH_DIR/test.mtree $SCRATCH_DIR/test.extract-caidx2.mtree
 
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.extract-catar.digest
+diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.extract-catar2.digest
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.extract-caidx.digest
+diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.extract-caidx2.digest
 
 ### Test seeking
 
