@@ -2301,7 +2301,7 @@ static int mkdev(int argc, char *argv[]) {
                 if (r >= 0) {
                         r = ca_block_device_set_size(nbd, (size + 511) & ~511);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to set NBD size.\n");
+                                fprintf(stderr, "Failed to set NBD size: %s\n", strerror(-r));
                                 goto finish;
                         }
                         break;
