@@ -34,6 +34,7 @@ int ca_sync_set_punch_holes(CaSync *s, bool enabled);
 int ca_sync_set_reflink(CaSync *s, bool enabled);
 int ca_sync_set_delete(CaSync *s, bool enabled);
 int ca_sync_set_payload(CaSync *s, bool enabled);
+int ca_sync_set_undo_immutable(CaSync *s, bool enabled);
 
 int ca_sync_set_uid_shift(CaSync *s, uid_t uid);
 int ca_sync_set_uid_range(CaSync *s, uid_t uid);

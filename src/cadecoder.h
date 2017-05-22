@@ -32,6 +32,7 @@ int ca_decoder_set_punch_holes(CaDecoder *d, bool enabled);
 int ca_decoder_set_reflink(CaDecoder *d, bool enabled);
 int ca_decoder_set_delete(CaDecoder *d, bool enabled);
 int ca_decoder_set_payload(CaDecoder *d, bool enabled);
+int ca_decoder_set_undo_immutable(CaDecoder *d, bool enabled);
 
 int ca_decoder_set_uid_shift(CaDecoder *e, uid_t u);
 int ca_decoder_set_uid_range(CaDecoder *e, uid_t u);

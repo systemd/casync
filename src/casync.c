@@ -102,6 +102,7 @@ typedef struct CaSync {
         bool reflink:1;
         bool delete:1;
         bool payload:1;
+        bool undo_immutable:1;
 
         CaFileRoot *archive_root;
 
@@ -264,6 +265,25 @@ int ca_sync_set_payload(CaSync *s, bool enabled) {
         }
 
         s->payload = enabled;
+
+        return 0;
+}
+
+int ca_sync_set_undo_immutable(CaSync *s, bool enabled) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        if (s->decoder) {
+                r = ca_decoder_set_undo_immutable(s->decoder, enabled);
+                if (r < 0)
+                        return r;
+        }
+
+        s->undo_immutable = enabled;
 
         return 0;
 }
@@ -1215,6 +1235,9 @@ static int ca_sync_start(CaSync *s) {
                 if (r < 0)
                         return r;
                 r = ca_decoder_set_payload(s->decoder, s->payload || s->remote_archive);
+                if (r < 0)
+                        return r;
+                r = ca_decoder_set_undo_immutable(s->decoder, s->undo_immutable);
                 if (r < 0)
                         return r;
                 r = ca_decoder_set_uid_shift(s->decoder, s->uid_shift);

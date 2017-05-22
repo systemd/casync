@@ -31,6 +31,7 @@ static enum {
 } arg_what = _WHAT_INVALID;
 static bool arg_verbose = false;
 static bool arg_respect_nodump = true;
+static bool arg_undo_immutable = false;
 static bool arg_delete = true;
 static bool arg_punch_holes = true;
 static bool arg_reflink = true;
@@ -62,8 +63,9 @@ static void help(void) {
                "     --seed=PATH             Additional file or directory to use as seed\n"
                "     --recursive=no          List non-recursively\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n"
-               "     --respect-nodump=no     Don't respect chattr(1)'s -d 'nodump' flag\n"
+               "     --respect-nodump=no     Don't respect chattr(1)'s +d 'nodump' flag\n"
                "     --delete=no             Don't delete existing files not listed in archive after extraction\n"
+               "     --undo-immutable=yes    When removing existing files, undo chattr(1)'s +i 'immutable' flag\n"
                "     --punch-holes=no        Don't create sparse files\n"
                "     --reflink=no            Don't create reflinks from seeds\n"
                "     --seed-output=no        Don't implicitly add pre-existing output as seed\n"
@@ -129,6 +131,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_WITHOUT,
                 ARG_WHAT,
                 ARG_RESPECT_NODUMP,
+                ARG_UNDO_IMMUTABLE,
                 ARG_PUNCH_HOLES,
                 ARG_REFLINK,
                 ARG_SEED_OUTPUT,
@@ -150,6 +153,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "without",        required_argument, NULL, ARG_WITHOUT        },
                 { "what",           required_argument, NULL, ARG_WHAT           },
                 { "respect-nodump", required_argument, NULL, ARG_RESPECT_NODUMP },
+                { "undo-immutable", required_argument, NULL, ARG_UNDO_IMMUTABLE },
                 { "delete",         required_argument, NULL, ARG_DELETE         },
                 { "punch-holes",    required_argument, NULL, ARG_PUNCH_HOLES    },
                 { "reflink",        required_argument, NULL, ARG_REFLINK        },
@@ -285,6 +289,16 @@ static int parse_argv(int argc, char *argv[]) {
                         }
 
                         arg_respect_nodump = r;
+                        break;
+
+                case ARG_UNDO_IMMUTABLE:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --undo-immutable= parameter: %s\n", optarg);
+                                return r;
+                        }
+
+                        arg_undo_immutable = r;
                         break;
 
                 case ARG_PUNCH_HOLES:
@@ -511,6 +525,12 @@ static int load_feature_flags(CaSync *s) {
                         fprintf(stderr, "Failed to set UID range: %s\n", strerror(-r));
                         return r;
                 }
+        }
+
+        r = ca_sync_set_undo_immutable(s, arg_undo_immutable);
+        if (r < 0 && r != -ENOTTY) {
+                fprintf(stderr, "Failed to set undo immutable flags: %s\n", strerror(-r));
+                return r;
         }
 
         return 0;

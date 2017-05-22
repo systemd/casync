@@ -186,6 +186,7 @@ struct CaDecoder {
         bool reflink:1;
         bool delete:1;
         bool payload:1;
+        bool undo_immutable:1;
 
         uint64_t n_punch_holes_bytes;
         uint64_t n_reflink_bytes;
@@ -2974,7 +2975,7 @@ static int ca_decoder_node_delete(CaDecoder *d, CaDecoderNode *n) {
                 if (safe_bsearch(&key, n->dirents, n->n_dirents, sizeof(char*), comparison_fn_strcmpp))
                         continue;
 
-                r = rm_rf_at(n->fd, de->d_name, REMOVE_ROOT|REMOVE_PHYSICAL);
+                r = rm_rf_at(n->fd, de->d_name, REMOVE_ROOT|REMOVE_PHYSICAL|(d->undo_immutable ? REMOVE_UNDO_IMMUTABLE : 0));
                 if (r < 0)
                         goto finish;
         }
@@ -2983,6 +2984,58 @@ static int ca_decoder_node_delete(CaDecoder *d, CaDecoderNode *n) {
 
 finish:
         closedir(dd);
+        return r;
+}
+
+static int drop_immutable(int dir_fd, const char *name) {
+        struct stat st;
+        unsigned attr;
+        int fd, r;
+
+        if (dir_fd < 0)
+                return -EBADF;
+        if (!name)
+                return -EINVAL;
+
+        fd = openat(dir_fd, name, O_CLOEXEC|O_RDONLY|O_NOFOLLOW|O_NOCTTY);
+        if (fd < 0) {
+                if (errno == ELOOP) /* symlinks don't have an immutable bit */
+                        return 0;
+
+                return -errno;
+        }
+
+        if (fstat(fd, &st) < 0) {
+                r = -errno;
+                goto finish;
+        }
+        if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) {
+                r = 0; /* only regular files and directories have an immutable bit */
+                goto finish;
+        }
+
+        if (ioctl(fd, FS_IOC_GETFLAGS, &attr) < 0) {
+                /* If the fs doesn't actually support chattr(1) flags, then let's not do anything */
+                r = IN_SET(errno, ENOTTY, EBADF, EOPNOTSUPP) ? 0 : -errno;
+                goto finish;
+        }
+
+        if ((attr & FS_IMMUTABLE_FL) == 0) {
+                r = 0; /* nothing to unset */
+                goto finish;
+        }
+
+        attr &= ~FS_IMMUTABLE_FL;
+
+        if (ioctl(fd, FS_IOC_SETFLAGS, &attr) < 0) {
+                r = -errno;
+                goto finish;
+        }
+
+        r = 1;
+
+finish:
+        safe_close(fd);
         return r;
 }
 
@@ -3362,30 +3415,51 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 /* Move the final result into place. Note that the chattr() file attributes we only apply after this,
                  * as they might make prohibit us from renaming the file (consider the "immutable" flag) */
 
-                if (renameat(dir_fd, child->temporary_name, dir_fd, child->name) < 0) {
-
-                        if (!IN_SET(errno, ENOTDIR, EISDIR))
-                                return -errno;
+                r = renameat(dir_fd, child->temporary_name, dir_fd, child->name) < 0 ? -errno : 0;
+                if (r == -EPERM && d->undo_immutable) {
+                        /* Renaming the file failed. This could be because the "immutable" flag was set on the destination. Let's see if we can drop that */
+                        r = drop_immutable(dir_fd, child->name);
+                        if (r < 0)
+                                return r;
+                        if (r == 0) /* Couldn't change? Then propagate the EPERM */
+                                r = -EPERM;
+                        else /* try again... */
+                                r = renameat(dir_fd, child->temporary_name, dir_fd, child->name) < 0 ? -errno : 0;
+                }
+                if (r < 0) {
+                        if (!IN_SET(r, -ENOTDIR, -EISDIR))
+                                return r;
 
                         /* The destination exists already, and we couldn't rename the file overriding it. This most
                          * likely happened because we tried to move a directory over a regular file or vice
                          * versa. Let's now try to swap the temporary file and the destination. If that works, we can
                          * remove the temporary file, and expose atomic behaviour to the outside. */
 
-                        if (renameat2(dir_fd, child->temporary_name, dir_fd, child->name, RENAME_EXCHANGE) < 0) {
+                        r = renameat2(dir_fd, child->temporary_name, dir_fd, child->name, RENAME_EXCHANGE) < 0 ? -errno : 0;
+                        if (r == -EPERM && d->undo_immutable) {
+                                /* EPERM could mean the immutable flag was set on the destination, let's see if we can drop that. */
+                                r = drop_immutable(dir_fd, child->name);
+                                if (r < 0)
+                                        return r;
+                                if (r == 0) /* Couldn't change? */
+                                        r = -EPERM;
+                                else
+                                        r = renameat2(dir_fd, child->temporary_name, dir_fd, child->name, RENAME_EXCHANGE) < 0 ? -errno : 0;
+                        }
+                        if (r < 0) {
 
                                 /* If that didn't work (kernel too old?), then let's remove the destination first, and
                                  * then try again. Of course in this mode we lose atomicity, but it's the best we can
                                  * do */
 
-                                (void) rm_rf_at(dir_fd, child->name, REMOVE_ROOT|REMOVE_PHYSICAL);
+                                (void) rm_rf_at(dir_fd, child->name, REMOVE_ROOT|REMOVE_PHYSICAL|(d->undo_immutable ? REMOVE_UNDO_IMMUTABLE : 0));
 
                                 if (renameat(dir_fd, child->temporary_name, dir_fd, child->name) < 0)
                                         return -errno;
                         } else {
                                 /* The exchange worked! In that case the temporary name is now the old version, let's remove it */
 
-                                r = rm_rf_at(dir_fd, child->temporary_name, REMOVE_ROOT|REMOVE_PHYSICAL);
+                                r = rm_rf_at(dir_fd, child->temporary_name, REMOVE_ROOT|REMOVE_PHYSICAL|(d->undo_immutable ? REMOVE_UNDO_IMMUTABLE : 0));
                                 if (r < 0)
                                         return r;
                         }
@@ -4387,6 +4461,15 @@ int ca_decoder_set_payload(CaDecoder *d, bool enabled) {
                 return -EINVAL;
 
         d->payload = enabled;
+        return 0;
+}
+
+int ca_decoder_set_undo_immutable(CaDecoder *d, bool enabled) {
+
+        if (!d)
+                return -EINVAL;
+
+        d->undo_immutable = enabled;
         return 0;
 }
 

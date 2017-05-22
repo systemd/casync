@@ -1,7 +1,9 @@
 #include <fcntl.h>
+#include <linux/fs.h>
 #include <linux/magic.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <sys/types.h>
@@ -9,6 +11,80 @@
 
 #include "rm-rf.h"
 #include "util.h"
+
+static int unlinkat_immutable(int dir_fd, const char *name, int flags, RemoveFlags rflags) {
+        unsigned attr;
+        int r, fd;
+
+        if (unlinkat(dir_fd, name, flags) >= 0)
+                return 0;
+
+        if (errno != EPERM)
+                return -errno;
+        if ((rflags & REMOVE_UNDO_IMMUTABLE) == 0)
+                return -EPERM;
+
+        fd = openat(dir_fd, name, O_CLOEXEC|O_RDONLY|O_NOFOLLOW|O_NOCTTY|(flags & AT_REMOVEDIR ? O_DIRECTORY : 0));
+        if (fd < 0) {
+                /* If we can't open the thing because it's a symlink, propagate the original EPERM error. (Except if we are supposed to remove a directory) */
+                if (errno == ELOOP)
+                        return (flags & AT_REMOVEDIR) == 0 ? -EPERM : -ENOTDIR;
+
+                return -errno;
+        }
+
+        if ((flags & AT_REMOVEDIR) == 0) {
+                struct stat st;
+
+                if (fstat(fd, &st) < 0) {
+                        r = -errno;
+                        goto fail;
+                }
+
+                if (S_ISDIR(st.st_mode)) {
+                        /* This is a directory, but AT_REMOVEDIR wasn't set? then report it with the right error */
+                        r = -EISDIR;
+                        goto fail;
+                }
+
+                if (!S_ISREG(st.st_mode)) {
+                        r = -EPERM; /* chattr(1) flags not supported for anything not regular files or directories, propagate the original error */
+                        goto fail;
+                }
+        }
+
+        if (ioctl(fd, FS_IOC_GETFLAGS, &attr) < 0) {
+                /* If chattr(1) flags are not supported, propagate the original error */
+                r = IN_SET(errno, ENOTTY, EBADF, EOPNOTSUPP) ? -EPERM : -errno;
+                goto fail;
+        }
+
+        if ((attr & FS_IMMUTABLE_FL) == 0) {
+                /* immutable flag isn't set, propagate original error */
+                r = -EPERM;
+                goto fail;
+        }
+
+        attr &= ~FS_IMMUTABLE_FL;
+
+        if (ioctl(fd, FS_IOC_SETFLAGS, &attr) < 0) {
+                r = -errno;
+                goto fail;
+        }
+
+        fd = safe_close(fd);
+
+        if (unlinkat(dir_fd, name, flags) < 0) {
+                r = -errno;
+                goto fail;
+        }
+
+        return 0;
+
+fail:
+        safe_close(fd);
+        return r;
+}
 
 int rm_rf_children(int fd, RemoveFlags flags, struct stat *root_dev) {
         struct statfs sfs;
@@ -104,16 +180,18 @@ int rm_rf_children(int fd, RemoveFlags flags, struct stat *root_dev) {
                         if (r < 0 && ret == 0)
                                 ret = r;
 
-                        if (unlinkat(fd, de->d_name, AT_REMOVEDIR) < 0) {
-                                if (ret == 0 && errno != ENOENT)
-                                        ret = -errno;
+                        r = unlinkat_immutable(fd, de->d_name, AT_REMOVEDIR, flags);
+                        if (r < 0) {
+                                if (ret == 0 && r != -ENOENT)
+                                        ret = r;
                         }
 
                 } else if (!(flags & REMOVE_ONLY_DIRECTORIES)) {
 
-                        if (unlinkat(fd, de->d_name, 0) < 0) {
-                                if (ret == 0 && errno != ENOENT)
-                                        ret = -errno;
+                        r = unlinkat_immutable(fd, de->d_name, 0, flags);
+                        if (r < 0) {
+                                if (ret == 0 && r != -ENOENT)
+                                        ret = r;
                         }
                 }
         }
@@ -158,9 +236,11 @@ int rm_rf_at(int dir_fd, const char *path, RemoveFlags flags) {
                                 return -EPERM;
                 }
 
-                if ((flags & REMOVE_ROOT) && !(flags & REMOVE_ONLY_DIRECTORIES))
-                        if (unlinkat(dir_fd, path, 0) < 0 && errno != ENOENT)
-                                return -errno;
+                if ((flags & REMOVE_ROOT) && !(flags & REMOVE_ONLY_DIRECTORIES)) {
+                        r = unlinkat_immutable(dir_fd, path, 0, flags);
+                        if (r < 0 && r != -ENOENT)
+                                return r;
+                }
 
                 return 0;
         }
@@ -168,9 +248,10 @@ int rm_rf_at(int dir_fd, const char *path, RemoveFlags flags) {
         r = rm_rf_children(fd, flags, NULL);
 
         if (flags & REMOVE_ROOT) {
-                if (unlinkat(dir_fd, path, AT_REMOVEDIR) < 0) {
-                        if (r == 0 && errno != ENOENT)
-                                r = -errno;
+                r = unlinkat_immutable(dir_fd, path, AT_REMOVEDIR, flags);
+                if (r < 0) {
+                        if (r == 0 && r != -ENOENT)
+                                r = r;
                 }
         }
 

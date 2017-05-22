@@ -8,6 +8,7 @@ typedef enum RemoveFlags {
         REMOVE_ROOT = 2,
         REMOVE_PHYSICAL = 4, /* if not set, only removes files on tmpfs, never physical file systems */
         REMOVE_SPAN_DEVICES = 8,
+        REMOVE_UNDO_IMMUTABLE = 16,
 } RemoveFlags;
 
 int rm_rf_children(int fd, RemoveFlags flags, struct stat *root_dev);
