@@ -2835,6 +2835,8 @@ int ca_sync_current_archive_chunks(CaSync *s, uint64_t *ret) {
 
         if (s->direction != CA_SYNC_ENCODE)
                 return -ENODATA;
+        if (!s->wstore && !s->cache_store && !s->index)
+                return -ENODATA;
 
         *ret = s->n_written_chunks;
         return 0;
