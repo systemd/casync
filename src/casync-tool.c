@@ -2450,6 +2450,7 @@ static int mkdev(int argc, char *argv[]) {
 
         if (make_symlink) {
                 if (symlink(path, name) < 0) {
+                        r = -errno;
                         fprintf(stderr, "Failed to create symlink %s → %s: %s\n", name, path, strerror(-r));
                         goto finish;
                 }
