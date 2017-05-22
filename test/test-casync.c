@@ -86,5 +86,9 @@ step2:
 finish:
         ca_sync_unref(s);
 
+        free(teststore);
+        free(testindex);
+        free(testtree);
+
         return 0;
 }
