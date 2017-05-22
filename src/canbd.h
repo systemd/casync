@@ -27,6 +27,9 @@ int ca_block_device_put_data(CaBlockDevice *d, uint64_t offset, const void *data
 
 int ca_block_device_poll(CaBlockDevice *d, uint64_t usec);
 
+int ca_block_device_set_path(CaBlockDevice *d, const char *node);
 int ca_block_device_get_path(CaBlockDevice *d, const char **ret);
+
+int ca_block_device_test_nbd(const char *name);
 
 #endif

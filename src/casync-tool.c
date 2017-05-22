@@ -53,7 +53,7 @@ static void help(void) {
                "%1$s [OPTIONS...] list [ARCHIVE|ARCHIVE_INDEX|DIRECTORY]\n"
                "%1$s [OPTIONS...] mtree [ARCHIVE|ARCHIVE_INDEX|DIRECTORY]\n"
                "%1$s [OPTIONS...] digest [ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY]\n"
-               "%1$s [OPTIONS...] mkdev [BLOB|BLOB_INDEX]\n\n"
+               "%1$s [OPTIONS...] mkdev [BLOB|BLOB_INDEX] [NODE]\n\n"
                "Content-Addressable Data Synchronization Tool\n\n"
                "  -h --help                  Show this help\n"
                "  -v --verbose               Show terse status information during runtime\n"
@@ -2213,13 +2213,14 @@ static int mkdev(int argc, char *argv[]) {
         MkDevOperation operation = _MKDEV_OPERATION_INVALID;
         ReallocBuffer buffer = {};
         CaBlockDevice *nbd = NULL;
-        const char *path = NULL;
+        const char *path = NULL, *name = NULL;
+        bool make_symlink = false, rm_symlink = false;
         int r, input_fd = -1;
         char *input = NULL;
         CaSync *s = NULL;
 
-        if (argc > 2) {
-                fprintf(stderr, "A single input path/URL expected.\n");
+        if (argc > 3) {
+                fprintf(stderr, "An input path/URL expected, possibly followed by a device or symlink name.\n");
                 return -EINVAL;
         }
 
@@ -2230,6 +2231,9 @@ static int mkdev(int argc, char *argv[]) {
                         goto finish;
                 }
         }
+
+        if (argc > 2)
+                name = argv[2];
 
         if (arg_what == WHAT_BLOB)
                 operation = MKDEV_BLOB;
@@ -2317,6 +2321,21 @@ static int mkdev(int argc, char *argv[]) {
                 goto finish;
         }
 
+        if (name) {
+                r = ca_block_device_test_nbd(name);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to test whether %s is an nbd device: %m\n", strerror(-r));
+                        goto finish;
+                } else if (r > 0) {
+                        r = ca_block_device_set_path(nbd, name);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to set device path to %s: %m\n", strerror(-r));
+                                goto finish;
+                        }
+                } else
+                        make_symlink = true;
+        }
+
         /* First loop: process as enough so that we can figure out the size of the blob */
         for (;;) {
                 uint64_t size;
@@ -2384,6 +2403,15 @@ static int mkdev(int argc, char *argv[]) {
         }
 
         printf("%s\n", path);
+
+        if (make_symlink) {
+                if (symlink(path, name) < 0) {
+                        fprintf(stderr, "Failed to create symlink %s → %s: %s\n", name, path, strerror(-r));
+                        goto finish;
+                }
+
+                rm_symlink = true;
+        }
 
         for (;;) {
                 uint64_t req_offset = 0, req_size = 0;
@@ -2543,6 +2571,9 @@ finish:
 
         ca_sync_unref(s);
         ca_block_device_unref(nbd);
+
+        if (rm_symlink)
+                (void) unlink(name);
 
         if (input_fd >= 3)
                 (void) close(input_fd);

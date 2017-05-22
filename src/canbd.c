@@ -78,7 +78,7 @@ int ca_block_device_set_size(CaBlockDevice *d, uint64_t size) {
 
 int ca_block_device_open(CaBlockDevice *d) {
         static const int one = 1;
-        unsigned i;
+        bool free_device_path = false;
         int r;
 
         if (!d)
@@ -98,32 +98,53 @@ int ca_block_device_open(CaBlockDevice *d) {
                         return -errno;
         }
 
-        for (i = 0; i < NBD_MAX; i++) {
-                char *path;
+        if (d->device_path) {
 
-                if (asprintf(&path, "/dev/nbd%u", i) < 0)
-                        return -ENOMEM;
+                d->device_fd = open(d->device_path, O_CLOEXEC|O_RDWR|O_NONBLOCK|O_NOCTTY);
+                if (d->device_fd < 0)
+                        return -errno;
 
-                d->device_fd = open(path, O_CLOEXEC|O_RDWR|O_NONBLOCK|O_NOCTTY);
-                if (d->device_fd < 0) {
-                        free(path);
+                if (ioctl(d->device_fd, NBD_SET_SOCK, d->socket_fd[1]) < 0) {
                         r = -errno;
                         goto fail;
                 }
 
-                if (ioctl(d->device_fd, NBD_SET_SOCK, d->socket_fd[1]) >= 0) {
-                        d->device_path = path;
-                        break;
+        } else {
+                unsigned i = 0;
+                r = -EBUSY;
+
+                for (;;) {
+                        char *path;
+
+                        if (i >= NBD_MAX)
+                                return r;
+
+                        if (asprintf(&path, "/dev/nbd%u", i) < 0)
+                                return -ENOMEM;
+
+                        d->device_fd = open(path, O_CLOEXEC|O_RDWR|O_NONBLOCK|O_NOCTTY);
+                        if (d->device_fd < 0) {
+                                free(path);
+                                r = -errno;
+                                goto fail;
+                        }
+
+                        if (ioctl(d->device_fd, NBD_SET_SOCK, d->socket_fd[1]) >= 0) {
+                                d->device_path = path;
+                                free_device_path = true;
+                                break;
+                        }
+
+                        r = -errno;
+                        free(path);
+
+                        /* If the ioctl() error is EBUSY or EINVAL somebody is using the device, in that case, go for the next */
+                        if (!IN_SET(r, -EBUSY, -EINVAL))
+                                goto fail;
+
+                        d->device_fd = safe_close(d->device_fd);
+                        i++;
                 }
-
-                r = -errno;
-
-                free(path);
-                d->device_fd = safe_close(d->device_fd);
-
-                /* If the ioctl() error is EBUSY or EINVAL somebody is using the device, in that case, go for the next */
-                if (!IN_SET(r, -EBUSY, -EINVAL))
-                        goto fail;
         }
 
         if (ioctl(d->device_fd, NBD_SET_BLKSIZE, (unsigned long) 512) < 0) {
@@ -168,7 +189,9 @@ int ca_block_device_open(CaBlockDevice *d) {
 fail:
         d->device_fd = safe_close(d->device_fd);
         safe_close_pair(d->socket_fd);
-        d->device_path = mfree(d->device_path);
+
+        if (free_device_path)
+                d->device_path = mfree(d->device_path);
 
         return r;
 }
@@ -303,4 +326,61 @@ int ca_block_device_get_path(CaBlockDevice *d, const char **ret) {
 
         *ret = d->device_path;
         return 0;
+}
+
+int ca_block_device_set_path(CaBlockDevice *d, const char *node) {
+        char *c;
+
+        if (!d)
+                return -EINVAL;
+        if (d->device_fd >= 0)
+                return -EBUSY;
+
+        if (streq_ptr(node, d->device_path))
+                return 0;
+
+        if (node) {
+                c = strdup(node);
+                if (!c)
+                        return -ENOMEM;
+        } else
+                c = NULL;
+
+        free(d->device_path);
+        d->device_path = c;
+
+        return 1;
+}
+
+int ca_block_device_test_nbd(const char *name) {
+        unsigned u;
+        size_t n;
+        int r;
+
+        if (!name)
+                return -EINVAL;
+
+        n = strspn(name, "/");
+        if (n < 1)
+                return 0;
+        name += n;
+
+        if (!startswith(name, "dev"))
+                return 0;
+        name += 3;
+
+        n = strspn(name, "/");
+        if (n < 1)
+                return 0;
+        name += n;
+
+        if (!startswith(name, "nbd"))
+                return 0;
+        name += 3;
+
+        r = safe_atou(name, &u);
+        if (r < 0)
+                return 0;
+
+        return 1;
 }
