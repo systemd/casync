@@ -53,6 +53,9 @@ PKG_CHECK_MODULES(LIBLZMA, [liblzma >= 5.1.0],
 PKG_CHECK_MODULES(LIBCURL, [libcurl >= 7.32.0],
                   [], [AC_MSG_ERROR([*** curl library not found])])
 
+PKG_CHECK_MODULES(FUSE, [fuse >= 2.6],
+                  [], [AC_MSG_ERROR([*** fuse library not found])])
+
 AC_CHECK_HEADERS([sys/acl.h acl/libacl.h],
                  [], [AC_MSG_ERROR([*** ACL headers not found.])])
 

@@ -90,6 +90,7 @@ int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret);
 /* Seeking to positions */
 int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset);
 int ca_decoder_seek_path(CaDecoder *d, const char *path);
+int ca_decoder_seek_path_offset(CaDecoder *d, const char *path, uint64_t offset);
 int ca_decoder_seek_next_sibling(CaDecoder *d);
 
 /* Statistics */

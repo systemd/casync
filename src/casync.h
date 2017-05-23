@@ -116,6 +116,7 @@ int ca_sync_current_archive_offset(CaSync *s, uint64_t *ret);
 
 int ca_sync_seek_offset(CaSync *s, uint64_t offset);
 int ca_sync_seek_path(CaSync *s, const char *path);
+int ca_sync_seek_path_offset(CaSync *s, const char *path, uint64_t offset);
 int ca_sync_seek_next_sibling(CaSync *s);
 
 int ca_sync_get_payload(CaSync *s, const void **ret, size_t *ret_size);

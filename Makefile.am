@@ -108,8 +108,6 @@ lib_SOURCES = \
 	src/calocation.h \
 	src/camakebst.c \
 	src/camakebst.h \
-	src/canbd.c \
-	src/canbd.h \
 	src/caorigin.c \
 	src/caorigin.h \
 	src/caprotocol-util.c \
@@ -146,18 +144,24 @@ lib_SOURCES = \
 ## casync
 
 casync_SOURCES = \
+	src/cafuse.c \
+	src/cafuse.h \
+	src/canbd.c \
+	src/canbd.h \
 	src/casync-tool.c \
 	$(lib_SOURCES)
 
 casync_CFLAGS = \
 	$(AM_CFLAGS) \
 	$(LIBLZMA_CFLAGS) \
-	$(LIBGCRYPT_CFLAGS)
+	$(LIBGCRYPT_CFLAGS) \
+	$(FUSE_CFLAGS)
 
 casync_LDADD = \
 	$(LIBLZMA_LIBS) \
 	$(LIBGCRYPT_LIBS) \
-	$(ACL_LIBS)
+	$(ACL_LIBS) \
+	$(FUSE_LIBS)
 
 ## casync-http
 

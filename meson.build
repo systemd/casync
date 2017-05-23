@@ -100,6 +100,8 @@ liblzma = dependency('liblzma',
                      version : '>= 5.1.0')
 libcurl = dependency('libcurl',
                      version : '>= 7.32.0')
+libfuse = dependency('fuse',
+                     version : '>= 2.6')
 libgcrypt = cc.find_library('gcrypt')
 libacl = cc.find_library('acl')
 
@@ -116,7 +118,8 @@ executable(
         dependencies : [
                 liblzma,
                 libgcrypt,
-                libacl],
+                libacl,
+                libfuse],
         install : true)
 
 executable(

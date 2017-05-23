@@ -2978,6 +2978,39 @@ int ca_sync_seek_offset(CaSync *s, uint64_t offset) {
         return 0;
 }
 
+int ca_sync_seek_path_offset(CaSync *s, const char *path, uint64_t offset) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!path)
+                return -EINVAL;
+        if (offset == UINT64_MAX)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        r = ca_sync_start(s);
+        if (r < 0)
+                return r;
+
+        if (!s->decoder)
+                return -ESPIPE;
+
+        r = ca_sync_acquire_archive_size(s);
+        if (r < 0)
+                return r;
+
+        r = ca_decoder_seek_path_offset(s->decoder, path, offset);
+        if (r < 0)
+                return r;
+
+        ca_sync_reset_seek(s);
+
+        return 0;
+}
+
 int ca_sync_seek_path(CaSync *s, const char *path) {
         int r;
 
@@ -3003,7 +3036,6 @@ int ca_sync_seek_path(CaSync *s, const char *path) {
         r = ca_decoder_seek_path(s->decoder, path);
         if(r < 0)
                 return r;
-
 
         ca_sync_reset_seek(s);
 

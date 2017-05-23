@@ -68,6 +68,10 @@ static inline struct timespec nsec_to_timespec(uint64_t u) {
         };
 }
 
+#define NSEC_TO_TIMESPEC_INIT(u) \
+        { .tv_sec = u == UINT64_MAX ? (time_t) -1 : (time_t) (u / UINT64_C(1000000000)), \
+          .tv_nsec = u == UINT64_MAX ? (long) -1 : (long) (u % UINT64_C(1000000000)) }
+
 static inline int log_oom(void) {
         fprintf(stderr, "Out of memory\n");
         return -ENOMEM;

@@ -12,6 +12,7 @@
 #include "cachunk.h"
 #include "caformat-util.h"
 #include "caformat.h"
+#include "cafuse.h"
 #include "caindex.h"
 #include "canbd.h"
 #include "caprotocol.h"
@@ -78,6 +79,7 @@ static void help(void) {
                "%1$s [OPTIONS...] list [ARCHIVE|ARCHIVE_INDEX|DIRECTORY]\n"
                "%1$s [OPTIONS...] mtree [ARCHIVE|ARCHIVE_INDEX|DIRECTORY]\n"
                "%1$s [OPTIONS...] digest [ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY]\n"
+               "%1$s [OPTIONS...] mount [ARCHIVE|ARCHIVE_INDEX] PATH\n"
                "%1$s [OPTIONS...] mkdev [BLOB|BLOB_INDEX] [NODE]\n\n"
                "Content-Addressable Data Synchronization Tool\n\n"
                "  -h --help                  Show this help\n"
@@ -828,7 +830,7 @@ static int process_step_generic(CaSync *s, int step) {
         assert(false);
 }
 
-static int make(int argc, char *argv[]) {
+static int verb_make(int argc, char *argv[]) {
 
         typedef enum MakeOperation {
                 MAKE_ARCHIVE,
@@ -1127,7 +1129,7 @@ static const char *normalize_seek_path(const char *p) {
         return p;
 }
 
-static int extract(int argc, char *argv[]) {
+static int verb_extract(int argc, char *argv[]) {
 
         typedef enum ExtractOperation {
                 EXTRACT_ARCHIVE,
@@ -1522,7 +1524,7 @@ static int mtree_escape(const char *p, char **ret) {
         return 0;
 }
 
-static int list(int argc, char *argv[]) {
+static int verb_list(int argc, char *argv[]) {
 
         typedef enum ListOperation {
                 LIST_ARCHIVE,
@@ -1986,7 +1988,7 @@ finish:
         return r;
 }
 
-static int digest(int argc, char *argv[]) {
+static int verb_digest(int argc, char *argv[]) {
 
         typedef enum DigestOperation {
                 DIGEST_ARCHIVE,
@@ -2271,7 +2273,128 @@ finish:
         return r;
 }
 
-static int mkdev(int argc, char *argv[]) {
+static int verb_mount(int argc, char *argv[]) {
+
+        typedef enum MountOperation {
+                MOUNT_ARCHIVE,
+                MOUNT_ARCHIVE_INDEX,
+                _MOUNT_OPERATION_INVALID = -1,
+        } MountOperation;
+        MountOperation operation = _MOUNT_OPERATION_INVALID;
+        const char *mount_path = NULL;
+        int r, input_fd = -1;
+        char *input = NULL;
+        CaSync *s = NULL;
+
+        if (argc > 3 || argc < 2) {
+                fprintf(stderr, "An archive path/URL expected, followed by a mount path.\n");
+                return -EINVAL;
+        }
+
+        if (argc > 2) {
+                input = ca_strip_file_url(argv[1]);
+                if (!input) {
+                        r = log_oom();
+                        goto finish;
+                }
+
+                mount_path = argv[2];
+        } else
+                mount_path = argv[1];
+
+        if (arg_what == WHAT_ARCHIVE)
+                operation = MOUNT_ARCHIVE;
+        else if (arg_what == WHAT_ARCHIVE_INDEX)
+                operation = MOUNT_ARCHIVE_INDEX;
+        else if (arg_what != _WHAT_INVALID) {
+                fprintf(stderr, "\"mount\" operation may only be combined with --what=archive and --what=archive-index.\n");
+                r = -EINVAL;
+                goto finish;
+        }
+
+        if (operation == _MOUNT_OPERATION_INVALID && input && !streq(input, "-")) {
+                if (ca_locator_has_suffix(input, ".caidx"))
+                        operation = MOUNT_ARCHIVE_INDEX;
+        }
+
+        if (operation == _MOUNT_OPERATION_INVALID)
+                operation = MOUNT_ARCHIVE;
+
+        s = ca_sync_new_decode();
+        if (!s) {
+                r = log_oom();
+                goto finish;
+        }
+
+        if (!input || streq(input, "-"))
+                input_fd = STDIN_FILENO;
+
+        if (operation == MOUNT_ARCHIVE_INDEX) {
+                r = set_default_store(input);
+                if (r < 0)
+                        goto finish;
+        }
+
+        if (arg_rate_limit_bps != UINT64_MAX) {
+                r = ca_sync_set_rate_limit_bps(s, arg_rate_limit_bps);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
+                        goto finish;
+                }
+        }
+
+        if (operation == MOUNT_ARCHIVE) {
+                if (input_fd >= 0)
+                        r = ca_sync_set_archive_fd(s, input_fd);
+                else
+                        r = ca_sync_set_archive_auto(s, input);
+
+        } else if (operation == MOUNT_ARCHIVE_INDEX) {
+                if (input_fd >= 0)
+                        r = ca_sync_set_index_fd(s, input_fd);
+                else
+                        r = ca_sync_set_index_auto(s, input);
+        } else
+                assert(false);
+        if (r < 0) {
+                fprintf(stderr, "Failed to set sync input: %s\n", strerror(-r));
+                goto finish;
+        }
+
+        input_fd = -1;
+
+        r = ca_sync_set_base_mode(s, S_IFDIR);
+        if (r < 0) {
+                fprintf(stderr, "Failed to set base mode to directory: %s\n", strerror(-r));
+                goto finish;
+        }
+
+        if (arg_store) {
+                r = ca_sync_set_store_auto(s, arg_store);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
+                        goto finish;
+                }
+        }
+
+        r = load_seeds_and_extra_stores(s);
+        if (r < 0)
+                goto finish;
+
+        r = ca_fuse_run(s, input, mount_path);
+
+finish:
+        ca_sync_unref(s);
+
+        if (input_fd >= 3)
+                (void) close(input_fd);
+
+        free(input);
+
+        return r;
+}
+
+static int verb_mkdev(int argc, char *argv[]) {
 
         typedef enum MkDevOperation {
                 MKDEV_BLOB,
@@ -2288,7 +2411,7 @@ static int mkdev(int argc, char *argv[]) {
         CaSync *s = NULL;
 
         if (argc > 3) {
-                fprintf(stderr, "An input path/URL expected, possibly followed by a device or symlink name.\n");
+                fprintf(stderr, "An blob path/URL expected, possibly followed by a device or symlink name.\n");
                 return -EINVAL;
         }
 
@@ -2314,8 +2437,7 @@ static int mkdev(int argc, char *argv[]) {
         }
 
         if (operation == _MKDEV_OPERATION_INVALID && input && !streq(input, "-")) {
-                if (ca_locator_has_suffix(input, ".caibx") ||
-                    ca_locator_has_suffix(input, ".caidx"))
+                if (ca_locator_has_suffix(input, ".caibx"))
                         operation = MKDEV_BLOB_INDEX;
         }
 
@@ -2762,7 +2884,7 @@ fail:
         return r;
 }
 
-static int pull(int argc, char *argv[]) {
+static int verb_pull(int argc, char *argv[]) {
         const char *base_path, *archive_path, *index_path, *wstore_path;
         size_t n_stores = 0, i;
         CaStore **stores = NULL;
@@ -2945,7 +3067,7 @@ finish:
         return r;
 }
 
-static int push(int argc, char *argv[]) {
+static int verb_push(int argc, char *argv[]) {
 
         const char *base_path, *archive_path, *index_path, *wstore_path;
         bool index_processed = false, index_written = false, archive_written = false;
@@ -3282,19 +3404,21 @@ static int dispatch_verb(int argc, char *argv[]) {
                 help();
                 r = 0;
         } else if (streq(argv[0], "make"))
-                r = make(argc, argv);
+                r = verb_make(argc, argv);
         else if (streq(argv[0], "extract"))
-                r = extract(argc, argv);
+                r = verb_extract(argc, argv);
         else if (STR_IN_SET(argv[0], "list", "mtree"))
-                r = list(argc, argv);
+                r = verb_list(argc, argv);
         else if (streq(argv[0], "digest"))
-                r = digest(argc, argv);
+                r = verb_digest(argc, argv);
         else if (streq(argv[0], "mkdev"))
-                r = mkdev(argc, argv);
+                r = verb_mkdev(argc, argv);
+        else if (streq(argv[0], "mount"))
+                r = verb_mount(argc, argv);
         else if (streq(argv[0], "pull")) /* "Secret" verb, only to be called by ssh-based remoting. */
-                r = pull(argc, argv);
+                r = verb_pull(argc, argv);
         else if (streq(argv[0], "push")) /* Same here. */
-                r = push(argc, argv);
+                r = verb_push(argc, argv);
         else {
                 fprintf(stderr, "Unknown verb '%s'. (Invoke '%s --help' for a list of available verbs.)\n", argv[0], program_invocation_short_name);
                 r = -EINVAL;

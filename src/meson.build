@@ -60,5 +60,12 @@ libshared = static_library(
               'shared',
               libshared_sources)
 
-casync_sources = files('casync-tool.c')
+casync_sources = files('''
+        casync-tool.c
+	canbd.c
+	canbd.h
+	cafuse.c
+	cafuse.h
+'''.split())
+
 casync_http_sources = files('casync-http.c')
