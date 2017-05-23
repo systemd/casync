@@ -2488,12 +2488,9 @@ int ca_encoder_current_mode(CaEncoder *e, mode_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        n = ca_encoder_current_child_node(e);
-        if (!n) {
-                n = ca_encoder_current_node(e);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
 
         *ret = ca_encoder_fixup_mode(e, n);
         return 0;
@@ -2507,12 +2504,9 @@ int ca_encoder_current_target(CaEncoder *e, const char **ret) {
         if (!ret)
                 return -EINVAL;
 
-        n = ca_encoder_current_child_node(e);
-        if (!n) {
-                n = ca_encoder_current_node(e);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
 
         if (!S_ISLNK(n->stat.st_mode))
                 return -ENOLINK;
@@ -2535,12 +2529,9 @@ int ca_encoder_current_mtime(CaEncoder *e, uint64_t *ret) {
         if (e->time_granularity == UINT64_MAX)
                 return -ENODATA;
 
-        n = ca_encoder_current_child_node(e);
-        if (!n) {
-                n = ca_encoder_current_node(e);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
 
         *ret = ca_encoder_fixup_mtime(e, n);
         return 0;
@@ -2554,12 +2545,9 @@ int ca_encoder_current_size(CaEncoder *e, uint64_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        n = ca_encoder_current_child_node(e);
-        if (!n) {
-                n = ca_encoder_current_node(e);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
 
         if (!S_ISREG(n->stat.st_mode))
                 return -ENODATA;
@@ -2580,12 +2568,9 @@ int ca_encoder_current_uid(CaEncoder *e, uid_t *ret) {
         if (!(e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)))
                 return -ENODATA;
 
-        n = ca_encoder_current_child_node(e);
-        if (!n) {
-                n = ca_encoder_current_node(e);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
 
         shifted_uid = ca_encoder_shift_uid(e, n->stat.st_uid);
         if (!uid_is_valid(shifted_uid))
@@ -2607,12 +2592,9 @@ int ca_encoder_current_gid(CaEncoder *e, gid_t *ret) {
         if (!(e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)))
                 return -ENODATA;
 
-        n = ca_encoder_current_child_node(e);
-        if (!n) {
-                n = ca_encoder_current_node(e);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
 
         shifted_gid = ca_encoder_shift_gid(e, n->stat.st_gid);
         if (!gid_is_valid(shifted_gid))
@@ -2634,12 +2616,9 @@ int ca_encoder_current_user(CaEncoder *e, const char **ret) {
         if (!(e->feature_flags & (CA_FORMAT_WITH_USER_NAMES)))
                 return -ENODATA;
 
-        n = ca_encoder_current_child_node(e);
-        if (!n) {
-                n = ca_encoder_current_node(e);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
 
         r = ca_encoder_node_read_user_group_names(e, n);
         if (r < 0)
@@ -2664,12 +2643,9 @@ int ca_encoder_current_group(CaEncoder *e, const char **ret) {
         if (!(e->feature_flags & (CA_FORMAT_WITH_USER_NAMES)))
                 return -ENODATA;
 
-        n = ca_encoder_current_child_node(e);
-        if (!n) {
-                n = ca_encoder_current_node(e);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
 
         r = ca_encoder_node_read_user_group_names(e, n);
         if (r < 0)
@@ -2690,12 +2666,9 @@ int ca_encoder_current_rdev(CaEncoder *e, dev_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        n = ca_encoder_current_child_node(e);
-        if (!n) {
-                n = ca_encoder_current_node(e);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
 
         if (!S_ISBLK(n->stat.st_mode) && !S_ISCHR(n->stat.st_mode))
                 return -ENODATA;

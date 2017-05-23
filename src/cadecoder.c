@@ -496,15 +496,6 @@ static CaDecoderNode* ca_decoder_current_parent_node(CaDecoder *d) {
         return d->nodes + d->node_idx - 1;
 }
 
-static CaDecoderNode* ca_decoder_current_child_node(CaDecoder *d) {
-        assert(d);
-
-        if (d->node_idx+1 >= d->n_nodes)
-                return NULL;
-
-        return d->nodes + d->node_idx + 1;
-}
-
 static void ca_decoder_forget_children(CaDecoder *d) {
         assert(d);
 
@@ -4000,12 +3991,9 @@ int ca_decoder_current_mode(CaDecoder *d, mode_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        n = ca_decoder_current_child_node(d);
-        if (!n) {
-                n = ca_decoder_current_node(d);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
 
         *ret = ca_decoder_node_mode(n);
         return 0;
@@ -4020,12 +4008,9 @@ int ca_decoder_current_target(CaDecoder *d, const char **ret) {
         if (!ret)
                 return -EINVAL;
 
-        n = ca_decoder_current_child_node(d);
-        if (!n) {
-                n = ca_decoder_current_node(d);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
 
         mode = ca_decoder_node_mode(n);
         if (!S_ISLNK(mode))
@@ -4051,12 +4036,9 @@ int ca_decoder_current_mtime(CaDecoder *d, uint64_t *ret) {
                                  CA_FORMAT_WITH_2SEC_TIME)) == 0)
                 return -ENODATA;
 
-        n = ca_decoder_current_child_node(d);
-        if (!n) {
-                n = ca_decoder_current_node(d);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
 
         if (!n->entry)
                 return -ENODATA;
@@ -4074,12 +4056,9 @@ int ca_decoder_current_size(CaDecoder *d, uint64_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        n = ca_decoder_current_child_node(d);
-        if (!n) {
-                n = ca_decoder_current_node(d);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
 
         mode = ca_decoder_node_mode(n);
         if (!S_ISREG(mode))
@@ -4102,12 +4081,9 @@ int ca_decoder_current_uid(CaDecoder *d, uid_t *ret) {
                                  CA_FORMAT_WITH_32BIT_UIDS)) == 0)
                 return -ENODATA;
 
-        n = ca_decoder_current_child_node(d);
-        if (!n) {
-                n = ca_decoder_current_node(d);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
 
         if (!n->entry)
                 return -ENODATA;
@@ -4134,12 +4110,9 @@ int ca_decoder_current_gid(CaDecoder *d, gid_t *ret) {
                                  CA_FORMAT_WITH_32BIT_UIDS)) == 0)
                 return -ENODATA;
 
-        n = ca_decoder_current_child_node(d);
-        if (!n) {
-                n = ca_decoder_current_node(d);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
 
         if (!n->entry)
                 return -ENODATA;
@@ -4164,12 +4137,9 @@ int ca_decoder_current_user(CaDecoder *d, const char **ret) {
         if ((d->feature_flags & CA_FORMAT_WITH_USER_NAMES) == 0)
                 return -ENODATA;
 
-        n = ca_decoder_current_child_node(d);
-        if (!n) {
-                n = ca_decoder_current_node(d);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
 
         if (!n->user_name)
                 return -ENODATA;
@@ -4189,12 +4159,9 @@ int ca_decoder_current_group(CaDecoder *d, const char **ret) {
         if ((d->feature_flags & CA_FORMAT_WITH_USER_NAMES) == 0)
                 return -ENODATA;
 
-        n = ca_decoder_current_child_node(d);
-        if (!n) {
-                n = ca_decoder_current_node(d);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
 
         if (!n->group_name)
                 return -ENODATA;
@@ -4212,12 +4179,9 @@ int ca_decoder_current_rdev(CaDecoder *d, dev_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        n = ca_decoder_current_child_node(d);
-        if (!n) {
-                n = ca_decoder_current_node(d);
-                if (!n)
-                        return -EUNATCH;
-        }
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
 
         mode = ca_decoder_node_mode(n);
         if (!S_ISCHR(mode) && !S_ISBLK(mode))
