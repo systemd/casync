@@ -7,7 +7,7 @@ project('casync', 'c',
                 'sysconfdir=/etc',
                 'localstatedir=/var',
         ],
-        meson_version : '>= 0.37.1')
+        meson_version : '>= 0.40')
 
 cc = meson.get_compiler('c')
 
@@ -160,7 +160,8 @@ test_script_sh = configure_file(
         input : 'test/test-script.sh.in',
         configuration : substs)
 test_script = find_program(test_script_sh)
-test('test-script.sh', test_script)
+test('test-script.sh', test_script,
+     timeout : 300)
 
 test_nbd_sh = configure_file(
         output : 'test-nbd.sh',
