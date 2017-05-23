@@ -411,6 +411,7 @@ int ca_decoder_set_base_fd(CaDecoder *d, int fd) {
 
 int ca_decoder_set_boundary_fd(CaDecoder *d, int fd) {
         struct stat st;
+        struct statfs sfs;
 
         if (!d)
                 return -EINVAL;
@@ -424,6 +425,8 @@ int ca_decoder_set_boundary_fd(CaDecoder *d, int fd) {
 
         if (fstat(fd, &st) < 0)
                 return -errno;
+        if (fstatfs(fd, &sfs) < 0)
+                return -errno;
         if (!S_ISDIR(st.st_mode))
                 return -ENOTDIR;
 
@@ -434,7 +437,7 @@ int ca_decoder_set_boundary_fd(CaDecoder *d, int fd) {
                 .entry_offset = 0,
                 .goodbye_offset = UINT64_MAX,
                 .end_offset = UINT64_MAX,
-                .mode = S_IFDIR,
+                .mode = st.st_mode,
                 .size = UINT64_MAX,
                 .acl_group_obj_permissions = UINT64_MAX,
                 .acl_default_user_obj_permissions = UINT64_MAX,
@@ -444,6 +447,9 @@ int ca_decoder_set_boundary_fd(CaDecoder *d, int fd) {
         };
 
         d->n_nodes = 1;
+
+        d->cached_magic = sfs.f_type;
+        d->cached_st_dev = st.st_dev;
 
         return 0;
 }
