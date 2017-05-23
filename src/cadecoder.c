@@ -2036,6 +2036,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         assert(!n->entry);
         assert(!n->user_name);
         assert(!n->group_name);
+        assert(!n->fcaps);
         assert(!n->symlink_target);
 
         n->entry = memdup(entry, sizeof(CaFormatEntry));
