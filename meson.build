@@ -7,7 +7,7 @@ project('casync', 'c',
                 'sysconfdir=/etc',
                 'localstatedir=/var',
         ],
-        meson_version : '>= 0.37.1')
+        meson_version : '>= 0.40')
 
 cc = meson.get_compiler('c')
 
