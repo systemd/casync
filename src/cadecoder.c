@@ -1397,6 +1397,9 @@ static int ca_decoder_do_seek(CaDecoder *d, CaDecoderNode *n) {
 
                 /* If we are supposed to descend further, but this is not actually a directory, then complain immediately */
                 mode = ca_decoder_node_mode(n);
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
                 if (!S_ISDIR(mode)) {
                         ca_decoder_enter_state(d, CA_DECODER_NOWHERE);
                         return 0;
@@ -2862,6 +2865,8 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
                 return 0;
 
         mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -EUNATCH;
         if (!S_ISREG(mode))
                 return 0;
 
@@ -2941,6 +2946,8 @@ static int ca_decoder_node_delete(CaDecoder *d, CaDecoderNode *n) {
                 return 0;
 
         mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -EUNATCH;
         if (!S_ISDIR(mode))
                 return 0;
 
@@ -3067,6 +3074,8 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
         /* If this is a top-level blob, then don't do anything */
         mode = ca_decoder_node_mode(child);
+        if (mode == (mode_t) -1)
+                return -EUNATCH;
         if ((S_ISREG(mode) || S_ISBLK(mode)) && !n)
                 return 0;
 
@@ -3541,8 +3550,7 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
         switch (d->state) {
 
         case CA_DECODER_INIT:
-
-                if (S_ISREG(mode) || S_ISBLK(mode)) {
+                if (mode != (mode_t) -1 && (S_ISREG(mode) || S_ISBLK(mode))) {
                         assert(d->node_idx == 0);
 
                         /* A regular file or block device and we are at the top level, process this as payload */
@@ -3579,6 +3587,9 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                                 return r;
                 }
 
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
                 if (S_ISREG(mode)) {
                         ca_decoder_enter_state(d, CA_DECODER_IN_PAYLOAD);
                         return ca_decoder_step_node(d, n);
@@ -3594,6 +3605,9 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
         }
 
         case CA_DECODER_IN_PAYLOAD:
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
                 assert(S_ISREG(mode) || S_ISBLK(mode));
 
                 /* If the size of this payload is known, and we reached it, we are done */
@@ -3653,11 +3667,19 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
         case CA_DECODER_SEEKING_TO_FILENAME:
         case CA_DECODER_SEEKING_TO_NEXT_SIBLING:
         case CA_DECODER_SEEKING_TO_GOODBYE:
+
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
                 assert(S_ISDIR(mode));
 
                 return ca_decoder_parse_filename(d, n);
 
         case CA_DECODER_GOODBYE:
+
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
                 assert(S_ISDIR(mode));
 
                 ca_decoder_enter_state(d, CA_DECODER_FINALIZE);
@@ -3693,6 +3715,10 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
         }
 
         case CA_DECODER_PREPARING_SEEK_TO_OFFSET:
+
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
                 assert(S_ISREG(mode) || S_ISBLK(mode));
 
                 ca_decoder_enter_state(d, CA_DECODER_SEEKING_TO_OFFSET);
@@ -3709,6 +3735,10 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 return ca_decoder_step_node(d, n);
 
         case CA_DECODER_PREPARING_SEEK_TO_FILENAME:
+
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
                 assert(S_ISDIR(mode));
 
                 ca_decoder_enter_state(d, CA_DECODER_SEEKING_TO_FILENAME);
@@ -3717,6 +3747,10 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 return CA_DECODER_SEEK;
 
         case CA_DECODER_PREPARING_SEEK_TO_NEXT_SIBLING:
+
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
                 assert(S_ISDIR(mode));
 
                 ca_decoder_enter_state(d, CA_DECODER_SEEKING_TO_NEXT_SIBLING);
@@ -3724,29 +3758,64 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
 
                 return CA_DECODER_SEEK;
 
+        case CA_DECODER_SEEKING_TO_PAYLOAD:
+
+                ca_decoder_enter_state(d, CA_DECODER_IN_PAYLOAD);
+                d->payload_offset = d->seek_payload;
+                ca_decoder_reset_seek(d);
+
+                return ca_decoder_step_node(d, n);
+
+        case CA_DECODER_PREPARING_SEEK_TO_PAYLOAD:
+
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
+                assert(S_ISREG(mode));
+
+                ca_decoder_enter_state(d, CA_DECODER_SEEKING_TO_PAYLOAD);
+                ca_decoder_apply_seek_offset(d);
+
+                return CA_DECODER_SEEK;
+
         case CA_DECODER_PREPARING_SEEK_TO_ENTRY:
-                assert(S_ISDIR(mode));
+
                 ca_decoder_enter_state(d, CA_DECODER_SEEKING_TO_ENTRY);
                 ca_decoder_apply_seek_offset(d);
 
                 return CA_DECODER_SEEK;
 
         case CA_DECODER_PREPARING_SEEK_TO_GOODBYE:
+
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
                 assert(S_ISDIR(mode));
+
                 ca_decoder_enter_state(d, CA_DECODER_SEEKING_TO_GOODBYE);
                 ca_decoder_apply_seek_offset(d);
 
                 return CA_DECODER_SEEK;
 
         case CA_DECODER_PREPARING_SEEK_TO_GOODBYE_SIZE:
+
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
                 assert(S_ISDIR(mode));
+
                 ca_decoder_enter_state(d, CA_DECODER_SEEKING_TO_GOODBYE_SIZE);
                 ca_decoder_apply_seek_offset(d);
 
                 return CA_DECODER_SEEK;
 
         case CA_DECODER_SEEKING_TO_GOODBYE_SIZE:
+
+                if (mode == (mode_t) -1)
+                        return -EUNATCH;
+
                 assert(S_ISDIR(mode));
+
                 return ca_decoder_parse_goodbye_size(d, n);
 
         case CA_DECODER_NOWHERE:
@@ -3773,9 +3842,14 @@ static int ca_decoder_advance_buffer(CaDecoder *d, CaDecoderNode *n) {
         if (d->state == CA_DECODER_IN_PAYLOAD) {
 
                 if (n->fd >= 0) {
+                        mode_t mode;
+
+                        mode = ca_decoder_node_mode(n);
+                        if (mode == (mode_t) -1)
+                                return -EUNATCH;
 
                         /* If hole punching is supported and we are writing to a regular file, use it */
-                        if (d->punch_holes && S_ISREG(ca_decoder_node_mode(n))) {
+                        if (d->punch_holes && S_ISREG(mode)) {
                                 uint64_t n_punched;
 
                                 r = loop_write_with_holes(n->fd, realloc_buffer_data(&d->buffer), d->step_size, &n_punched);
@@ -3917,6 +3991,8 @@ int ca_decoder_get_payload(CaDecoder *d, const void **ret, size_t *ret_size) {
                 return -EUNATCH;
 
         mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -EUNATCH;
         if (!S_ISREG(mode) && !S_ISBLK(mode))
                 return -ENOTTY;
 
@@ -3985,6 +4061,7 @@ int ca_decoder_current_path(CaDecoder *d, char **ret) {
 
 int ca_decoder_current_mode(CaDecoder *d, mode_t *ret) {
         CaDecoderNode *n;
+        mode_t mode;
 
         if (!d)
                 return -EINVAL;
@@ -3995,7 +4072,11 @@ int ca_decoder_current_mode(CaDecoder *d, mode_t *ret) {
         if (!n)
                 return -EUNATCH;
 
-        *ret = ca_decoder_node_mode(n);
+        mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -ENODATA;
+
+        *ret = mode;
         return 0;
 }
 
@@ -4013,6 +4094,8 @@ int ca_decoder_current_target(CaDecoder *d, const char **ret) {
                 return -EUNATCH;
 
         mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -ENODATA;
         if (!S_ISLNK(mode))
                 return -ENODATA;
         if (!n->symlink_target)
@@ -4061,6 +4144,8 @@ int ca_decoder_current_size(CaDecoder *d, uint64_t *ret) {
                 return -EUNATCH;
 
         mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -ENODATA;
         if (!S_ISREG(mode))
                 return -ENODATA;
 
@@ -4184,6 +4269,8 @@ int ca_decoder_current_rdev(CaDecoder *d, dev_t *ret) {
                 return -EUNATCH;
 
         mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -ENODATA;
         if (!S_ISCHR(mode) && !S_ISBLK(mode))
                 return -ENODATA;
 
@@ -4205,7 +4292,8 @@ int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret) {
                 return -EUNATCH;
 
         mode = ca_decoder_node_mode(n);
-
+        if (mode == (mode_t) -1)
+                return -ENODATA;
         if (!S_ISREG(mode) && !S_ISBLK(mode))
                 return -EISDIR;
 
@@ -4241,6 +4329,8 @@ int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset) {
         }
 
         mode = ca_decoder_node_mode(d->nodes);
+        if (mode == (mode_t) -1)
+                return -ENODATA;
         if (!S_ISREG(mode) && !S_ISBLK(mode))
                 return -EISDIR;
 
