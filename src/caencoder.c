@@ -515,7 +515,7 @@ static int ca_encoder_node_read_chattr(
         r = ioctl(n->fd, FS_IOC_GETFLAGS, &n->chattr_flags);
         if (r < 0) {
                 /* If a file system or node type doesn't support chattr flags, then initialize things to zero */
-                if (!IN_SET(errno, ENOTTY, EBADF, EOPNOTSUPP))
+                if (!IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP))
                         return -errno;
 
                 n->chattr_flags = 0;

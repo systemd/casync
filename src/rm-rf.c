@@ -55,7 +55,7 @@ static int unlinkat_immutable(int dir_fd, const char *name, int flags, RemoveFla
 
         if (ioctl(fd, FS_IOC_GETFLAGS, &attr) < 0) {
                 /* If chattr(1) flags are not supported, propagate the original error */
-                r = IN_SET(errno, ENOTTY, EBADF, EOPNOTSUPP) ? -EPERM : -errno;
+                r = IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP) ? -EPERM : -errno;
                 goto fail;
         }
 

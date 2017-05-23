@@ -3021,7 +3021,7 @@ static int drop_immutable(int dir_fd, const char *name) {
 
         if (ioctl(fd, FS_IOC_GETFLAGS, &attr) < 0) {
                 /* If the fs doesn't actually support chattr(1) flags, then let's not do anything */
-                r = IN_SET(errno, ENOTTY, EBADF, EOPNOTSUPP) ? 0 : -errno;
+                r = IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP) ? 0 : -errno;
                 goto finish;
         }
 
@@ -3481,7 +3481,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 if (ioctl(child->fd, FS_IOC_GETFLAGS, &old_attr) < 0) {
 
-                        if (new_attr != 0 || !IN_SET(errno, ENOTTY, EBADF, EOPNOTSUPP))
+                        if (new_attr != 0 || !IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP))
                                 return -errno;
 
                 } else if (old_attr != new_attr) {
