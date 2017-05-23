@@ -77,9 +77,9 @@ but there are other systems that use similar algorithms, in particular:
 # casync list /home/lennart.catar
 # casync digest /home/lennart.catar
 # casync mtree /home/lennart.catar
+# casync mount /home/lennart.catar /home/lennart
 # casync verify /home/lennart.catar /home/lennart  (NOT IMPLEMENTED YET)
 # casync diff /home/lennart.catar /home/lennart (NOT IMPLEMENTED YET)
-# casync mount /home/lennart.catar /home/lennart (NOT IMPLEMENTED YET)
 ```
 
 ## Operations on archive index files
@@ -90,17 +90,17 @@ but there are other systems that use similar algorithms, in particular:
 # casync list --store=/var/lib/backup.castr /home/lennart.caidx
 # casync digest --store=/var/lib/backup.castr /home/lennart.caidx
 # casync mtree -pool=/var/lib/backup.castr /home/lennart.caidx
+# casync mount --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart
 # casync verify --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart (NOT IMPLEMENTED YET)
 # casync diff --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart (NOT IMPLEMENTED YET)
-# casync mount --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart (NOT IMPLEMENTED YET)
 ```
 
 ## Operations on blob index files
 
 ```
 # casync digest --store=/var/lib/backup.castr fedora25.caibx
-# casync verify --store=/var/lib/backup.castr fedora25.caibx /home/lennart/Fedora25.raw (NOT IMPLEMENTED YET)
 # casync mkdev --store=/var/lib/backup.castr fedora25.caibx
+# casync verify --store=/var/lib/backup.castr fedora25.caibx /home/lennart/Fedora25.raw (NOT IMPLEMENTED YET)
 ```
 
 ## Operations involving ssh remoting
@@ -111,6 +111,7 @@ but there are other systems that use similar algorithms, in particular:
 # casync list foobar:/srv/backup/lennart.caidx
 # casync digest foobar:/srv/backup/lennart.caidx
 # casync mtree foobar:/srv/backup/lennart.caidx
+# casync mount foobar:/srv/backup/lennart.caidx /home/lennart
 ```
 
 ## Operations involving the web
@@ -121,7 +122,7 @@ but there are other systems that use similar algorithms, in particular:
 # casync digest http://www.foobar.com/lennart.caidx
 # casync mtree http://www.foobar.com/lennart.caidx
 # casync extract --seed=/home/lennart http://www.foobar.com/lennart.caidx /home/lennart2
-# casync mount --seed=/home/lennart http://www.foobar.com/lennart.caidx /home/lennart2 (NOT IMPLEMENTED YET)
+# casync mount --seed=/home/lennart http://www.foobar.com/lennart.caidx /home/lennart2
 ```
 
 ## Maintainance

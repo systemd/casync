@@ -1,5 +1,4 @@
 BEFORE FIRST BLOG STORY:
-* fuse mount logic
 * hardlink from seed
 * replace adler32 by something better (buzhash)
 * propagate feature flags into index, and then into seed
@@ -34,3 +33,5 @@ LATER:
 * optionally interpret aufs/union mount whiteout files?
 * in mkdev and mount: issue sd_notify(READY=1) when ready
 * mkdev: generate named device node symlinks cleanly via udev rule
+* fuse: expose xattrs, acls, fcaps, chattr()/DOS flags
+* fuse: provide "mount.casync" compat symlink so that people can list casync mounts in /etc/fstab
