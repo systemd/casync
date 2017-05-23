@@ -522,7 +522,7 @@ static CaDecoderNode* ca_decoder_init_child(CaDecoder *d) {
         if (d->n_nodes >= NODES_MAX)
                 return NULL;
 
-        n = d->nodes + d->n_nodes ++ ;
+        n = d->nodes + d->n_nodes++;
 
         *n = (CaDecoderNode) {
                 .fd = -1,
