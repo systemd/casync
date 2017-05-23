@@ -1233,6 +1233,21 @@ static const CaFormatGoodbyeItem* format_goodbye_search_inner(
         return NULL;
 }
 
+static uint64_t format_goodbye_items(const CaFormatGoodbye *g) {
+        uint64_t n;
+
+        assert(g);
+
+        if (g->header.size < sizeof(CaFormatHeader) + sizeof(le64_t))
+                return UINT64_MAX;
+
+        n = g->header.size - sizeof(CaFormatHeader) - sizeof(le64_t);
+        if (n % sizeof(CaFormatGoodbyeItem) != 0)
+                return UINT64_MAX;
+
+        return n / sizeof(CaFormatGoodbyeItem);
+}
+
 static const CaFormatGoodbyeItem* format_goodbye_search(
                 const CaFormatGoodbye *g,
                 const char *name,
@@ -1245,14 +1260,9 @@ static const CaFormatGoodbyeItem* format_goodbye_search(
 
         hash = siphash24(name, strlen(name), (const uint8_t[16]) CA_FORMAT_GOODBYE_HASH_KEY);
 
-        if (g->header.size < sizeof(CaFormatHeader) + sizeof(le64_t))
+        n = format_goodbye_items(g);
+        if (n == UINT64_MAX)
                 return NULL;
-
-        n = g->header.size - sizeof(CaFormatHeader) - sizeof(le64_t);
-        if (n % sizeof(CaFormatGoodbyeItem) != 0)
-                return NULL;
-
-        n /= sizeof(CaFormatGoodbyeItem);
 
         return format_goodbye_search_inner(g->items, n, hash, 0, &idx);
 }
