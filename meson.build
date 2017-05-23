@@ -136,6 +136,38 @@ meson.add_install_script('sh', '-c',
 meson.add_install_script('sh', '-c',
                          'ln -svf casync-http $DESTDIR@0@'.format(
                                  join_paths(protocoldir, 'casync-ftp')))
+meson.add_postconf_script('sh', '-c',
+                         'ln -svf casync-http $MESON_BUILD_ROOT/casync-https')
+meson.add_postconf_script('sh', '-c',
+                         'ln -svf casync-http $MESON_BUILD_ROOT/casync-ftp')
+
+############################################################
+
+test_files_sh = find_program('test-files/test-files.sh')
+run_target(
+        'test-files',
+        command : [test_files_sh, 'create'])
+run_target(
+        'clean-test-files',
+        command : [test_files_sh, 'clean'])
+
+substs = configuration_data()
+substs.set_quoted('top_builddir', meson.build_root())
+substs.set_quoted('top_srcdir', meson.source_root())
+
+test_script_sh = configure_file(
+        output : 'test-script.sh',
+        input : 'test/test-script.sh.in',
+        configuration : substs)
+test_script = find_program(test_script_sh)
+test('test-script.sh', test_script)
+
+test_nbd_sh = configure_file(
+        output : 'test-nbd.sh',
+        input : 'test/test-nbd.sh.in',
+        configuration : substs)
+test_nbd = find_program(test_nbd_sh)
+test('test-nbd.sh', test_nbd)
 
 ############################################################
 
