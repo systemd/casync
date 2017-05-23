@@ -6,6 +6,10 @@
 #include <sys/wait.h>
 #include <time.h>
 
+#ifdef USE_SYS_RANDOM_H
+#  include <sys/random.h>
+#endif
+
 /* When we include libgen.h because we need dirname() we immediately
  * undefine basename() since libgen.h defines it as a macro to the
  * POSIX version which is really broken. We prefer GNU basename(). */

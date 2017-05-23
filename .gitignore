@@ -28,7 +28,7 @@
 /Makefile
 /TAGS
 /aclocal.m4
-/build-aux
+/build*/
 /casync
 /casync-*/
 /casync-http
