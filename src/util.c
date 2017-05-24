@@ -6,7 +6,7 @@
 #include <sys/wait.h>
 #include <time.h>
 
-#ifdef USE_SYS_RANDOM_H
+#if USE_SYS_RANDOM_H
 #  include <sys/random.h>
 #endif
 

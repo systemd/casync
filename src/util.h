@@ -570,7 +570,7 @@ static inline const char *yes_no(bool b) {
 #define FICLONERANGE	_IOW(0x94, 13, struct file_clone_range)
 #endif
 
-#ifndef HAVE_STRUCT_FILE_CLONE_RANGE
+#if !HAVE_STRUCT_FILE_CLONE_RANGE
 struct file_clone_range {
         __s64 src_fd;
         __u64 src_offset;
