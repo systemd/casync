@@ -1704,6 +1704,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
 
                         memcpy(&u->format, x, l);
 
+                        u->next = NULL;
                         u->previous = n->xattrs_last;
 
                         if (n->xattrs_last)
