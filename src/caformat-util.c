@@ -105,6 +105,7 @@ static const struct {
         { "chattr",           CA_FORMAT_WITH_CHATTR           },
         { "fat-attrs",        CA_FORMAT_WITH_FAT_ATTRS        },
         { "privileged",       CA_FORMAT_WITH_PRIVILEGED       },
+        { "fuse",             CA_FORMAT_WITH_FUSE             },
 };
 
 int ca_with_feature_flags_parse_one(const char *name, uint64_t *ret) {

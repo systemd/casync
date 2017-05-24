@@ -183,6 +183,21 @@ enum {
                 CA_FORMAT_WITH_ACL|
                 CA_FORMAT_WITH_FCAPS,
 
+        CA_FORMAT_WITH_FUSE = /* All bits that may also be exposed via fuse */
+                CA_FORMAT_WITH_16BIT_UIDS|
+                CA_FORMAT_WITH_32BIT_UIDS|
+                CA_FORMAT_WITH_SEC_TIME|
+                CA_FORMAT_WITH_USEC_TIME|
+                CA_FORMAT_WITH_NSEC_TIME|
+                CA_FORMAT_WITH_2SEC_TIME|
+                CA_FORMAT_WITH_READ_ONLY|
+                CA_FORMAT_WITH_PERMISSIONS|
+                CA_FORMAT_WITH_SYMLINKS|
+                CA_FORMAT_WITH_DEVICE_NODES|
+                CA_FORMAT_WITH_FIFOS|
+                CA_FORMAT_WITH_SOCKETS|
+                CA_FORMAT_WITH_CHATTR,
+
         CA_FORMAT_FEATURE_FLAGS_MAX        = 0xFFFFFFFF | CA_FORMAT_RESPECT_FLAG_NODUMP,
 };
 

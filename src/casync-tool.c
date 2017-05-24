@@ -111,6 +111,7 @@ static void help(void) {
                "     --with=chattr           Store chattr(1) file attributes\n"
                "     --with=fat-attrs        Store FAT file attributes\n"
                "     --with=privileged       Store file data that requires privileges to restore\n"
+               "     --with=fuse             Store file data that can exposed again via 'casync mount'\n"
                "     (and similar: --without=fat-attrs, --without=privileged, ...)\n\n"
                "Individual archive features:\n"
                "     --with=16bit-uids       Store reduced 16bit UID/GID information\n"
