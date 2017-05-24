@@ -2677,6 +2677,28 @@ int ca_encoder_current_rdev(CaEncoder *e, dev_t *ret) {
         return 0;
 }
 
+int ca_encoder_current_chattr(CaEncoder *e, unsigned *ret) {
+        CaEncoderNode *n;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
+
+        if (!S_ISREG(n->stat.st_mode) && !S_ISDIR(n->stat.st_mode))
+                return -ENODATA;
+
+        if (!n->chattr_flags_valid)
+                return -ENODATA;
+
+        *ret = ca_feature_flags_to_chattr((ca_feature_flags_from_chattr(n->chattr_flags) & e->feature_flags));
+        return 0;
+}
+
 int ca_encoder_current_payload_offset(CaEncoder *e, uint64_t *ret) {
         CaEncoderNode *n;
 

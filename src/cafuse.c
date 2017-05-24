@@ -1,6 +1,7 @@
 #define FUSE_USE_VERSION 26
 
 #include <fuse.h>
+#include <linux/fs.h>
 
 #include "caformat.h"
 #include "cafuse.h"
@@ -457,6 +458,35 @@ static int casync_statfs(const char *path, struct statvfs *sfs) {
         return 0;
 }
 
+static int casync_ioctl(
+                const char *path,
+                int cmd,
+                void *arg,
+                struct fuse_file_info *fi,
+                unsigned int flags,
+                void *data) {
+
+        int r, gf;
+
+        if (flags & FUSE_IOCTL_COMPAT)
+                return -ENOSYS;
+
+        gf = FS_IOC_GETFLAGS;
+        if (cmd != gf)
+                return -ENOTTY;
+
+        r = seek_to_path(instance, path);
+        if (r < 0)
+                return r;
+
+        r = ca_sync_current_chattr(instance, &flags);
+        if (r < 0)
+                return r;
+
+        *(unsigned long*) data = flags;
+        return 0;
+}
+
 static struct fuse_operations ops = {
         .init     = casync_init,
         .getattr  = casync_getattr,
@@ -465,6 +495,7 @@ static struct fuse_operations ops = {
         .open     = casync_open,
         .read     = casync_read,
         .statfs   = casync_statfs,
+        .ioctl    = casync_ioctl,
 };
 
 int ca_fuse_run(CaSync *s, const char *what, const char *where) {

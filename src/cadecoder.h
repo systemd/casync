@@ -86,6 +86,7 @@ int ca_decoder_current_user(CaDecoder *d, const char **user);
 int ca_decoder_current_group(CaDecoder *d, const char **user);
 int ca_decoder_current_rdev(CaDecoder *d, dev_t *ret);
 int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret);
+int ca_decoder_current_chattr(CaDecoder *d, unsigned *ret);
 
 /* Seeking to positions */
 int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset);

@@ -93,6 +93,7 @@ int ca_sync_current_group(CaSync *sync, const char **ret);
 int ca_sync_current_mtime(CaSync *sync, uint64_t *nsec);
 int ca_sync_current_size(CaSync *sync, uint64_t *ret);
 int ca_sync_current_rdev(CaSync *sync, dev_t *ret);
+int ca_sync_current_chattr(CaSync *sync, unsigned *ret);
 
 int ca_sync_get_digest(CaSync *s, CaChunkID *ret);
 int ca_sync_get_archive_size(CaSync *s, uint64_t *ret);

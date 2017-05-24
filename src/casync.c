@@ -2793,6 +2793,26 @@ int ca_sync_current_rdev(CaSync *s, dev_t *ret) {
         return -ENOTTY;
 }
 
+int ca_sync_current_chattr(CaSync *s, unsigned *ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return ca_seed_current_mode(seed, ret);
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_chattr(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_chattr(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
 static int ca_sync_add_pollfd(CaRemote *rr, struct pollfd *pollfd) {
         int r;
 

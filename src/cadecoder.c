@@ -4334,6 +4334,31 @@ int ca_decoder_current_rdev(CaDecoder *d, dev_t *ret) {
         return 0;
 }
 
+int ca_decoder_current_chattr(CaDecoder *d, unsigned *ret) {
+        CaDecoderNode *n;
+        mode_t mode;
+
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
+
+        mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -ENODATA;
+        if (!S_ISREG(mode) && !S_ISDIR(mode))
+                return -ENODATA;
+        if (!n->entry)
+                return -ENODATA;
+
+        *ret = ca_feature_flags_to_chattr(read_le64(&n->entry->flags));
+        return 0;
+}
+
 int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret) {
         CaDecoderNode *n;
         mode_t mode;

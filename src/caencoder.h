@@ -47,6 +47,7 @@ int ca_encoder_current_gid(CaEncoder *e, gid_t *ret);
 int ca_encoder_current_user(CaEncoder *e, const char **ret);
 int ca_encoder_current_group(CaEncoder *e, const char **ret);
 int ca_encoder_current_rdev(CaEncoder *e, dev_t *ret);
+int ca_encoder_current_chattr(CaEncoder *e, unsigned *ret);
 
 int ca_encoder_current_payload_offset(CaEncoder *e, uint64_t *ret);
 int ca_encoder_current_archive_offset(CaEncoder *e, uint64_t *ret);
