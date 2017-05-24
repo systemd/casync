@@ -6,7 +6,7 @@
 #include <sys/wait.h>
 #include <time.h>
 
-#ifdef USE_SYS_RANDOM_H
+#if USE_SYS_RANDOM_H
 #  include <sys/random.h>
 #endif
 
@@ -299,7 +299,7 @@ char *endswith(const char *p, const char *suffix) {
         return strcmp(e, suffix) == 0 ? (char*) e : NULL;
 }
 
-#if !HAVE_DECL_GETRANDOM
+#if !HAVE_GETRANDOM
 #  ifndef __NR_getrandom
 #    if defined __x86_64__
 #      define __NR_getrandom 318

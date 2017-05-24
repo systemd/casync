@@ -1,6 +1,6 @@
 #include "copy.h"
 
-#if !HAVE_DECL_COPY_FILE_RANGE
+#if !HAVE_COPY_FILE_RANGE
 #  ifndef __NR_copy_file_range
 #    if defined(__x86_64__)
 #      define __NR_copy_file_range 326

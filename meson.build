@@ -13,7 +13,7 @@ cc = meson.get_compiler('c')
 
 c_args = '''
         -Wextra
-        -Wundef
+        -Werror=undef
         -Wformat=2 -Wformat-security -Wformat-nonliteral
         -Wlogical-op
         -Wmissing-include-dirs
@@ -69,19 +69,19 @@ foreach ident : [
                                  #include <unistd.h>'''],
 ]
         have = cc.has_function(ident[0], prefix : ident[1])
-        conf.set10('HAVE_DECL_' + ident[0].to_upper(), have)
+        conf.set10('HAVE_' + ident[0].to_upper(), have)
 endforeach
 
 if cc.has_function('getrandom', prefix : '''#include <sys/random.h>''')
-        conf.set('USE_SYS_RANDOM_H', true)
-        conf.set10('HAVE_DECL_GETRANDOM', true)
+        conf.set10('USE_SYS_RANDOM_H', true)
+        conf.set10('HAVE_GETRANDOM', true)
 else
         have = cc.has_function('getrandom', prefix : '''#include <linux/random.h>''')
-        conf.set10('HAVE_DECL_GETRANDOM', have)
+        conf.set10('HAVE_GETRANDOM', have)
 endif
 
-conf.set('HAVE_STRUCT_FILE_CLONE_RANGE',
-         cc.has_header_symbol('linux/fs.h', 'struct file_clone_range'))
+conf.set10('HAVE_STRUCT_FILE_CLONE_RANGE',
+           cc.has_header_symbol('linux/fs.h', 'struct file_clone_range'))
 
 ############################################################
 

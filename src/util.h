@@ -433,7 +433,7 @@ static inline bool strv_isempty(char **l) {
         return !l || !l[0];
 }
 
-#if !HAVE_DECL_RENAMEAT2
+#if !HAVE_RENAMEAT2
 #  ifndef __NR_renameat2
 #    if defined __x86_64__
 #      define __NR_renameat2 316
@@ -570,7 +570,7 @@ static inline const char *yes_no(bool b) {
 #define FICLONERANGE	_IOW(0x94, 13, struct file_clone_range)
 #endif
 
-#ifndef HAVE_STRUCT_FILE_CLONE_RANGE
+#if !HAVE_STRUCT_FILE_CLONE_RANGE
 struct file_clone_range {
         __s64 src_fd;
         __u64 src_offset;
