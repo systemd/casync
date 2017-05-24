@@ -196,7 +196,8 @@ enum {
                 CA_FORMAT_WITH_DEVICE_NODES|
                 CA_FORMAT_WITH_FIFOS|
                 CA_FORMAT_WITH_SOCKETS|
-                CA_FORMAT_WITH_CHATTR,
+                CA_FORMAT_WITH_CHATTR|
+                CA_FORMAT_WITH_XATTRS,
 
         CA_FORMAT_FEATURE_FLAGS_MAX        = 0xFFFFFFFF | CA_FORMAT_RESPECT_FLAG_NODUMP,
 };

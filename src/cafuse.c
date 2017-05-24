@@ -488,15 +488,101 @@ static int casync_ioctl(
         return 0;
 }
 
+static int casync_getxattr(const char *path, const char *name, char *buffer, size_t size) {
+        const char *n;
+        const void *v;
+        size_t l;
+        int r;
+
+        assert(path);
+        assert(name);
+        assert(buffer || size == 0);
+
+        r = seek_to_path(instance, path);
+        if (r < 0)
+                return r;
+
+        r = ca_sync_current_xattr(instance, CA_ITERATE_FIRST, &n, &v, &l);
+        for (;;) {
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        break;
+
+                if (streq(name, n)) {
+
+                        if (size == 0)
+                                return (int) l;
+                        if (size < l)
+                                return -ERANGE;
+
+                        memcpy(buffer, v, l);
+                        return (int) l;
+                }
+
+                r = ca_sync_current_xattr(instance, CA_ITERATE_NEXT, &n, &v, &l);
+        }
+
+        return -ENODATA;
+}
+
+static int casync_listxattr(const char *path, char *list, size_t size) {
+        const char *n;
+        size_t k = 0;
+        char *p;
+        int r;
+
+        assert(path);
+        assert(list || size == 0);
+
+        r = seek_to_path(instance, path);
+        if (r < 0)
+                return r;
+
+        r = ca_sync_current_xattr(instance, CA_ITERATE_FIRST, &n, NULL, NULL);
+        for (;;) {
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        break;
+
+                k += strlen(n) + 1;
+
+                r = ca_sync_current_xattr(instance, CA_ITERATE_NEXT, &n, NULL, NULL);
+        }
+
+        if (size == 0)
+                return (int) k;
+        if (size < k)
+                return -ERANGE;
+
+        p = list;
+        r = ca_sync_current_xattr(instance, CA_ITERATE_FIRST, &n, NULL, NULL);
+        for (;;) {
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        break;
+
+                p = stpcpy(p, n) + 1;
+
+                r = ca_sync_current_xattr(instance, CA_ITERATE_NEXT, &n, NULL, NULL);
+        }
+
+        return (int) k;
+}
+
 static struct fuse_operations ops = {
-        .init     = casync_init,
-        .getattr  = casync_getattr,
-        .readlink = casync_readlink,
-        .readdir  = casync_readdir,
-        .open     = casync_open,
-        .read     = casync_read,
-        .statfs   = casync_statfs,
-        .ioctl    = casync_ioctl,
+        .init      = casync_init,
+        .getattr   = casync_getattr,
+        .readlink  = casync_readlink,
+        .readdir   = casync_readdir,
+        .open      = casync_open,
+        .read      = casync_read,
+        .statfs    = casync_statfs,
+        .ioctl     = casync_ioctl,
+        .getxattr  = casync_getxattr,
+        .listxattr = casync_listxattr,
 };
 
 int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
