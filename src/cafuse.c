@@ -3,6 +3,7 @@
 #include <fuse.h>
 #include <linux/fs.h>
 
+#include "caformat-util.h"
 #include "caformat.h"
 #include "cafuse.h"
 #include "util.h"
@@ -572,7 +573,7 @@ static int casync_listxattr(const char *path, char *list, size_t size) {
         return (int) k;
 }
 
-static struct fuse_operations ops = {
+static const struct fuse_operations ops = {
         .init      = casync_init,
         .getattr   = casync_getattr,
         .readlink  = casync_readlink,
@@ -584,6 +585,73 @@ static struct fuse_operations ops = {
         .getxattr  = casync_getxattr,
         .listxattr = casync_listxattr,
 };
+
+static int feature_flags_warning(CaSync *s) {
+        uint64_t ff, unsupported;
+        char *t;
+        int r;
+
+        for (;;) {
+                int step;
+
+                r = ca_sync_get_feature_flags(s, &ff);
+                if (r >= 0)
+                        break;
+                if (r != -ENODATA) {
+                        fprintf(stderr, "Failed to retrieve feature flags: %m\n");
+                        return r;
+                }
+
+                step = ca_sync_step(instance);
+                if (step < 0) {
+                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-step));
+                        return step;
+                }
+
+                switch (step) {
+
+                case CA_SYNC_FINISHED:
+                        fprintf(stderr, "Premature end of file.\n");
+                        return -EIO;
+
+                case CA_SYNC_STEP:
+                case CA_SYNC_PAYLOAD:
+                case CA_SYNC_NEXT_FILE:
+                case CA_SYNC_DONE_FILE:
+                case CA_SYNC_SEED_NEXT_FILE:
+                case CA_SYNC_SEED_DONE_FILE:
+                case CA_SYNC_FOUND:
+                case CA_SYNC_NOT_FOUND:
+                        break;
+
+                case CA_SYNC_POLL:
+                        r = ca_sync_poll(instance, UINT64_MAX, NULL);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to poll: %s\n", strerror(-r));
+                                return r;
+                        }
+                        break;
+
+                default:
+                        assert(false);
+                }
+        }
+
+        unsupported = ff & ~(CA_FORMAT_WITH_FUSE|CA_FORMAT_RESPECT_FLAG_NODUMP);
+        if (unsupported == 0)
+                return 0;
+
+        r = ca_with_feature_flags_format(unsupported, &t);
+        if (r < 0) {
+                fprintf(stderr, "Failed to format feature flags: %s\n", strerror(-r));
+                return r;
+        }
+
+        fprintf(stderr, "The following feature flags are not exposed in the mounted file system: %s\n", t);
+        free(t);
+
+        return 0;
+}
 
 int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
         struct fuse_chan *fc = NULL;
@@ -644,6 +712,12 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
                 fprintf(stderr, "Failed to allocate FUSE object: %s\n", strerror(-r));
                 goto finish;
         }
+
+        printf("Mounted: %s\n", where);
+
+        r = feature_flags_warning(s);
+        if (r < 0)
+                goto finish;
 
         r = fuse_loop(f);
         if (r < 0) {

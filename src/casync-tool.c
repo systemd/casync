@@ -2784,7 +2784,7 @@ static int verb_mkdev(int argc, char *argv[]) {
                 goto finish;
         }
 
-        printf("%s\n", path);
+        printf("Attached: %s\n", path);
 
         if (make_symlink) {
                 if (symlink(path, name) < 0) {
