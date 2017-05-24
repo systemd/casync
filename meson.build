@@ -174,6 +174,13 @@ test_nbd_sh = configure_file(
 test_nbd = find_program(test_nbd_sh)
 test('test-nbd.sh', test_nbd)
 
+test_fuse_sh = configure_file(
+        output : 'test-fuse.sh',
+        input : 'test/test-fuse.sh.in',
+        configuration : substs)
+test_fuse = find_program(test_fuse_sh)
+test('test-fuse.sh', test_fuse)
+
 ############################################################
 
 test_sources = '''

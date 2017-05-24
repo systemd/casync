@@ -1,0 +1,47 @@
+#!/bin/bash -ex
+
+set -e
+set -x
+
+PARAMS="--with=fuse"
+
+CASYNC_PROTOCOL_PATH=@top_builddir@
+export CASYNC_PROTOCOL_PATH
+
+SCRATCH_DIR=/var/tmp/test-casync.$RANDOM
+mkdir -p $SCRATCH_DIR/src
+
+if [ `id -u` == 0 ] ; then
+    cp -a @top_srcdir@ $SCRATCH_DIR/src
+else
+    # If we lack privileges we use rsync rather than cp to copy, as it will just skip over device nodes
+    rsync -a @top_srcdir@ $SCRATCH_DIR/src
+fi
+
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/src > $SCRATCH_DIR/test.digest
+
+@top_builddir@/casync $PARAMS make $SCRATCH_DIR/test.caidx $SCRATCH_DIR/src
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test.caidx.digest
+
+diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.caidx.digest
+
+@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/test.caidx $SCRATCH_DIR/extract
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract > $SCRATCH_DIR/extract.digest
+
+diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/extract.digest
+
+if [ `id -u` == 0 ] ; then
+    @top_builddir@/casync $PARAMS mount $SCRATCH_DIR/test.caidx $SCRATCH_DIR/mount &
+    MOUNT_PID=$!
+
+    sleep 3
+
+    @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract > $SCRATCH_DIR/mount.digest
+
+    diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/mount.digest
+
+    kill $MOUNT_PID
+    umount $SCRATCH_DIR/mount ||:
+fi
+
+rm -rf $SCRATCH_DIR
