@@ -48,6 +48,7 @@ static uint64_t arg_with = 0;
 static uint64_t arg_without = 0;
 static uid_t arg_uid_shift = 0, arg_uid_range = 0x10000U;
 static bool arg_uid_shift_apply = false;
+static bool arg_mkdir = true;
 
 static volatile sig_atomic_t quit = false;
 
@@ -96,6 +97,7 @@ static void help(void) {
                "     --punch-holes=no        Don't create sparse files\n"
                "     --reflink=no            Don't create reflinks from seeds\n"
                "     --seed-output=no        Don't implicitly add pre-existing output as seed\n"
+               "     --mkdir=no              Don't automatically create mount directory if it is missing\n"
                "     --uid-shift=yes|SHIFT   Shift UIDs/GIDs\n"
                "     --uid-range=RANGE       Restrict UIDs/GIDs to range\n\n"
                "Input/output selector:\n"
@@ -167,6 +169,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_UID_SHIFT,
                 ARG_UID_RANGE,
                 ARG_RECURSIVE,
+                ARG_MKDIR,
         };
 
         static const struct option options[] = {
@@ -189,6 +192,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "uid-shift",      required_argument, NULL, ARG_UID_SHIFT      },
                 { "uid-range",      required_argument, NULL, ARG_UID_RANGE      },
                 { "recursive",      required_argument, NULL, ARG_RECURSIVE      },
+                { "mkdir",          required_argument, NULL, ARG_MKDIR          },
                 {}
         };
 
@@ -367,6 +371,16 @@ static int parse_argv(int argc, char *argv[]) {
                         }
 
                         arg_seed_output = r;
+                        break;
+
+                case ARG_MKDIR:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --mkdir= parameter: %s\n", optarg);
+                                return r;
+                        }
+
+                        arg_mkdir = r;
                         break;
 
                 case ARG_UID_SHIFT: {
@@ -2382,7 +2396,7 @@ static int verb_mount(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
-        r = ca_fuse_run(s, input, mount_path);
+        r = ca_fuse_run(s, input, mount_path, arg_mkdir);
 
 finish:
         ca_sync_unref(s);

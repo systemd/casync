@@ -5,6 +5,7 @@
 
 #include "caformat.h"
 #include "cafuse.h"
+#include "util.h"
 
 static CaSync *instance = NULL;
 
@@ -498,7 +499,7 @@ static struct fuse_operations ops = {
         .ioctl    = casync_ioctl,
 };
 
-int ca_fuse_run(CaSync *s, const char *what, const char *where) {
+int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
         struct fuse_chan *fc = NULL;
         struct fuse *f = NULL;
         const char * arguments[] = {
@@ -531,8 +532,23 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where) {
         fc = fuse_mount(where, &args);
         if (!fc) {
                 r = errno != 0 ? -abs(errno) : -EIO;
-                fprintf(stderr, "Failed to establish FUSE mount: %s\n", strerror(-r));
-                goto finish;
+
+                if (r == -ENOENT && do_mkdir) {
+                        if (mkdir(where, 0777) < 0) {
+                                r = -errno;
+                                fprintf(stderr, "Failed to create mount directory %s: %s\n", where, strerror(-r));
+                                goto finish;
+                        }
+
+                        errno = 0;
+                        fc = fuse_mount(where, &args);
+                        r = fc ? 0 : (errno != 0 ? -abs(errno) : -EIO);
+                }
+
+                if (r < 0) {
+                        fprintf(stderr, "Failed to establish FUSE mount: %s\n", strerror(-r));
+                        goto finish;
+                }
         }
 
         errno = 0;
