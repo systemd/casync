@@ -47,6 +47,7 @@
 
 typedef struct CaDecoderExtendedAttribute {
         struct CaDecoderExtendedAttribute *next;
+        struct CaDecoderExtendedAttribute *previous;
         CaFormatXAttr format;
 } CaDecoderExtendedAttribute;
 
@@ -79,7 +80,9 @@ typedef struct CaDecoderNode {
         char *symlink_target; /* Only for S_ISLNK() */
         dev_t rdev;           /* Only for S_ISCHR() and S_ISBLK() */
 
-        CaDecoderExtendedAttribute *xattrs;
+        CaDecoderExtendedAttribute *xattrs_first;
+        CaDecoderExtendedAttribute *xattrs_last;
+        CaDecoderExtendedAttribute *xattrs_current;
 
         bool have_fcaps;
         void *fcaps;
@@ -258,14 +261,20 @@ CaDecoder *ca_decoder_new(void) {
 }
 
 static void ca_decoder_node_free_xattrs(CaDecoderNode *n) {
+        CaDecoderExtendedAttribute *i;
+
         assert(n);
 
-        while (n->xattrs) {
+        i = n->xattrs_first;
+        while (i) {
                 CaDecoderExtendedAttribute *next;
-                next = n->xattrs->next;
-                free(n->xattrs);
-                n->xattrs = next;
+
+                next = i->next;
+                free(i);
+                i = next;
         }
+
+        n->xattrs_first = n->xattrs_last = n->xattrs_current = NULL;
 }
 
 static void ca_decoder_node_free_acl_entries(CaDecoderACLEntry **e) {
@@ -1604,7 +1613,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (group)
                                 return -EBADMSG;
-                        if (n->xattrs)
+                        if (n->xattrs_first)
                                 return -EBADMSG;
                         if (n->have_acl)
                                 return -EBADMSG;
@@ -1635,7 +1644,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (group)
                                 return -EBADMSG;
-                        if (n->xattrs)
+                        if (n->xattrs_first)
                                 return -EBADMSG;
                         if (n->have_acl)
                                 return -EBADMSG;
@@ -1685,7 +1694,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
 
                         /* Check whether things are properly ordered */
-                        if (n->xattrs && strcmp((char*) x->name_and_value, (char*) n->xattrs->format.name_and_value) <= 0)
+                        if (n->xattrs_last && strcmp((char*) x->name_and_value, (char*) n->xattrs_last->format.name_and_value) <= 0)
                                 return -EBADMSG;
 
                         /* Add to list of extended attributes */
@@ -1694,8 +1703,15 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -ENOMEM;
 
                         memcpy(&u->format, x, l);
-                        u->next = n->xattrs;
-                        n->xattrs = u;
+
+                        u->previous = n->xattrs_last;
+
+                        if (n->xattrs_last)
+                                n->xattrs_last->next = u;
+                        else
+                                n->xattrs_first = u;
+
+                        n->xattrs_last = u;
 
                         offset += l;
 
@@ -2059,7 +2075,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                 return -EBADMSG;
 
         /* xattrs/ALCs are not defined for symlinks */
-        if (S_ISLNK(mode) && (n->xattrs || n->have_acl))
+        if (S_ISLNK(mode) && (n->xattrs_first || n->have_acl))
                 return -EBADMSG;
 
         /* If there's at least one USER or GROUP entry in the access ACL, we also mus have a MASK entry (which is
@@ -3403,7 +3419,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         if (!ca_xattr_name_store(q))
                                 goto next;
 
-                        for (x = child->xattrs; x; x = x->next)
+                        for (x = child->xattrs_first; x; x = x->next)
                                 if (streq((char*) x->format.name_and_value, q)) {
                                         found = true;
                                         break;
@@ -3425,7 +3441,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 free(p);
 
-                for (x = child->xattrs; x; x = x->next) {
+                for (x = child->xattrs_first; x; x = x->next) {
                         size_t k;
 
                         k = strlen((char*) x->format.name_and_value);
@@ -4356,6 +4372,92 @@ int ca_decoder_current_chattr(CaDecoder *d, unsigned *ret) {
                 return -ENODATA;
 
         *ret = ca_feature_flags_to_chattr(read_le64(&n->entry->flags));
+        return 0;
+}
+
+int ca_decoder_current_xattr(CaDecoder *d, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size) {
+        CaDecoderNode *n;
+        CaDecoderExtendedAttribute *p = NULL;
+
+        if (!d)
+                return -EINVAL;
+        if (!ret_name)
+                return -EINVAL;
+        if (where < 0)
+                return -EINVAL;
+        if (where >= _CA_ITERATE_MAX)
+                return -EINVAL;
+        if (!ret_name)
+                return -EINVAL;
+
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
+
+        switch (where) {
+
+        case CA_ITERATE_NEXT:
+                if (n->xattrs_current)
+                        p = n->xattrs_current->next;
+                else
+                        p = NULL;
+                break;
+
+        case CA_ITERATE_PREVIOUS:
+                if (n->xattrs_current)
+                        p = n->xattrs_current->previous;
+                else
+                        p = NULL;
+                break;
+
+        case CA_ITERATE_FIRST:
+                p = n->xattrs_first;
+                break;
+
+        case CA_ITERATE_LAST:
+                p = n->xattrs_last;
+                break;
+
+        case CA_ITERATE_CURRENT:
+                p = n->xattrs_current;
+                break;
+
+        case _CA_ITERATE_MAX:
+        case _CA_ITERATE_INVALID:
+                assert(false);
+        }
+
+        if (!p)
+                goto eof;
+
+        n->xattrs_current = p;
+
+        *ret_name = (const char*) p->format.name_and_value;
+
+        if (ret_value || ret_size) {
+                const void *v;
+
+                v = memchr(p->format.name_and_value, 0, read_le64(&p->format.header.size) - offsetof(CaFormatXAttr, name_and_value));
+                assert(v);
+
+                v = (const uint8_t*) v + 1;
+
+                if (ret_value)
+                        *ret_value = v;
+
+                if (ret_size)
+                        *ret_size = read_le64(&p->format.header.size) - offsetof(CaFormatXAttr, name_and_value) - ((const uint8_t*) v - (const uint8_t*) p->format.name_and_value);
+        }
+
+        return 1;
+
+eof:
+        *ret_name = NULL;
+        if (ret_value)
+                *ret_value = NULL;
+        if (ret_size)
+                *ret_size = 0;
+
         return 0;
 }
 

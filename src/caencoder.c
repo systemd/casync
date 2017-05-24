@@ -87,6 +87,7 @@ typedef struct CaEncoderNode {
         CaEncoderExtendedAttribute *xattrs;
         size_t n_xattrs;
         bool xattrs_valid;
+        size_t xattrs_idx;
 
         /* ACLs */
         CaEncoderACLEntry *acl_user;
@@ -203,6 +204,7 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
         }
         n->xattrs = mfree(n->xattrs);
         n->n_xattrs = 0;
+        n->xattrs_idx = (size_t) -1;
 
         n->acl_user = ca_encoder_acl_entry_free(n->acl_user, n->n_acl_user);
         n->acl_group = ca_encoder_acl_entry_free(n->acl_group, n->n_acl_group);
@@ -2696,6 +2698,93 @@ int ca_encoder_current_chattr(CaEncoder *e, unsigned *ret) {
                 return -ENODATA;
 
         *ret = ca_feature_flags_to_chattr((ca_feature_flags_from_chattr(n->chattr_flags) & e->feature_flags));
+        return 0;
+}
+
+int ca_encoder_current_xattr(CaEncoder *e, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size) {
+        CaEncoderNode *n;
+        size_t p;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret_name)
+                return -EINVAL;
+        if (where < 0)
+                return -EINVAL;
+        if (where >= _CA_ITERATE_MAX)
+                return -EINVAL;
+        if (!ret_name)
+                return -EINVAL;
+
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
+
+        if (!n->xattrs_valid)
+                return -ENODATA;
+
+        switch (where) {
+
+        case CA_ITERATE_NEXT:
+                if (n->xattrs_idx == (size_t) -1)
+                        goto eof;
+
+                p = n->xattrs_idx + 1;
+                break;
+
+        case CA_ITERATE_PREVIOUS:
+                if (n->xattrs_idx == (size_t) -1 ||
+                    n->xattrs_idx == 0)
+                        goto eof;
+
+                p = n->xattrs_idx - 1;
+                break;
+
+        case CA_ITERATE_FIRST:
+                p = 0;
+                break;
+
+        case CA_ITERATE_LAST:
+                if (n->n_xattrs == 0)
+                        goto eof;
+
+                p = n->n_xattrs - 1;
+                break;
+
+        case CA_ITERATE_CURRENT:
+                p = n->xattrs_idx;
+                break;
+
+        case _CA_ITERATE_MAX:
+        case _CA_ITERATE_INVALID:
+        default:
+                assert(false);
+        }
+
+        if (p == (size_t) -1)
+                goto eof;
+        if (p >= n->n_xattrs)
+                goto eof;
+
+        n->xattrs_idx = p;
+
+        *ret_name = n->xattrs[p].name;
+
+        if (ret_value)
+                *ret_value = n->xattrs[p].data;
+        if (ret_size)
+                *ret_size = n->xattrs[p].data_size;
+
+        return 1;
+
+eof:
+        *ret_name = NULL;
+
+        if (ret_value)
+                *ret_value = NULL;
+        if (ret_size)
+                *ret_size = 0;
+
         return 0;
 }
 

@@ -11,6 +11,7 @@ if [ "$1" != "clean" ]; then
     test -e sparse || dd if=/dev/urandom of=sparse count=2 bs=1 seek=9999
     test -e reflink || ( cp --reflink=auto large reflink &&
                              dd if=/dev/urandom of=reflink seek=102400 bs=1 count=1 conv=notrunc )
+    test -s xattr || ( touch xattr && setfattr -n user.foo -v bar xattr && setfattr -n user.quux -v piep xattr )
 else
     chattr -i test-files/immutable || :
     rm -f test-files/thisisafifo
@@ -20,4 +21,5 @@ else
     rm -f test-files/nocow
     rm -f test-files/acl
     rm -f test-files/sparse
+    rm -f test-files/xattr
 fi

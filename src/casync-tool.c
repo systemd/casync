@@ -1506,20 +1506,21 @@ static int do_print_digest(gcry_md_hd_t digest) {
         return 0;
 }
 
-static int mtree_escape(const char *p, char **ret) {
+static int mtree_escape_full(const char *p, size_t l, char **ret) {
         const char *a;
         char *n, *b;
-        size_t l;
 
         assert(p);
         assert(ret);
 
-        l = strlen(p);
+        if (l == (size_t) -1)
+                l = strlen(p);
+
         n = new(char, l*4+1);
         if (!n)
                 return -ENOMEM;
 
-        for (a = p, b = n; *a; a++) {
+        for (a = p, b = n; a < p + l; a++) {
 
                 if ((uint8_t) *a <= (uint8_t) ' ' ||
                     (uint8_t) *a >= 127U ||
@@ -1534,10 +1535,13 @@ static int mtree_escape(const char *p, char **ret) {
         }
 
         *b = 0;
-
         *ret = n;
 
         return 0;
+}
+
+static int mtree_escape(const char *p, char **ret) {
+        return mtree_escape_full(p, (size_t) -1, ret);
 }
 
 static int verb_list(int argc, char *argv[]) {
@@ -1866,7 +1870,7 @@ static int verb_list(int argc, char *argv[]) {
                                 r = mtree_escape(path, &escaped);
                                 if (r < 0) {
                                         free(path);
-                                        r = log_oom();
+                                        log_oom();
                                         goto finish;
                                 }
 
@@ -1897,7 +1901,7 @@ static int verb_list(int argc, char *argv[]) {
                                         r = mtree_escape(target, &escaped);
                                         if (r < 0) {
                                                 free(path);
-                                                r = log_oom();
+                                                log_oom();
                                                 goto finish;
                                         }
 
@@ -1919,7 +1923,7 @@ static int verb_list(int argc, char *argv[]) {
                                         r = mtree_escape(user, &escaped);
                                         if (r < 0) {
                                                 free(path);
-                                                r = log_oom();
+                                                log_oom();
                                                 goto finish;
                                         }
 
@@ -1931,7 +1935,7 @@ static int verb_list(int argc, char *argv[]) {
                                         r = mtree_escape(group, &escaped);
                                         if (r < 0) {
                                                 free(path);
-                                                r = log_oom();
+                                                log_oom();
                                                 goto finish;
                                         }
 
@@ -1958,6 +1962,10 @@ static int verb_list(int argc, char *argv[]) {
                                 gid_t gid = GID_INVALID;
                                 dev_t rdev = (dev_t) -1;
                                 unsigned flags = (unsigned) -1;
+                                char *escaped = NULL;
+                                const char *xname;
+                                const void *xvalue;
+                                size_t xsize;
 
                                 /* stat */
 
@@ -1972,8 +1980,19 @@ static int verb_list(int argc, char *argv[]) {
                                 (void) ca_sync_current_chattr(s, &flags);
                                 (void) ca_sync_current_archive_offset(s, &offset);
 
-                                printf("    File: %s\n", isempty(path) ? "/" : path);
-                                printf("    Mode: %s\n", strna(ls_format_mode(mode, ls_mode)));
+                                r = mtree_escape(path, &escaped);
+                                free(path);
+                                if (r < 0) {
+                                        log_oom();
+                                        goto finish;
+                                }
+
+                                printf("    File: %s\n"
+                                       "    Mode: %s\n",
+                                       isempty(escaped) ? "." : escaped,
+                                       strna(ls_format_mode(mode, ls_mode)));
+
+                                escaped = mfree(escaped);
 
                                 if (flags != (unsigned) -1)
                                         printf("FileAttr: %s\n", strna(ls_format_chattr(flags, ls_flags)));
@@ -2001,12 +2020,22 @@ static int verb_list(int argc, char *argv[]) {
                                         if (uid == 0)
                                                 user = "root";
 
+                                        if (user) {
+                                                r = mtree_escape(user, &escaped);
+                                                if (r < 0) {
+                                                        log_oom();
+                                                        goto finish;
+                                                }
+                                        }
+
                                         if (uid_is_valid(uid) && user)
-                                                printf("%s (" UID_FMT ")\n", user, uid);
+                                                printf("%s (" UID_FMT ")\n", escaped, uid);
                                         else if (uid_is_valid(uid))
                                                 printf(UID_FMT "\n", uid);
                                         else
-                                                printf("%s\n", user);
+                                                printf("%s\n", escaped);
+
+                                        escaped = mfree(escaped);
                                 }
 
                                 if (gid_is_valid(gid) || group) {
@@ -2015,21 +2044,69 @@ static int verb_list(int argc, char *argv[]) {
                                         if (gid == 0)
                                                 group = "root";
 
+                                        if (group) {
+                                                r = mtree_escape(group, &escaped);
+                                                if (r < 0) {
+                                                        log_oom();
+                                                        goto finish;
+                                                }
+                                        }
+
                                         if (gid_is_valid(gid) && group)
-                                                printf("%s (" GID_FMT ")\n", group, gid);
+                                                printf("%s (" GID_FMT ")\n", escaped, gid);
                                         else if (gid_is_valid(gid))
                                                 printf(GID_FMT "\n", gid);
                                         else
-                                                printf("%s\n", group);
+                                                printf("%s\n", escaped);
+
+                                        escaped = mfree(escaped);
                                 }
 
-                                if (target)
-                                        printf("  Target: %s\n", target);
+                                if (target) {
+                                        r = mtree_escape(target, &escaped);
+                                        if (r < 0) {
+                                                log_oom();
+                                                goto finish;
+                                        }
+
+                                        printf("  Target: %s\n", escaped);
+                                        escaped = mfree(escaped);
+                                }
 
                                 if (rdev != (dev_t) -1)
                                         printf("  Device: %lu:%lu\n", (unsigned long) major(rdev), (unsigned long) minor(rdev));
 
-                                free(path);
+                                r = ca_sync_current_xattr(s, CA_ITERATE_FIRST, &xname, &xvalue, &xsize);
+                                for (;;) {
+                                        char *n, *v;
+
+                                        if (r < 0) {
+                                                fprintf(stderr, "Failed to enumerate extended attributes: %s\n", strerror(-r));
+                                                goto finish;
+                                        }
+                                        if (r == 0)
+                                                break;
+
+                                        r = mtree_escape(xname, &n);
+                                        if (r < 0) {
+                                                log_oom();
+                                                goto finish;
+                                        }
+
+                                        r = mtree_escape_full(xvalue, xsize, &v);
+                                        if (r < 0) {
+                                                free(n);
+                                                log_oom();
+                                                goto finish;
+                                        }
+
+                                        printf("   XAttr: %s → %s\n", n, v);
+                                        free(n);
+                                        free(v);
+
+                                        r = ca_sync_current_xattr(s, CA_ITERATE_NEXT, &xname, &xvalue, &xsize);
+                                }
+
                                 r = 0;
                                 goto finish;
                         }

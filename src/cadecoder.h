@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <sys/types.h>
 
+#include "cacommon.h"
 #include "calocation.h"
 #include "caorigin.h"
 
@@ -87,6 +88,7 @@ int ca_decoder_current_group(CaDecoder *d, const char **user);
 int ca_decoder_current_rdev(CaDecoder *d, dev_t *ret);
 int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret);
 int ca_decoder_current_chattr(CaDecoder *d, unsigned *ret);
+int ca_decoder_current_xattr(CaDecoder *d, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size);
 
 /* Seeking to positions */
 int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset);

@@ -2813,6 +2813,22 @@ int ca_sync_current_chattr(CaSync *s, unsigned *ret) {
         return -ENOTTY;
 }
 
+int ca_sync_current_xattr(CaSync *s, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size) {
+        if (!s)
+                return -EINVAL;
+        if (!ret_name)
+                return -EINVAL;
+        if (where < 0 || where > _CA_ITERATE_MAX)
+                return -EINVAL;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_xattr(s->encoder, where, ret_name, ret_value, ret_size);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_xattr(s->decoder, where, ret_name, ret_value, ret_size);
+
+        return -ENOTTY;
+}
+
 static int ca_sync_add_pollfd(CaRemote *rr, struct pollfd *pollfd) {
         int r;
 
