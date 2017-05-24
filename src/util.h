@@ -569,8 +569,12 @@ static inline const char *yes_no(bool b) {
 #define CGROUP2_SUPER_MAGIC 0x63677270
 #endif
 
+#ifndef FUSE_SUPER_MAGIC
+#define FUSE_SUPER_MAGIC 0x65735546
+#endif
+
 #ifndef FICLONERANGE
-#define FICLONERANGE	_IOW(0x94, 13, struct file_clone_range)
+#define FICLONERANGE _IOW(0x94, 13, struct file_clone_range)
 #endif
 
 #if !HAVE_STRUCT_FILE_CLONE_RANGE

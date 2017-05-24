@@ -388,6 +388,11 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_SOCKETS|
                         CA_FORMAT_WITH_ACL;
 
+        case FUSE_SUPER_MAGIC:
+                /* We don't actually know what the backing FUSE file system supports, but it's likely more limited than
+                 * what we support ourselves, hence use that.*/
+                return CA_FORMAT_WITH_FUSE;
+
         default:
                 return
                         CA_FORMAT_WITH_16BIT_UIDS|
