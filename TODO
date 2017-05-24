@@ -33,7 +33,7 @@ LATER:
 * optionally interpret aufs/union mount whiteout files?
 * in mkdev and mount: issue sd_notify(READY=1) when ready
 * mkdev: generate named device node symlinks cleanly via udev rule
-* fuse: expose xattrs, acls, fcaps, DOS flags
+* fuse: expose acls, fcaps, DOS flags
 * fuse: possibly translate user names on access
 * fuse: provide "mount.casync" compat symlink so that people can list casync mounts in /etc/fstab
 * encoder: change seeking to be more like decoder's seeking
