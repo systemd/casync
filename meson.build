@@ -76,6 +76,7 @@ if cc.has_function('getrandom', prefix : '''#include <sys/random.h>''')
         conf.set10('USE_SYS_RANDOM_H', true)
         conf.set10('HAVE_GETRANDOM', true)
 else
+        conf.set10('USE_SYS_RANDOM_H', false)
         have = cc.has_function('getrandom', prefix : '''#include <linux/random.h>''')
         conf.set10('HAVE_GETRANDOM', have)
 endif
