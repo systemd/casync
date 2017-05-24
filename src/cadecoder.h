@@ -98,4 +98,6 @@ int ca_decoder_seek_next_sibling(CaDecoder *d);
 int ca_decoder_get_punch_holes_bytes(CaDecoder *d, uint64_t *ret);
 int ca_decoder_get_reflink_bytes(CaDecoder *d, uint64_t *ret);
 
+int ca_decoder_current_archive_offset(CaDecoder *d, uint64_t *ret);
+
 #endif

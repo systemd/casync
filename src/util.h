@@ -270,6 +270,9 @@ char *strjoin_real(const char *x, ...) _sentinel_;
 #define LS_FORMAT_MODE_MAX (1+3+3+3+1)
 char* ls_format_mode(mode_t m, char ret[LS_FORMAT_MODE_MAX]);
 
+#define LS_FORMAT_CHATTR_MAX 11
+char *ls_format_chattr(unsigned flags, char ret[LS_FORMAT_CHATTR_MAX]);
+
 int safe_atou(const char *s, unsigned *ret_u);
 int safe_atollu(const char *s, unsigned long long *ret_u);
 

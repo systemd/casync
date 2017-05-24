@@ -79,6 +79,7 @@ static void help(void) {
                "%1$s [OPTIONS...] extract [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
                "%1$s [OPTIONS...] list [ARCHIVE|ARCHIVE_INDEX|DIRECTORY]\n"
                "%1$s [OPTIONS...] mtree [ARCHIVE|ARCHIVE_INDEX|DIRECTORY]\n"
+               "%1$s [OPTIONS...] stat [ARCHIVE|ARCHIVE_INDEX|DIRECTORY] [PATH]\n"
                "%1$s [OPTIONS...] digest [ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY]\n"
                "%1$s [OPTIONS...] mount [ARCHIVE|ARCHIVE_INDEX] PATH\n"
                "%1$s [OPTIONS...] mkdev [BLOB|BLOB_INDEX] [NODE]\n\n"
@@ -1810,7 +1811,7 @@ static int verb_list(int argc, char *argv[]) {
                 }
 
                 case CA_SYNC_NEXT_FILE: {
-                        char *path, ls_mode[LS_FORMAT_MODE_MAX];
+                        char *path;
                         mode_t mode;
 
                         r = ca_sync_current_mode(s, &mode);
@@ -1826,6 +1827,8 @@ static int verb_list(int argc, char *argv[]) {
                         }
 
                         if (streq(argv[0], "list")) {
+                                char ls_mode[LS_FORMAT_MODE_MAX];
+
                                 printf("%s %s\n", ls_format_mode(mode, ls_mode), path);
                                 print_digest = false;
 
@@ -1840,11 +1843,12 @@ static int verb_list(int argc, char *argv[]) {
 
                                 toplevel_shown = true;
 
-                        } else {
+                        } else if (streq(argv[0], "mtree")) {
+
                                 const char *target = NULL, *user = NULL, *group = NULL;
                                 uint64_t mtime = UINT64_MAX, size = UINT64_MAX;
-                                uid_t uid = -1;
-                                gid_t gid = -1;
+                                uid_t uid = UID_INVALID;
+                                gid_t gid = GID_INVALID;
                                 dev_t rdev = (dev_t) -1;
                                 char *escaped;
 
@@ -1946,6 +1950,88 @@ static int verb_list(int argc, char *argv[]) {
                                         gcry_md_reset(digest);
                                 else
                                         putchar('\n');
+                        } else {
+                                const char *target = NULL, *user = NULL, *group = NULL;
+                                uint64_t mtime = UINT64_MAX, size = UINT64_MAX, offset = UINT64_MAX;
+                                char ls_mode[LS_FORMAT_MODE_MAX], ls_flags[LS_FORMAT_CHATTR_MAX];
+                                uid_t uid = UID_INVALID;
+                                gid_t gid = GID_INVALID;
+                                dev_t rdev = (dev_t) -1;
+                                unsigned flags = (unsigned) -1;
+
+                                /* stat */
+
+                                (void) ca_sync_current_target(s, &target);
+                                (void) ca_sync_current_mtime(s, &mtime);
+                                (void) ca_sync_current_size(s, &size);
+                                (void) ca_sync_current_uid(s, &uid);
+                                (void) ca_sync_current_gid(s, &gid);
+                                (void) ca_sync_current_user(s, &user);
+                                (void) ca_sync_current_group(s, &group);
+                                (void) ca_sync_current_rdev(s, &rdev);
+                                (void) ca_sync_current_chattr(s, &flags);
+                                (void) ca_sync_current_archive_offset(s, &offset);
+
+                                printf("    File: %s\n", isempty(path) ? "/" : path);
+                                printf("    Mode: %s\n", strna(ls_format_mode(mode, ls_mode)));
+
+                                if (flags != (unsigned) -1)
+                                        printf("FileAttr: %s\n", strna(ls_format_chattr(flags, ls_flags)));
+
+                                if (offset != UINT64_MAX)
+                                        printf("  Offset: %" PRIu64 "\n", offset);
+
+                                if (mtime != UINT64_MAX) {
+                                        char d[128];
+                                        time_t t;
+                                        struct tm tm;
+
+                                        t = (time_t) (mtime / UINT64_C(1000000000));
+                                        if (localtime_r(&t, &tm) &&
+                                            strftime(d, sizeof(d), "%Y-%m-%d %H:%M:%S", &tm) > 0)
+                                                printf("    Time: %s.%09" PRIu64"\n", d, mtime % UINT64_C(1000000000));
+                                }
+
+                                if (size != UINT64_MAX)
+                                        printf("    Size: %" PRIu64 "\n", size);
+
+                                if (uid_is_valid(uid) || user) {
+                                        printf("    User: ");
+
+                                        if (uid == 0)
+                                                user = "root";
+
+                                        if (uid_is_valid(uid) && user)
+                                                printf("%s (" UID_FMT ")\n", user, uid);
+                                        else if (uid_is_valid(uid))
+                                                printf(UID_FMT "\n", uid);
+                                        else
+                                                printf("%s\n", user);
+                                }
+
+                                if (gid_is_valid(gid) || group) {
+                                        printf("   Group: ");
+
+                                        if (gid == 0)
+                                                group = "root";
+
+                                        if (gid_is_valid(gid) && group)
+                                                printf("%s (" GID_FMT ")\n", group, gid);
+                                        else if (gid_is_valid(gid))
+                                                printf(GID_FMT "\n", gid);
+                                        else
+                                                printf("%s\n", group);
+                                }
+
+                                if (target)
+                                        printf("  Target: %s\n", target);
+
+                                if (rdev != (dev_t) -1)
+                                        printf("  Device: %lu:%lu\n", (unsigned long) major(rdev), (unsigned long) minor(rdev));
+
+                                free(path);
+                                r = 0;
+                                goto finish;
                         }
 
                         free(path);
@@ -3422,7 +3508,7 @@ static int dispatch_verb(int argc, char *argv[]) {
                 r = verb_make(argc, argv);
         else if (streq(argv[0], "extract"))
                 r = verb_extract(argc, argv);
-        else if (STR_IN_SET(argv[0], "list", "mtree"))
+        else if (STR_IN_SET(argv[0], "list", "mtree", "stat"))
                 r = verb_list(argc, argv);
         else if (streq(argv[0], "digest"))
                 r = verb_digest(argc, argv);

@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <linux/fs.h>
 
 #if USE_SYS_RANDOM_H
 #  include <sys/random.h>
@@ -669,6 +670,40 @@ char* ls_format_mode(mode_t m, char ret[LS_FORMAT_MODE_MAX]) {
 
         return ret;
 }
+
+char *ls_format_chattr(unsigned flags, char ret[LS_FORMAT_CHATTR_MAX]) {
+
+        static const struct {
+                unsigned flag;
+                char code;
+        } table[] = {
+                { FS_SYNC_FL,        'S' },
+                { FS_DIRSYNC_FL,     'D' },
+                { FS_IMMUTABLE_FL,   'i' },
+                { FS_APPEND_FL,      'a' },
+                { FS_NODUMP_FL,      'd' },
+                { FS_NOATIME_FL,     'A' },
+                { FS_COMPR_FL,       'c' },
+                { FS_NOCOMP_FL,      'N' }, /* Not an official one, but one we made up, since lsattr(1) doesn't know it. Subject to change, as soon as it starts supporting that. */
+                { FS_NOCOW_FL,       'C' },
+                { FS_PROJINHERIT_FL, 'P' },
+        };
+
+        size_t i;
+
+        if (flags == (unsigned) -1)
+                return NULL;
+
+        assert(ELEMENTSOF(table) == LS_FORMAT_CHATTR_MAX-1);
+
+        for (i = 0; i < ELEMENTSOF(table); i++)
+                ret[i] = flags & table[i].flag ? table[i].code : '-';
+
+        ret[i] = 0;
+
+        return ret;
+}
+
 
 int safe_atou(const char *s, unsigned *ret_u) {
         char *x = NULL;

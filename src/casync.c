@@ -2925,10 +2925,13 @@ int ca_sync_current_archive_offset(CaSync *s, uint64_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        if (!s->encoder)
-                return -ENODATA;
+        if (s->encoder)
+                return ca_encoder_current_archive_offset(s->encoder, ret);
 
-        return ca_encoder_current_archive_offset(s->encoder, ret);
+        if (s->decoder)
+                return ca_decoder_current_archive_offset(s->decoder, ret);
+
+        return -ENOTTY;
 }
 
 static int ca_sync_acquire_archive_size(CaSync *s) {

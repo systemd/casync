@@ -4682,3 +4682,13 @@ int ca_decoder_set_uid_range(CaDecoder *d, uid_t u) {
         d->uid_range = u;
         return 0;
 }
+
+int ca_decoder_current_archive_offset(CaDecoder *d, uint64_t *ret) {
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        *ret = d->archive_offset;
+        return 0;
+}
