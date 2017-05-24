@@ -1,8 +1,5 @@
 #!/bin/bash -ex
 
-set -e
-set -x
-
 PARAMS="--with=fuse"
 
 CASYNC_PROTOCOL_PATH=@top_builddir@
