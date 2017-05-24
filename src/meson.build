@@ -5,6 +5,7 @@ libshared_sources = files('''
 	cachunker.h
 	cachunkid.c
 	cachunkid.h
+	cacommon.h
 	cadecoder.c
 	cadecoder.h
 	caencoder.c
