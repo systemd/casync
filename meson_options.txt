@@ -1,0 +1,4 @@
+# -*- mode: meson -*-
+
+option('fuse', type : 'boolean', value : true,
+       description : 'build the fuse backend (requires fuse-devel)')

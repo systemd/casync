@@ -65,8 +65,11 @@ casync_sources = files('''
         casync-tool.c
 	canbd.c
 	canbd.h
-	cafuse.c
 	cafuse.h
 '''.split())
+
+if conf.get('HAVE_FUSE') == 1
+        casync_sources += files('cafuse.c')
+endif
 
 casync_http_sources = files('casync-http.c')

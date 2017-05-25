@@ -92,19 +92,26 @@ docdir = join_paths(datadir, 'doc/casync')
 protocoldir = join_paths(prefixdir, 'lib/casync/protocols')
 conf.set_quoted('CASYNC_PROTOCOL_PATH', protocoldir)
 
-config_h = configure_file(
-        output : 'config.h',
-        configuration : conf)
-add_project_arguments('-include', 'config.h', language : 'c')
-
 liblzma = dependency('liblzma',
                      version : '>= 5.1.0')
 libcurl = dependency('libcurl',
                      version : '>= 7.32.0')
-libfuse = dependency('fuse',
-                     version : '>= 2.6')
+
 libgcrypt = cc.find_library('gcrypt')
 libacl = cc.find_library('acl')
+
+if get_option('fuse')
+        libfuse = dependency('fuse',
+                             version : '>= 2.6')
+else
+        libfuse = []
+endif
+conf.set10('HAVE_FUSE', get_option('fuse'))
+
+config_h = configure_file(
+        output : 'config.h',
+        configuration : conf)
+add_project_arguments('-include', 'config.h', language : 'c')
 
 subdir('src')
 

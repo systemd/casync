@@ -81,7 +81,9 @@ static void help(void) {
                "%1$s [OPTIONS...] mtree [ARCHIVE|ARCHIVE_INDEX|DIRECTORY]\n"
                "%1$s [OPTIONS...] stat [ARCHIVE|ARCHIVE_INDEX|DIRECTORY] [PATH]\n"
                "%1$s [OPTIONS...] digest [ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY]\n"
+#if HAVE_FUSE
                "%1$s [OPTIONS...] mount [ARCHIVE|ARCHIVE_INDEX] PATH\n"
+#endif
                "%1$s [OPTIONS...] mkdev [BLOB|BLOB_INDEX] [NODE]\n\n"
                "Content-Addressable Data Synchronization Tool\n\n"
                "  -h --help                  Show this help\n"
@@ -98,7 +100,9 @@ static void help(void) {
                "     --punch-holes=no        Don't create sparse files\n"
                "     --reflink=no            Don't create reflinks from seeds\n"
                "     --seed-output=no        Don't implicitly add pre-existing output as seed\n"
+#if HAVE_FUSE
                "     --mkdir=no              Don't automatically create mount directory if it is missing\n"
+#endif
                "     --uid-shift=yes|SHIFT   Shift UIDs/GIDs\n"
                "     --uid-range=RANGE       Restrict UIDs/GIDs to range\n\n"
                "Input/output selector:\n"
@@ -2452,7 +2456,7 @@ finish:
 }
 
 static int verb_mount(int argc, char *argv[]) {
-
+#if HAVE_FUSE
         typedef enum MountOperation {
                 MOUNT_ARCHIVE,
                 MOUNT_ARCHIVE_INDEX,
@@ -2570,6 +2574,10 @@ finish:
         free(input);
 
         return r;
+#else
+        fprintf(stderr, "Compiled without support for fuse.\n");
+        return -ENOSYS;
+#endif
 }
 
 static int verb_mkdev(int argc, char *argv[]) {
