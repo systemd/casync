@@ -58,14 +58,16 @@ libshared_sources = files('''
 '''.split())
 
 libshared = static_library(
-              'shared',
-              libshared_sources)
+	      'shared',
+	      libshared_sources)
 
 casync_sources = files('''
-        casync-tool.c
+	casync-tool.c
 	canbd.c
 	canbd.h
 	cafuse.h
+	signal-handler.c
+	signal-handler.h
 '''.split())
 
 if conf.get('HAVE_FUSE') == 1

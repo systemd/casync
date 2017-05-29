@@ -21,6 +21,7 @@
 #include "casync.h"
 #include "gcrypt-util.h"
 #include "parse-util.h"
+#include "signal-handler.h"
 #include "util.h"
 
 static enum {
@@ -49,30 +50,6 @@ static uint64_t arg_without = 0;
 static uid_t arg_uid_shift = 0, arg_uid_range = 0x10000U;
 static bool arg_uid_shift_apply = false;
 static bool arg_mkdir = true;
-
-static volatile sig_atomic_t quit = false;
-
-static void block_signal_handler(int how, sigset_t *old) {
-        sigset_t ss;
-
-        assert_se(sigemptyset(&ss) >= 0);
-        assert_se(sigaddset(&ss, SIGINT) >= 0);
-        assert_se(sigdelset(&ss, SIGTERM) >= 0);
-        assert_se(sigprocmask(how, &ss, old) >= 0);
-}
-
-static void signal_handler(int signo) {
-        quit = true;
-}
-
-static void install_signal_handler(bool b) {
-        const struct sigaction sa = {
-                .sa_handler = b ? signal_handler : SIG_DFL,
-        };
-
-        assert_se(sigaction(SIGINT, &sa, NULL) >= 0);
-        assert_se(sigaction(SIGTERM, &sa, NULL) >= 0);
-}
 
 static void help(void) {
         printf("%1$s [OPTIONS...] make [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
@@ -791,7 +768,7 @@ static int verbose_print_done_extract(CaSync *s) {
         return 1;
 }
 
-static int process_step_generic(CaSync *s, int step) {
+static int process_step_generic(CaSync *s, int step, bool quit_ok) {
         int r;
 
         assert(s);
@@ -816,31 +793,15 @@ static int process_step_generic(CaSync *s, int step) {
         case CA_SYNC_SEED_DONE_FILE:
                 return verbose_print_path(s, "Seeded");
 
-        case CA_SYNC_POLL: {
-                sigset_t ss;
-
-                /* Block SIGTERM/SIGINT for now */
-                block_signal_handler(SIG_BLOCK, &ss);
-
-                if (quit) /* Check if we are supposed to quit, if so, do so now */
-                        r = -ESHUTDOWN;
-                else {
-                        /* Wait for an event, temporarily and atomically unblocking SIGTERM/SIGINT while doing so */
-                        r = ca_sync_poll(s, UINT64_MAX, &ss);
-                        if ((r == -EINTR || r >= 0) && quit)
-                                r = -ESHUTDOWN;
-                }
-
-                /* Unblock SIGTERM/SIGINT again */
-                block_signal_handler(SIG_UNBLOCK, NULL);
-
-                if (r == -ESHUTDOWN)
-                        fprintf(stderr, "Got exit signal, quitting.\n");
-                else if (r < 0)
+        case CA_SYNC_POLL:
+                r = sync_poll_sigset(s);
+                if (r == -ESHUTDOWN) {
+                        if (!quit_ok)
+                                fprintf(stderr, "Got exit signal, quitting.\n");
+                } else if (r < 0)
                         fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
 
                 return r;
-        }
 
         case CA_SYNC_NOT_FOUND:
                 fprintf(stderr, "Seek path not available in archive.\n");
@@ -1101,7 +1062,7 @@ static int verb_make(int argc, char *argv[]) {
                 case CA_SYNC_STEP:
                 case CA_SYNC_PAYLOAD:
                 case CA_SYNC_POLL:
-                        r = process_step_generic(s, r);
+                        r = process_step_generic(s, r, false);
                         if (r < 0)
                                 return r;
 
@@ -1459,7 +1420,7 @@ static int verb_extract(int argc, char *argv[]) {
                 case CA_SYNC_POLL:
                 case CA_SYNC_FOUND:
                 case CA_SYNC_NOT_FOUND:
-                        r = process_step_generic(s, r);
+                        r = process_step_generic(s, r, false);
                         if (r < 0)
                                 goto finish;
                         break;
@@ -2138,7 +2099,7 @@ static int verb_list(int argc, char *argv[]) {
                 case CA_SYNC_FOUND:
                 case CA_SYNC_NOT_FOUND:
 
-                        r = process_step_generic(s, r);
+                        r = process_step_generic(s, r, false);
                         if (r < 0)
                                 goto finish;
 
@@ -2429,7 +2390,7 @@ static int verb_digest(int argc, char *argv[]) {
                 case CA_SYNC_POLL:
                 case CA_SYNC_FOUND:
                 case CA_SYNC_NOT_FOUND:
-                        r = process_step_generic(s, r);
+                        r = process_step_generic(s, r, false);
                         if (r < 0)
                                 goto finish;
                         break;
@@ -2717,8 +2678,7 @@ static int verb_mkdev(int argc, char *argv[]) {
                 uint64_t size;
 
                 if (quit) {
-                        fprintf(stderr, "Got exit signal, quitting.\n");
-                        r = -ESHUTDOWN;
+                        r = 0;
                         goto finish;
                 }
 
@@ -2762,7 +2722,7 @@ static int verb_mkdev(int argc, char *argv[]) {
                 case CA_SYNC_SEED_NEXT_FILE:
                 case CA_SYNC_SEED_DONE_FILE:
                 case CA_SYNC_POLL:
-                        r = process_step_generic(s, r);
+                        r = process_step_generic(s, r, true);
                         if (r < 0)
                                 goto finish;
                         break;
@@ -2800,8 +2760,7 @@ static int verb_mkdev(int argc, char *argv[]) {
                 uint64_t req_offset = 0, req_size = 0;
 
                 if (quit) {
-                        fprintf(stderr, "Got exit signal, quitting.\n");
-                        r = -ESHUTDOWN;
+                        r = 0; /* for the "mkdev" verb quitting does not indicate an incomplete operation, hence return success */
                         goto finish;
                 }
 
@@ -2817,7 +2776,7 @@ static int verb_mkdev(int argc, char *argv[]) {
                 if (r == CA_BLOCK_DEVICE_POLL) {
                         sigset_t ss;
 
-                        block_signal_handler(SIG_BLOCK, &ss);
+                        block_exit_handler(SIG_BLOCK, &ss);
 
                         if (quit)
                                 r = -ESHUTDOWN;
@@ -2827,10 +2786,10 @@ static int verb_mkdev(int argc, char *argv[]) {
                                         r = -ESHUTDOWN;
                         }
 
-                        block_signal_handler(SIG_UNBLOCK, NULL);
+                        block_exit_handler(SIG_UNBLOCK, NULL);
 
                         if (r == -ESHUTDOWN) {
-                                fprintf(stderr, "Got exit signal, quitting.\n");
+                                r = 0;
                                 goto finish;
                         } else if (r < 0) {
                                 fprintf(stderr, "Failed to poll for NBD requests: %s\n", strerror(-r));
@@ -2866,8 +2825,7 @@ static int verb_mkdev(int argc, char *argv[]) {
                         bool done = false;
 
                         if (quit) {
-                                fprintf(stderr, "Got exit signal, quitting.\n");
-                                r = -ESHUTDOWN;
+                                r = 0;
                                 goto finish;
                         }
 
@@ -2962,7 +2920,11 @@ static int verb_mkdev(int argc, char *argv[]) {
                         case CA_SYNC_POLL:
                         case CA_SYNC_FOUND:
                         case CA_SYNC_NOT_FOUND:
-                                r = process_step_generic(s, r);
+                                r = process_step_generic(s, r, true);
+                                if (r == -ESHUTDOWN) {
+                                        r = 0;
+                                        goto finish;
+                                }
                                 if (r < 0)
                                         goto finish;
 
@@ -3222,7 +3184,7 @@ static int verb_pull(int argc, char *argv[]) {
                 if (step != CA_REMOTE_POLL)
                         continue;
 
-                block_signal_handler(SIG_BLOCK, &ss);
+                block_exit_handler(SIG_BLOCK, &ss);
 
                 if (quit)
                         r = -ESHUTDOWN;
@@ -3232,7 +3194,7 @@ static int verb_pull(int argc, char *argv[]) {
                                 r = -ESHUTDOWN;
                 }
 
-                block_signal_handler(SIG_UNBLOCK, NULL);
+                block_exit_handler(SIG_UNBLOCK, NULL);
 
                 if (r == -ESHUTDOWN) {
                         fprintf(stderr, "Got exit signal, quitting.\n");
@@ -3371,7 +3333,7 @@ static int verb_push(int argc, char *argv[]) {
                 case CA_REMOTE_POLL: {
                         sigset_t ss;
 
-                        block_signal_handler(SIG_BLOCK, &ss);
+                        block_exit_handler(SIG_BLOCK, &ss);
 
                         if (quit)
                                 r = -ESHUTDOWN;
@@ -3381,7 +3343,7 @@ static int verb_push(int argc, char *argv[]) {
                                         r = -ESHUTDOWN;
                         }
 
-                        block_signal_handler(SIG_UNBLOCK, NULL);
+                        block_exit_handler(SIG_UNBLOCK, NULL);
 
                         if (r == -ESHUTDOWN) {
                                 fprintf(stderr, "Got exit signal, quitting.\n");
@@ -3614,24 +3576,19 @@ static int dispatch_verb(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
-        static const struct sigaction sa = {
-                .sa_handler = SIG_IGN,
-                .sa_flags = SA_RESTART,
-        };
-
         int r;
 
-        assert_se(sigaction(SIGPIPE, &sa, NULL) >= 0);
+        disable_sigpipe();
 
         r = parse_argv(argc, argv);
         if (r <= 0)
                 goto finish;
 
-        install_signal_handler(true);
-        block_signal_handler(SIG_UNBLOCK, NULL);
+        install_exit_handler(NULL);
+        block_exit_handler(SIG_UNBLOCK, NULL);
 
         r = dispatch_verb(argc - optind, argv + optind);
-        install_signal_handler(false);
+        install_exit_handler(SIG_DFL);
 
 finish:
         free(arg_store);

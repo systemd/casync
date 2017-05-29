@@ -6,9 +6,21 @@
 #include "caformat-util.h"
 #include "caformat.h"
 #include "cafuse.h"
+#include "signal-handler.h"
 #include "util.h"
 
 static CaSync *instance = NULL;
+static struct fuse *fuse = NULL;
+
+static void fuse_exit_signal_handler(int signo) {
+
+        /* Call our own generic handler */
+        exit_signal_handler(signo);
+
+        /* Let FUSE know we are supposed to quit */
+        if (fuse)
+                fuse_exit(fuse);
+}
 
 static int iterate_until_file(CaSync *s) {
         int r;
@@ -42,7 +54,9 @@ static int iterate_until_file(CaSync *s) {
                         break;
 
                 case CA_SYNC_POLL:
-                        r = ca_sync_poll(s, UINT64_MAX, NULL);
+                        r = sync_poll_sigset(s);
+                        if (r == -ESHUTDOWN) /* Quit */
+                                return r;
                         if (r < 0) {
                                 fprintf(stderr, "Failed to poll: %s\n", strerror(-r));
                                 return r;
@@ -264,7 +278,9 @@ static int casync_readdir(
                         break;
 
                 case CA_SYNC_POLL:
-                        r = ca_sync_poll(instance, UINT64_MAX, NULL);
+                        r = sync_poll_sigset(instance);
+                        if (r == -ESHUTDOWN) /* Quit */
+                                return r;
                         if (r < 0) {
                                 fprintf(stderr, "Failed to poll: %s\n", strerror(-r));
                                 return r;
@@ -375,7 +391,9 @@ static int casync_read(const char *path, char *buf, size_t size, off_t offset, s
                         break;
 
                 case CA_SYNC_POLL:
-                        r = ca_sync_poll(instance, UINT64_MAX, NULL);
+                        r = sync_poll_sigset(instance);
+                        if (r == -ESHUTDOWN) /* Quit */
+                                return r;
                         if (r < 0) {
                                 fprintf(stderr, "Failed to poll: %s\n", strerror(-r));
                                 return r;
@@ -437,7 +455,9 @@ static int casync_statfs(const char *path, struct statvfs *sfs) {
                         break;
 
                 case CA_SYNC_POLL:
-                        r = ca_sync_poll(instance, UINT64_MAX, NULL);
+                        r = sync_poll_sigset(instance);
+                        if (r == -ESHUTDOWN) /* Quit */
+                                return r;
                         if (r < 0) {
                                 fprintf(stderr, "Failed to poll: %s\n", strerror(-r));
                                 return r;
@@ -625,7 +645,9 @@ static int feature_flags_warning(CaSync *s) {
                         break;
 
                 case CA_SYNC_POLL:
-                        r = ca_sync_poll(instance, UINT64_MAX, NULL);
+                        r = sync_poll_sigset(s);
+                        if (r == -ESHUTDOWN) /* Quit */
+                                return r;
                         if (r < 0) {
                                 fprintf(stderr, "Failed to poll: %s\n", strerror(-r));
                                 return r;
@@ -655,7 +677,6 @@ static int feature_flags_warning(CaSync *s) {
 
 int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
         struct fuse_chan *fc = NULL;
-        struct fuse *f = NULL;
         const char * arguments[] = {
                 "casync",
                 NULL, /* -o ... */
@@ -667,10 +688,14 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
                 .argc = 2,
                 .argv = (char **) arguments,
         };
+        bool updated_signal_handlers = false;
         int r;
 
         assert(s);
         assert(where);
+
+        assert(!fuse);
+        assert(!instance);
 
         opts = "-oro,default_permissions,kernel_cache,subtype=casync";
         if (geteuid() == 0)
@@ -679,7 +704,6 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
                 opts = strjoina(opts, ",fsname=", what); /* FIXME: needs escaping */
         arguments[1] = opts;
 
-        assert(!instance);
         instance = s;
 
         errno = 0;
@@ -706,12 +730,16 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
         }
 
         errno = 0;
-        f = fuse_new(fc, NULL, &ops, sizeof(ops), s);
-        if (!f) {
+        fuse = fuse_new(fc, NULL, &ops, sizeof(ops), s);
+        if (!fuse) {
                 r = errno != 0 ? -abs(errno) : -ENOMEM;
                 fprintf(stderr, "Failed to allocate FUSE object: %s\n", strerror(-r));
                 goto finish;
         }
+
+        /* Update signal handler: in addition to our generic logic, we now also need to tell FUSE to quit */
+        install_exit_handler(fuse_exit_signal_handler);
+        updated_signal_handlers = true;
 
         printf("Mounted: %s\n", where);
 
@@ -719,20 +747,31 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
         if (r < 0)
                 goto finish;
 
-        r = fuse_loop(f);
+        if (quit) {
+                r = 0;
+                goto finish;
+        }
+
+        r = fuse_loop(fuse);
         if (r < 0) {
                 fprintf(stderr, "Failed to run FUSE loop: %s\n", strerror(-r));
                 goto finish;
         }
 
-        r = 0;
+        if (IN_SET(r, -ESHUTDOWN, -EINTR) && quit)
+                r = 0;
 
 finish:
+        if (updated_signal_handlers)
+                install_exit_handler(NULL);
+
         if (fc)
                 fuse_unmount(where, fc);
 
-        if (f)
-                fuse_destroy(f);
+        if (fuse) {
+                fuse_destroy(fuse);
+                fuse = NULL;
+        }
 
         instance = NULL;
 
