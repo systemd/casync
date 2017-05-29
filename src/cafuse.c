@@ -2,6 +2,7 @@
 
 #include <fuse.h>
 #include <linux/fs.h>
+#include <linux/msdos_fs.h>
 
 #include "caformat-util.h"
 #include "caformat.h"
@@ -488,24 +489,46 @@ static int casync_ioctl(
                 unsigned int flags,
                 void *data) {
 
-        int r, gf;
+        int r;
 
         if (flags & FUSE_IOCTL_COMPAT)
                 return -ENOSYS;
 
-        gf = FS_IOC_GETFLAGS;
-        if (cmd != gf)
+        if (!IN_SET(cmd, FS_IOC_GETFLAGS, FAT_IOCTL_GET_ATTRIBUTES))
                 return -ENOTTY;
 
         r = seek_to_path(instance, path);
         if (r < 0)
                 return r;
 
-        r = ca_sync_current_chattr(instance, &flags);
-        if (r < 0)
-                return r;
+        switch (cmd) {
 
-        *(unsigned long*) data = flags;
+        case FS_IOC_GETFLAGS: {
+                unsigned chattr;
+
+                r = ca_sync_current_chattr(instance, &chattr);
+                if (r < 0)
+                        return r;
+
+                *(unsigned long*) data = chattr;
+                break;
+        }
+
+        case FAT_IOCTL_GET_ATTRIBUTES: {
+                uint32_t fat_attrs;
+
+                r = ca_sync_current_fat_attrs(instance, &fat_attrs);
+                if (r < 0)
+                        return r;
+
+                *(uint32_t*) data = fat_attrs;
+                break;
+        }
+
+        default:
+                assert(false);
+        }
+
         return 0;
 }
 

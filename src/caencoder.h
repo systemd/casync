@@ -49,6 +49,7 @@ int ca_encoder_current_user(CaEncoder *e, const char **ret);
 int ca_encoder_current_group(CaEncoder *e, const char **ret);
 int ca_encoder_current_rdev(CaEncoder *e, dev_t *ret);
 int ca_encoder_current_chattr(CaEncoder *e, unsigned *ret);
+int ca_encoder_current_fat_attrs(CaEncoder *e, uint32_t *ret);
 int ca_encoder_current_xattr(CaEncoder *e, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size);
 
 int ca_encoder_current_payload_offset(CaEncoder *e, uint64_t *ret);

@@ -544,9 +544,15 @@ static int ca_encoder_node_read_fat_attrs(
         if ((e->feature_flags & CA_FORMAT_WITH_FAT_ATTRS) == 0)
                 return 0;
 
-        if (n->magic == MSDOS_SUPER_MAGIC) {
-                if (ioctl(n->fd, FAT_IOCTL_GET_ATTRIBUTES, &n->fat_attrs) < 0)
-                        return -errno;
+        if (IN_SET(n->magic, MSDOS_SUPER_MAGIC, FUSE_SUPER_MAGIC)) {
+                /* FUSE and true FAT file systems might implement this ioctl(), otherwise don't bother */
+                if (ioctl(n->fd, FAT_IOCTL_GET_ATTRIBUTES, &n->fat_attrs) < 0) {
+
+                        if (!IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP))
+                                return -errno;
+
+                        n->fat_attrs = 0;
+                }
         } else
                 n->fat_attrs = 0;
 
@@ -2698,6 +2704,28 @@ int ca_encoder_current_chattr(CaEncoder *e, unsigned *ret) {
                 return -ENODATA;
 
         *ret = ca_feature_flags_to_chattr((ca_feature_flags_from_chattr(n->chattr_flags) & e->feature_flags));
+        return 0;
+}
+
+int ca_encoder_current_fat_attrs(CaEncoder *e, uint32_t *ret) {
+        CaEncoderNode *n;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
+
+        if (!S_ISREG(n->stat.st_mode) && !S_ISDIR(n->stat.st_mode))
+                return -ENODATA;
+
+        if (!n->fat_attrs_valid)
+                return -ENODATA;
+
+        *ret = ca_feature_flags_to_fat_attrs((ca_feature_flags_from_fat_attrs(n->fat_attrs) & e->feature_flags));
         return 0;
 }
 

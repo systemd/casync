@@ -4376,6 +4376,31 @@ int ca_decoder_current_chattr(CaDecoder *d, unsigned *ret) {
         return 0;
 }
 
+int ca_decoder_current_fat_attrs(CaDecoder *d, uint32_t *ret) {
+        CaDecoderNode *n;
+        mode_t mode;
+
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
+
+        mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -ENODATA;
+        if (!S_ISREG(mode) && !S_ISDIR(mode))
+                return -ENODATA;
+        if (!n->entry)
+                return -ENODATA;
+
+        *ret = ca_feature_flags_to_fat_attrs(read_le64(&n->entry->flags));
+        return 0;
+}
+
 int ca_decoder_current_xattr(CaDecoder *d, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size) {
         CaDecoderNode *n;
         CaDecoderExtendedAttribute *p = NULL;

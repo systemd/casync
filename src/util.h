@@ -273,6 +273,9 @@ char* ls_format_mode(mode_t m, char ret[LS_FORMAT_MODE_MAX]);
 #define LS_FORMAT_CHATTR_MAX 11
 char *ls_format_chattr(unsigned flags, char ret[LS_FORMAT_CHATTR_MAX]);
 
+#define LS_FORMAT_FAT_ATTRS_MAX 4
+char *ls_format_fat_attrs(unsigned flags, char ret[LS_FORMAT_FAT_ATTRS_MAX]);
+
 int safe_atou(const char *s, unsigned *ret_u);
 int safe_atollu(const char *s, unsigned long long *ret_u);
 

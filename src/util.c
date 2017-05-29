@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <linux/fs.h>
+#include <linux/msdos_fs.h>
 
 #if USE_SYS_RANDOM_H
 #  include <sys/random.h>
@@ -704,6 +705,31 @@ char *ls_format_chattr(unsigned flags, char ret[LS_FORMAT_CHATTR_MAX]) {
         return ret;
 }
 
+char *ls_format_fat_attrs(uint32_t flags, char ret[LS_FORMAT_FAT_ATTRS_MAX]) {
+
+        static const struct {
+                uint32_t flag;
+                char code;
+        } table[] = {
+                { ATTR_HIDDEN, 'h' },
+                { ATTR_SYS,    's' },
+                { ATTR_ARCH,   'a' },
+        };
+
+        size_t i;
+
+        if (flags == (uint32_t) -1)
+                return NULL;
+
+        assert(ELEMENTSOF(table) == LS_FORMAT_FAT_ATTRS_MAX-1);
+
+        for (i = 0; i < ELEMENTSOF(table); i++)
+                ret[i] = flags & table[i].flag ? table[i].code : '-';
+
+        ret[i] = 0;
+
+        return ret;
+}
 
 int safe_atou(const char *s, unsigned *ret_u) {
         char *x = NULL;

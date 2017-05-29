@@ -2813,6 +2813,26 @@ int ca_sync_current_chattr(CaSync *s, unsigned *ret) {
         return -ENOTTY;
 }
 
+int ca_sync_current_fat_attrs(CaSync *s, uint32_t *ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_fat_attrs(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_fat_attrs(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
 int ca_sync_current_xattr(CaSync *s, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size) {
         if (!s)
                 return -EINVAL;

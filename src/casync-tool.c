@@ -1922,11 +1922,12 @@ static int verb_list(int argc, char *argv[]) {
                         } else {
                                 const char *target = NULL, *user = NULL, *group = NULL;
                                 uint64_t mtime = UINT64_MAX, size = UINT64_MAX, offset = UINT64_MAX;
-                                char ls_mode[LS_FORMAT_MODE_MAX], ls_flags[LS_FORMAT_CHATTR_MAX];
+                                char ls_mode[LS_FORMAT_MODE_MAX], ls_flags[LS_FORMAT_CHATTR_MAX], ls_fat_attrs[LS_FORMAT_FAT_ATTRS_MAX];
                                 uid_t uid = UID_INVALID;
                                 gid_t gid = GID_INVALID;
                                 dev_t rdev = (dev_t) -1;
                                 unsigned flags = (unsigned) -1;
+                                uint32_t fat_attrs = (uint32_t) -1;
                                 char *escaped = NULL;
                                 const char *xname;
                                 const void *xvalue;
@@ -1943,6 +1944,7 @@ static int verb_list(int argc, char *argv[]) {
                                 (void) ca_sync_current_group(s, &group);
                                 (void) ca_sync_current_rdev(s, &rdev);
                                 (void) ca_sync_current_chattr(s, &flags);
+                                (void) ca_sync_current_fat_attrs(s, &fat_attrs);
                                 (void) ca_sync_current_archive_offset(s, &offset);
 
                                 r = mtree_escape(path, &escaped);
@@ -1961,6 +1963,9 @@ static int verb_list(int argc, char *argv[]) {
 
                                 if (flags != (unsigned) -1)
                                         printf("FileAttr: %s\n", strna(ls_format_chattr(flags, ls_flags)));
+
+                                if (fat_attrs != (uint32_t) -1)
+                                        printf("FATAttrs: %s\n", strna(ls_format_fat_attrs(fat_attrs, ls_fat_attrs)));
 
                                 if (offset != UINT64_MAX)
                                         printf("  Offset: %" PRIu64 "\n", offset);

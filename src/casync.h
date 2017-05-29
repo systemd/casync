@@ -96,6 +96,7 @@ int ca_sync_current_mtime(CaSync *sync, uint64_t *nsec);
 int ca_sync_current_size(CaSync *sync, uint64_t *ret);
 int ca_sync_current_rdev(CaSync *sync, dev_t *ret);
 int ca_sync_current_chattr(CaSync *sync, unsigned *ret);
+int ca_sync_current_fat_attrs(CaSync *sync, uint32_t *ret);
 int ca_sync_current_xattr(CaSync *sync, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size);
 
 int ca_sync_get_digest(CaSync *s, CaChunkID *ret);
