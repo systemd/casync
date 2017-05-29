@@ -2803,7 +2803,7 @@ int ca_sync_current_chattr(CaSync *s, unsigned *ret) {
 
         seed = ca_sync_current_seed(s);
         if (seed)
-                return ca_seed_current_mode(seed, ret);
+                return -ENODATA;
 
         if (s->direction == CA_SYNC_ENCODE && s->encoder)
                 return ca_encoder_current_chattr(s->encoder, ret);
@@ -2834,12 +2834,18 @@ int ca_sync_current_fat_attrs(CaSync *s, uint32_t *ret) {
 }
 
 int ca_sync_current_xattr(CaSync *s, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size) {
+        CaSeed *seed;
+
         if (!s)
                 return -EINVAL;
         if (!ret_name)
                 return -EINVAL;
         if (where < 0 || where > _CA_ITERATE_MAX)
                 return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
 
         if (s->direction == CA_SYNC_ENCODE && s->encoder)
                 return ca_encoder_current_xattr(s->encoder, where, ret_name, ret_value, ret_size);
