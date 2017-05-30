@@ -13,7 +13,6 @@ LATER:
 * exclude patterns
 * build seed while extracting
 * optionally make seeds persistent
-* stop at mount points
 * acquire gpg signature along with caidx/caibx/catar
 * coalesce index frames sent over protocol
 * rework uploading via ssh to use seed instead of cache store for providing chunks to server
