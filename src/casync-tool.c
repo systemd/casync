@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <sys/sysmacros.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "cachunk.h"
 #include "caformat-util.h"
