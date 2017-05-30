@@ -172,7 +172,7 @@ test_script_sh = configure_file(
         configuration : substs)
 test_script = find_program(test_script_sh)
 test('test-script.sh', test_script,
-     timeout : 300)
+     timeout : 30 * 60)
 
 test_nbd_sh = configure_file(
         output : 'test-nbd.sh',
@@ -180,7 +180,7 @@ test_nbd_sh = configure_file(
         configuration : substs)
 test_nbd = find_program(test_nbd_sh)
 test('test-nbd.sh', test_nbd,
-     timeout : 300)
+     timeout : 30 * 60)
 
 test_fuse_sh = configure_file(
         output : 'test-fuse.sh',
@@ -188,7 +188,7 @@ test_fuse_sh = configure_file(
         configuration : substs)
 test_fuse = find_program(test_fuse_sh)
 test('test-fuse.sh', test_fuse,
-     timeout : 300)
+     timeout : 30 * 60)
 
 ############################################################
 
