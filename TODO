@@ -36,5 +36,4 @@ LATER:
 * fuse: possibly translate user names on access
 * fuse: provide "mount.casync" compat symlink so that people can list casync mounts in /etc/fstab
 * encoder: change seeking to be more like decoder's seeking
-* use different default flags set for serializing blobs and archives
 * rename offset accessor functions (drop the "archive")
