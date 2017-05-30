@@ -179,14 +179,16 @@ test_nbd_sh = configure_file(
         input : 'test/test-nbd.sh.in',
         configuration : substs)
 test_nbd = find_program(test_nbd_sh)
-test('test-nbd.sh', test_nbd)
+test('test-nbd.sh', test_nbd,
+     timeout : 300)
 
 test_fuse_sh = configure_file(
         output : 'test-fuse.sh',
         input : 'test/test-fuse.sh.in',
         configuration : substs)
 test_fuse = find_program(test_fuse_sh)
-test('test-fuse.sh', test_fuse)
+test('test-fuse.sh', test_fuse,
+     timeout : 300)
 
 ############################################################
 
