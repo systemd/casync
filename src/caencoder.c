@@ -1740,6 +1740,12 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
 
                 if (e->payload_offset >= size) {
                         ca_encoder_enter_state(e, CA_ENCODER_FINALIZE);
+
+                        /* If this is a blob archive (i.e. a top-level payload), then let's not generate the DONE_FILE
+                         * event (because there is no entry) but let's shortcut to FINISHED. */
+                        if (e->node_idx == 0)
+                                return ca_encoder_step(e);
+
                         return CA_ENCODER_DONE_FILE;
                 }
 
