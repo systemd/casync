@@ -196,9 +196,7 @@ enum {
                 CA_FORMAT_WITH_DEVICE_NODES|
                 CA_FORMAT_WITH_FIFOS|
                 CA_FORMAT_WITH_SOCKETS|
-                CA_FORMAT_WITH_FLAG_HIDDEN|
-                CA_FORMAT_WITH_FLAG_SYSTEM|
-                CA_FORMAT_WITH_FLAG_ARCHIVE|
+                CA_FORMAT_WITH_FAT_ATTRS|
                 CA_FORMAT_WITH_CHATTR|
                 CA_FORMAT_WITH_XATTRS,
 

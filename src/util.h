@@ -276,6 +276,8 @@ char *ls_format_chattr(unsigned flags, char ret[LS_FORMAT_CHATTR_MAX]);
 #define LS_FORMAT_FAT_ATTRS_MAX 4
 char *ls_format_fat_attrs(unsigned flags, char ret[LS_FORMAT_FAT_ATTRS_MAX]);
 
+int safe_atoi(const char *s, int *ret_i);
+
 int safe_atou(const char *s, unsigned *ret_u);
 int safe_atollu(const char *s, unsigned long long *ret_u);
 
@@ -306,6 +308,7 @@ int readlink_malloc(const char *p, char **ret);
         })
 
 #define WHITESPACE " \t"
+#define NEWLINE "\n\r"
 
 #define ELEMENTSOF(x)                                                    \
         __extension__ (__builtin_choose_expr(                            \
@@ -621,5 +624,7 @@ void* greedy_realloc0(void **p, size_t *allocated, size_t need, size_t size);
             sizeof(type) <= 8 ? 20 : sizeof(int[-2*(sizeof(type) > 8)])))
 
 int skip_bytes_fd(int fd, uint64_t n_bytes);
+
+char *truncate_nl(char *p);
 
 #endif

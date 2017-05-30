@@ -50,6 +50,7 @@ static uint64_t arg_without = 0;
 static uid_t arg_uid_shift = 0, arg_uid_range = 0x10000U;
 static bool arg_uid_shift_apply = false;
 static bool arg_mkdir = true;
+static bool arg_xdev = true;
 
 static void help(void) {
         printf("%1$s [OPTIONS...] make [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
@@ -71,7 +72,8 @@ static void help(void) {
                "     --seed=PATH             Additional file or directory to use as seed\n"
                "     --recursive=no          List non-recursively\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n"
-               "     --respect-nodump=no     Don't respect chattr(1)'s +d 'nodump' flag\n"
+               "     --respect-nodump=no     Don't respect chattr(1)'s +d 'nodump' flag when creating archive\n"
+               "     --xdev=no               Don't cross mount points when creating archive\n"
                "     --delete=no             Don't delete existing files not listed in archive after extraction\n"
                "     --undo-immutable=yes    When removing existing files, undo chattr(1)'s +i 'immutable' flag\n"
                "     --punch-holes=no        Don't create sparse files\n"
@@ -152,6 +154,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_UID_RANGE,
                 ARG_RECURSIVE,
                 ARG_MKDIR,
+                ARG_XDEV,
         };
 
         static const struct option options[] = {
@@ -175,6 +178,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "uid-range",      required_argument, NULL, ARG_UID_RANGE      },
                 { "recursive",      required_argument, NULL, ARG_RECURSIVE      },
                 { "mkdir",          required_argument, NULL, ARG_MKDIR          },
+                { "xdev",           required_argument, NULL, ARG_XDEV           },
                 {}
         };
 
@@ -423,6 +427,16 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_recursive = r;
                         break;
 
+                case ARG_XDEV:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --xdev= parameter: %s\n", optarg);
+                                return r;
+                        }
+
+                        arg_xdev = r;
+                        break;
+
                 case '?':
                         return -EINVAL;
 
@@ -553,7 +567,13 @@ static int load_feature_flags(CaSync *s) {
 
         r = ca_sync_set_undo_immutable(s, arg_undo_immutable);
         if (r < 0 && r != -ENOTTY) {
-                fprintf(stderr, "Failed to set undo immutable flags: %s\n", strerror(-r));
+                fprintf(stderr, "Failed to set undo immutable flag: %s\n", strerror(-r));
+                return r;
+        }
+
+        r = ca_sync_set_xdev(s, arg_xdev);
+        if (r < 0 && r != -ENOTTY) {
+                fprintf(stderr, "Failed to set xdev flag: %s\n", strerror(-r));
                 return r;
         }
 

@@ -115,6 +115,9 @@ typedef struct CaEncoderNode {
         size_t n_name_table_allocated;
         uint64_t previous_name_table_offset;
         bool name_table_incomplete;
+
+        /* For detecting mount boundaries */
+        int mount_id;
 } CaEncoderNode;
 
 typedef enum CaEncoderState {
@@ -157,6 +160,8 @@ struct CaEncoder {
 
         uid_t uid_shift;
         uid_t uid_range; /* uid_range == 0 means "full range" */
+
+        bool xdev;
 };
 
 CaEncoder *ca_encoder_new(void) {
@@ -168,6 +173,7 @@ CaEncoder *ca_encoder_new(void) {
 
         assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_RESPECT_FLAG_NODUMP, &e->feature_flags) >= 0);
         e->time_granularity = 1;
+        e->xdev = true;
 
         return e;
 }
@@ -229,6 +235,8 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
         n->n_name_table = n->n_name_table_allocated = 0;
         n->previous_name_table_offset = UINT64_MAX;
         n->name_table_incomplete = false;
+
+        n->mount_id = -1;
 }
 
 CaEncoder *ca_encoder_unref(CaEncoder *e) {
@@ -323,6 +331,7 @@ int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
                 .acl_default_other_permissions = UINT64_MAX,
                 .acl_default_mask_permissions = UINT64_MAX,
                 .previous_name_table_offset = UINT64_MAX,
+                .mount_id = -1,
         };
 
         e->n_nodes = 1;
@@ -800,6 +809,77 @@ static int ca_encoder_node_read_xattrs(
         r = 0;
 finish:
         safe_close(path_fd);
+
+        return r;
+}
+
+static int ca_encoder_node_read_mount_id(
+                CaEncoder *e,
+                CaEncoderNode *n) {
+
+        size_t line_allocated = 0;
+        char *line = NULL, *p;
+        FILE *f;
+        int r;
+
+        assert(e);
+        assert(n);
+
+        if (e->xdev)
+                return 0;
+        if (n->mount_id >= 0)
+                return 0;
+        if (n->fd < 0)
+                return 0;
+
+        if (asprintf(&p, "/proc/self/fdinfo/%i", n->fd) < 0)
+                return -ENOMEM;
+
+        f = fopen(p, "re");
+        free(p);
+        if (!f)
+                return -errno;
+
+        for (;;) {
+                int mnt_id;
+                ssize_t k;
+                char *z;
+
+                errno = 0;
+                k = getline(&line, &line_allocated, f);
+                if (k < 0) {
+                        if (errno == 0) /* EOF? */
+                                break;
+
+                        r = -errno;
+                        goto finish;
+                }
+
+                z = startswith(line, "mnt_id:");
+                if (!z)
+                        continue;
+
+                z += strspn(z, WHITESPACE);
+                truncate_nl(z);
+
+                r = safe_atoi(z, &mnt_id);
+                if (r < 0)
+                        goto finish;
+
+                if (mnt_id < 0) {
+                        r = -EINVAL;
+                        goto finish;
+                }
+
+                n->mount_id = mnt_id;
+                break;
+        }
+
+        r = 0;
+
+finish:
+        fclose(f);
+        free(line);
 
         return r;
 }
@@ -1373,6 +1453,7 @@ static CaEncoderNode* ca_encoder_init_child(CaEncoder *e) {
                 .acl_default_group_obj_permissions = UINT64_MAX,
                 .acl_default_other_permissions = UINT64_MAX,
                 .acl_default_mask_permissions = UINT64_MAX,
+                .mount_id = -1,
         };
 
         return n;
@@ -1465,11 +1546,12 @@ static int ca_encoder_leave_child(CaEncoder *e) {
         return 1;
 }
 
-static int ca_encoder_shall_store_child_node(CaEncoder *e) {
+static int ca_encoder_shall_store_child_node(CaEncoder *e, CaEncoderNode *n) {
         CaEncoderNode *child;
         int r;
 
         assert(e);
+        assert(n);
 
         /* Check whether this node is one we should care for or skip */
 
@@ -1486,12 +1568,22 @@ static int ca_encoder_shall_store_child_node(CaEncoder *e) {
         if (!(e->feature_flags & CA_FORMAT_WITH_SOCKETS) && S_ISSOCK(child->stat.st_mode))
                 return false;
 
+        /* Check if the NODUMP flag is set */
         r = ca_encoder_node_read_chattr(e, child);
         if (r < 0)
                 return r;
-
         if ((e->feature_flags & CA_FORMAT_RESPECT_FLAG_NODUMP) &&
             (child->chattr_flags & FS_NODUMP_FL))
+                return false;
+
+        /* Check if we are crossing a mount point boundary */
+        r = ca_encoder_node_read_mount_id(e, n);
+        if (r < 0)
+                return r;
+        r = ca_encoder_node_read_mount_id(e, child);
+        if (r < 0)
+                return r;
+        if (!e->xdev && child->mount_id >= 0 && n->mount_id >= 0 && child->mount_id != n->mount_id)
                 return false;
 
         return true;
@@ -1697,7 +1789,7 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                                 return r;
 
                         /* Check if this child is relevant to us */
-                        r = ca_encoder_shall_store_child_node(e);
+                        r = ca_encoder_shall_store_child_node(e, n);
                         if (r < 0)
                                 return r;
                         if (r > 0) /* Yay, this one's relevant */
@@ -3160,5 +3252,13 @@ int ca_encoder_set_uid_range(CaEncoder *e, uid_t u) {
                 return -EINVAL;
 
         e->uid_range = u;
+        return 0;
+}
+
+int ca_encoder_set_xdev(CaEncoder *e, bool b) {
+        if (!e)
+                return -EINVAL;
+
+        e->xdev = b;
         return 0;
 }

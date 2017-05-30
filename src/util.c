@@ -731,6 +731,26 @@ char *ls_format_fat_attrs(uint32_t flags, char ret[LS_FORMAT_FAT_ATTRS_MAX]) {
         return ret;
 }
 
+int safe_atoi(const char *s, int *ret_i) {
+        char *x = NULL;
+        long l;
+
+        assert(s);
+        assert(ret_i);
+
+        errno = 0;
+        l = strtol(s, &x, 0);
+        if (errno > 0)
+                return -errno;
+        if (!x || x == s || *x)
+                return -EINVAL;
+        if ((long) (int) l != l)
+                return -ERANGE;
+
+        *ret_i = (int) l;
+        return 0;
+}
+
 int safe_atou(const char *s, unsigned *ret_u) {
         char *x = NULL;
         unsigned long l;
@@ -1186,4 +1206,17 @@ int skip_bytes_fd(int fd, uint64_t n_bytes) {
 
                 m = (size_t) MIN(n_bytes, (uint64_t) PIPE_BUF);
         }
+}
+
+char *truncate_nl(char *p) {
+
+        char *e;
+
+        for (e = strchr(p, 0); e > p; e --)
+                if (!strchr(NEWLINE, e[-1]))
+                        break;
+
+        *e = 0;
+
+        return p;
 }
