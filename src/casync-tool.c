@@ -676,7 +676,7 @@ static int verbose_print_path(CaSync *s, const char *verb) {
                 fputc(' ', stderr);
         }
 
-        fprintf(stderr, "%s\n", path);
+        fprintf(stderr, "%s\n", isempty(path) ? "./" : path);
         free(path);
 
         return 1;
