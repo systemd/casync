@@ -1,7 +1,6 @@
 BEFORE FIRST BLOG STORY:
 * hardlink from seed
 * replace adler32 by something better (buzhash)
-* propagate feature flags into index, and then into seed
 
 LATER:
 * verify
@@ -37,3 +36,6 @@ LATER:
 * fuse: provide "mount.casync" compat symlink so that people can list casync mounts in /etc/fstab
 * encoder: change seeking to be more like decoder's seeking
 * rename offset accessor functions (drop the "archive")
+* include xdev flag in feature flags (maybe more?) so that they can be retrieved from index
+* skip seeding logic if we process catars
+* when extracting, check that index feature flags and archive feature flags match
