@@ -246,6 +246,10 @@ static inline const char *strempty(const char *p) {
         return p ?: "";
 }
 
+static inline const char *strnone(const char *p) {
+        return p ?: "none";
+}
+
 #define streq(a,b) (strcmp((a),(b)) == 0)
 
 static inline bool streq_ptr(const char *a, const char *b) {

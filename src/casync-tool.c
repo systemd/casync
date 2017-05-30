@@ -530,17 +530,17 @@ static int load_seeds_and_extra_stores(CaSync *s) {
         return 0;
 }
 
-static uint64_t combined_with_flags(void) {
-        return (arg_with == 0 ? CA_FORMAT_WITH_BEST : arg_with) & ~arg_without;
+static uint64_t combined_with_flags(uint64_t default_with_flags) {
+        return (arg_with == 0 ? default_with_flags : arg_with) & ~arg_without;
 }
 
-static int load_feature_flags(CaSync *s) {
+static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
         uint64_t flags;
         int r;
 
         assert(s);
 
-        flags = combined_with_flags();
+        flags = combined_with_flags(default_with_flags);
 
         if (arg_respect_nodump)
                 flags |= CA_FORMAT_RESPECT_FLAG_NODUMP;
@@ -645,7 +645,7 @@ static int verbose_print_feature_flags(CaSync *s) {
                 return r;
         }
 
-        fprintf(stderr, "Using feature flags: %s\n", t);
+        fprintf(stderr, "Using feature flags: %s\n", strnone(t));
         fprintf(stderr, "Respecting chattr(1) -d flag: %s\n", yes_no(flags & CA_FORMAT_RESPECT_FLAG_NODUMP));
 
         free(t);
@@ -717,7 +717,7 @@ static int verbose_print_done_make(CaSync *s) {
                                 return r;
                         }
 
-                        fprintf(stderr, "Specified feature flags not covered by backing file systems: %s\n", t);
+                        fprintf(stderr, "Selected feature flags not actually applicable to backing file systems: %s\n", strnone(t));
                         free(t);
                 }
         }
@@ -1035,7 +1035,7 @@ static int verb_make(int argc, char *argv[]) {
                 }
         }
 
-        r = load_feature_flags(s);
+        r = load_feature_flags(s, operation == MAKE_BLOB_INDEX ? 0 : CA_FORMAT_WITH_BEST);
         if (r < 0)
                 goto finish;
 
@@ -1371,7 +1371,7 @@ static int verb_extract(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
-        r = load_feature_flags(s);
+        r = load_feature_flags(s, 0);
         if (r < 0)
                 goto finish;
 
@@ -1728,7 +1728,7 @@ static int verb_list(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
-        r = load_feature_flags(s);
+        r = load_feature_flags(s, CA_FORMAT_WITH_BEST);
         if (r < 0)
                 goto finish;
 
@@ -2365,7 +2365,7 @@ static int verb_digest(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
-        r = load_feature_flags(s);
+        r = load_feature_flags(s, IN_SET(operation, DIGEST_BLOB, DIGEST_BLOB_INDEX) ? 0 : CA_FORMAT_WITH_BEST);
         if (r < 0)
                 goto finish;
 
