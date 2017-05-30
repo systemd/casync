@@ -4,6 +4,8 @@
 #include "cachunker.h"
 #include "caencoder.h"
 #include "cafileroot.h"
+#include "caformat-util.h"
+#include "caformat.h"
 #include "calocation.h"
 #include "caseed.h"
 #include "realloc-buffer.h"
@@ -35,6 +37,8 @@ struct CaSeed {
         CaLocation *buffer_location;
 
         CaFileRoot *root;
+
+        uint64_t feature_flags;
 };
 
 CaSeed *ca_seed_new(void) {
@@ -48,6 +52,8 @@ CaSeed *ca_seed_new(void) {
         s->base_fd = -1;
 
         s->chunker = (CaChunker) CA_CHUNKER_INIT;
+
+        assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_RESPECT_FLAG_NODUMP, &s->feature_flags) >= 0);
 
         return s;
 }
@@ -169,6 +175,10 @@ static int ca_seed_open(CaSeed *s) {
                 s->encoder = ca_encoder_new();
                 if (!s->encoder)
                         return -ENOMEM;
+
+                r = ca_encoder_set_feature_flags(s->encoder, s->feature_flags);
+                if (r < 0)
+                        return r;
 
                 r = ca_encoder_set_base_fd(s->encoder, s->base_fd);
                 if (r < 0)
@@ -576,6 +586,13 @@ int ca_seed_current_mode(CaSeed *seed, mode_t *ret) {
                 return -EALREADY;
 
         return ca_encoder_current_mode(seed->encoder, ret);
+}
+
+int ca_seed_set_feature_flags(CaSeed *s, uint64_t flags) {
+        if (!s)
+                return -EINVAL;
+
+        return ca_feature_flags_normalize(flags, &s->feature_flags);
 }
 
 int ca_seed_set_chunk_size_min(CaSeed *s, size_t cmin) {

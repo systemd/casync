@@ -62,7 +62,7 @@ typedef struct CaSync {
         CaSeed **seeds;
         size_t n_seeds;
         size_t current_seed; /* The seed we are currently indexing */
-        bool chunk_size_propagated;
+        bool index_flags_propagated;
 
         int base_fd;
         int boundary_fd;
@@ -1302,6 +1302,10 @@ static int ca_sync_start(CaSync *s) {
         if (s->direction == CA_SYNC_ENCODE && s->index) {
                 /* Propagate the chunk size to the index we generate */
 
+                r = ca_index_set_feature_flags(s->index, s->feature_flags);
+                if (r < 0)
+                        return r;
+
                 r = ca_index_set_chunk_size_min(s->index, s->chunker.chunk_size_min);
                 if (r < 0)
                         return r;
@@ -1926,10 +1930,11 @@ static int ca_sync_step_decode(CaSync *s) {
         }
 }
 
-static int ca_sync_chunk_size_propagated(CaSync *s) {
+static int ca_sync_index_flags_propagated(CaSync *s) {
 
-        /* If we read the header of the index file, make sure to propagate the chunk size stored in it to the
-         * seed. Return > 0 if we successfully propagated the chunk size, and thus can start running the seeds. */
+        /* If we read the header of the index file, make sure to propagate the feature flags + chunk size stored in it
+         * to the seeds. Return > 0 if we successfully propagated the feature flags/chunk size, and thus can start
+         * running the seeds. */
 
         if (s->direction != CA_SYNC_DECODE)
                 return 1;
@@ -1937,7 +1942,7 @@ static int ca_sync_chunk_size_propagated(CaSync *s) {
                 return 1;
         if (s->n_seeds == 0)
                 return 1;
-        if (s->chunk_size_propagated)
+        if (s->index_flags_propagated)
                 return 1;
 
         return 0;
@@ -1957,10 +1962,10 @@ static int ca_sync_seed_step(CaSync *s) {
 
         assert(s);
 
-        r = ca_sync_chunk_size_propagated(s);
+        r = ca_sync_index_flags_propagated(s);
         if (r < 0)
                 return r;
-        if (r == 0) /* Chunk size not propagated to the seeds yet. Let's wait until then */
+        if (r == 0) /* Index flags/chunk sizes not propagated to the seeds yet. Let's wait until then */
                 return CA_SYNC_POLL;
 
         for (;;) {
@@ -2299,24 +2304,27 @@ static int ca_sync_remote_step(CaSync *s) {
         return CA_SYNC_POLL;
 }
 
-static int ca_sync_propagate_chunk_size(CaSync *s) {
-        uint64_t cmin, cavg, cmax;
+static int ca_sync_propagate_index_flags(CaSync *s) {
+        size_t cmin, cavg, cmax;
+        uint64_t flags;
         size_t i;
         int r;
 
         assert(s);
 
-        /* If we read the header of the index file, make sure to propagate the chunk size stored in it to the seed. */
+        /* If we read the header of the index file, make sure to propagate the flags and chunk size stored in it to the seeds. */
 
-        r = ca_sync_chunk_size_propagated(s);
+        r = ca_sync_index_flags_propagated(s);
         if (r < 0)
                 return r;
-        if (r > 0) /* The chunk size is already propagated */
+        if (r > 0) /* The flags/chunk size is already propagated */
+                return CA_SYNC_POLL;
+
+        r = ca_index_get_feature_flags(s->index, &flags);
+        if (r == -ENODATA) /* haven't read enough from the index header yet, let's wait */
                 return CA_SYNC_POLL;
 
         r = ca_index_get_chunk_size_min(s->index, &cmin);
-        if (r == -ENODATA) /* haven't read enough from the index header yet, let's wait */
-                return CA_SYNC_POLL;
         if (r < 0)
                 return r;
 
@@ -2329,6 +2337,10 @@ static int ca_sync_propagate_chunk_size(CaSync *s) {
                 return r;
 
         for (i = 0; i < s->n_seeds; i++) {
+
+                r = ca_seed_set_feature_flags(s->seeds[i], flags);
+                if (r < 0)
+                        return r;
 
                 r = ca_seed_set_chunk_size_min(s->seeds[i], cmin);
                 if (r < 0)
@@ -2343,7 +2355,7 @@ static int ca_sync_propagate_chunk_size(CaSync *s) {
                         return r;
         }
 
-        s->chunk_size_propagated = true;
+        s->index_flags_propagated = true;
         return CA_SYNC_STEP;
 }
 
@@ -2357,7 +2369,7 @@ int ca_sync_step(CaSync *s) {
         if (r < 0)
                 return r;
 
-        r = ca_sync_propagate_chunk_size(s);
+        r = ca_sync_propagate_index_flags(s);
         if (r != CA_SYNC_POLL)
                 return r;
 

@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 
 #include "cachunker.h"
+#include "caformat-util.h"
 #include "caformat.h"
 #include "caindex.h"
 #include "def.h"
@@ -44,6 +45,8 @@ struct CaIndex {
         uint64_t chunk_size_max;
         uint64_t chunk_size_avg;
 
+        uint64_t feature_flags;
+
         uint64_t file_size; /* The size of the index file */
         uint64_t blob_size; /* The size of the blob this index file describes */
 };
@@ -59,6 +62,7 @@ static CaIndex* ca_index_new(void) {
         i->make_mode = (mode_t) -1;
         i->file_size = UINT64_MAX;
         i->blob_size = UINT64_MAX;
+        i->feature_flags = UINT64_MAX;
 
         return i;
 }
@@ -72,6 +76,8 @@ CaIndex *ca_index_new_write(void) {
 
         i->open_flags = O_CLOEXEC|O_NOCTTY|O_WRONLY|O_CREAT|O_EXCL;
         i->mode = CA_INDEX_WRITE;
+        i->feature_flags = 0;
+
         return i;
 }
 
@@ -84,6 +90,8 @@ CaIndex *ca_index_new_read(void) {
 
         i->open_flags = O_CLOEXEC|O_NOCTTY|O_RDONLY;
         i->mode = CA_INDEX_READ;
+        i->feature_flags = UINT64_MAX;
+
         return i;
 }
 
@@ -96,9 +104,10 @@ CaIndex *ca_index_new_incremental_write(void) {
 
         i->open_flags = O_CLOEXEC|O_NOCTTY|O_RDWR|O_CREAT|O_EXCL;
         i->mode = CA_INDEX_INCREMENTAL_WRITE;
+        i->feature_flags = 0;
+
         return i;
 }
-
 
 CaIndex *ca_index_new_incremental_read(void) {
         CaIndex *i;
@@ -109,6 +118,8 @@ CaIndex *ca_index_new_incremental_read(void) {
 
         i->open_flags = O_CLOEXEC|O_NOCTTY|O_RDWR|O_CREAT|O_EXCL;
         i->mode = CA_INDEX_INCREMENTAL_READ;
+        i->feature_flags = UINT64_MAX;
+
         return i;
 }
 
@@ -238,6 +249,9 @@ static int ca_index_write_head(CaIndex *i) {
         if (i->start_offset != 0)
                 return 0;
 
+        if (i->feature_flags == UINT64_MAX)
+                return -EINVAL;
+
         if (i->chunk_size_min == 0 ||
             i->chunk_size_avg == 0 ||
             i->chunk_size_max == 0)
@@ -246,6 +260,8 @@ static int ca_index_write_head(CaIndex *i) {
         if (!(i->chunk_size_min <= i->chunk_size_avg &&
               i->chunk_size_avg <= i->chunk_size_max))
                 return -EINVAL;
+
+        head.index.feature_flags = htole64(i->feature_flags);
 
         head.index.chunk_size_min = htole64(i->chunk_size_min);
         head.index.chunk_size_avg = htole64(i->chunk_size_avg);
@@ -313,12 +329,15 @@ static int ca_index_read_head(CaIndex *i) {
         if (n != sizeof(head))
                 return -EPIPE;
 
-        if (head.index.header.size != sizeof(CaFormatIndex) ||
-            head.index.header.type != htole64(CA_FORMAT_INDEX))
+        if (le64toh(head.index.header.size) != sizeof(CaFormatIndex) ||
+            le64toh(head.index.header.type) != CA_FORMAT_INDEX)
                 return -EBADMSG;
 
-        if (head.index.feature_flags != 0)
-                return -EOPNOTSUPP;
+        r = ca_feature_flags_are_normalized(le64toh(head.index.feature_flags));
+        if (r < 0)
+                return r;
+        if (r == 0)
+                return -EINVAL;
 
         if (le64toh(head.index.chunk_size_min) <= 0 ||
             le64toh(head.index.chunk_size_min) > CA_CHUNK_SIZE_LIMIT)
@@ -336,11 +355,13 @@ static int ca_index_read_head(CaIndex *i) {
               le64toh(head.index.chunk_size_avg) <= le64toh(head.index.chunk_size_max)))
                 return -EBADMSG;
 
-        if (head.table.size != htole64(UINT64_MAX) ||
-            head.table.type != htole64(CA_FORMAT_TABLE))
+        if (le64toh(head.table.size) != UINT64_MAX ||
+            le64toh(head.table.type) != CA_FORMAT_TABLE)
                 return -EBADMSG;
 
         i->start_offset = i->cooked_offset = sizeof(head);
+
+        i->feature_flags = le64toh(head.index.feature_flags);
 
         i->chunk_size_min = le64toh(head.index.chunk_size_min);
         i->chunk_size_avg = le64toh(head.index.chunk_size_avg);
@@ -1105,4 +1126,29 @@ int ca_index_seek(CaIndex *i, uint64_t offset, uint64_t *ret_skip) {
 
                 return 0;
         }
+}
+
+int ca_index_set_feature_flags(CaIndex *i, uint64_t flags) {
+        if (!i)
+                return -EINVAL;
+
+        if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
+                return -ENOTTY;
+        if (i->start_offset > 0)
+                return -EBUSY;
+
+        return ca_feature_flags_normalize(flags, &i->feature_flags);
+}
+
+int ca_index_get_feature_flags(CaIndex *i, uint64_t *ret) {
+        if (!i)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (i->feature_flags == UINT64_MAX)
+                return -ENODATA;
+
+        *ret = i->feature_flags;
+        return 0;
 }

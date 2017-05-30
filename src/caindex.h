@@ -38,6 +38,9 @@ int ca_index_incremental_read(CaIndex *i, ReallocBuffer *buffer);
 int ca_index_get_digest(CaIndex *i, CaChunkID *ret);
 int ca_index_set_digest(CaIndex *i, const CaChunkID *id);
 
+int ca_index_set_feature_flags(CaIndex *i, uint64_t flags);
+int ca_index_get_feature_flags(CaIndex *i, uint64_t *ret);
+
 int ca_index_set_chunk_size_min(CaIndex *i, size_t cmin);
 int ca_index_set_chunk_size_avg(CaIndex *i, size_t cavg);
 int ca_index_set_chunk_size_max(CaIndex *i, size_t cmax);
