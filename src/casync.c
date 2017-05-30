@@ -427,6 +427,8 @@ int ca_sync_set_feature_flags(CaSync *s, uint64_t flags) {
 
         if (s->direction != CA_SYNC_ENCODE)
                 return -ENOTTY;
+        if (s->encoder)
+                return -EBUSY;
 
         return ca_feature_flags_normalize(flags, &s->feature_flags);
 }
