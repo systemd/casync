@@ -802,41 +802,16 @@ static bool validate_symlink_target(const char *target, size_t n) {
 }
 
 static bool validate_feature_flags(CaDecoder *d, uint64_t flags) {
+        int r;
+
         assert(d);
 
         /* We use all bits on in the flags field as a special value, don't permit this in files */
         if (flags == UINT64_MAX)
                 return false;
 
-        if ((flags & CA_FORMAT_WITH_NSEC_TIME) &&
-            (flags & (CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_2SEC_TIME)))
-                return false;
-
-        if ((flags & CA_FORMAT_WITH_USEC_TIME) &&
-            (flags & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_2SEC_TIME)))
-                return false;
-
-        if ((flags & CA_FORMAT_WITH_SEC_TIME) &&
-            (flags & CA_FORMAT_WITH_2SEC_TIME))
-                return false;
-
-        if ((flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) == (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS))
-                return false;
-
-        if ((flags & CA_FORMAT_WITH_PERMISSIONS) &&
-            (flags & CA_FORMAT_WITH_READ_ONLY))
-                return false;
-
-        if ((flags & CA_FORMAT_WITH_ACL) &&
-            (flags & (CA_FORMAT_WITH_PERMISSIONS|CA_FORMAT_WITH_READ_ONLY)))
-                return false;
-
-        if ((flags & CA_FORMAT_WITH_ACL) &&
-            (flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_USER_NAMES)) == 0)
-                return false;
-
-        if ((flags & CA_FORMAT_RESPECT_FLAG_NODUMP) &&
-            (flags & CA_FORMAT_WITH_FLAG_NODUMP))
+        r = ca_feature_flags_are_normalized(flags);
+        if (r <= 0 && r != -EOPNOTSUPP) /* we let unsupported flags pass here, and let the caller decide what he wants to do with that */
                 return false;
 
         if (d->feature_flags == UINT64_MAX)

@@ -156,6 +156,8 @@ int ca_feature_flags_normalize(uint64_t flags, uint64_t *ret) {
         if (!ret)
                 return -EINVAL;
 
+        if (flags == UINT64_MAX)
+                return -EINVAL;
         if ((flags & ~CA_FORMAT_FEATURE_FLAGS_MAX) != 0)
                 return -EOPNOTSUPP;
 
@@ -183,6 +185,48 @@ int ca_feature_flags_normalize(uint64_t flags, uint64_t *ret) {
 
         *ret = flags;
         return 0;
+}
+
+int ca_feature_flags_are_normalized(uint64_t flags) {
+
+        if (flags == UINT64_MAX)
+                return -EINVAL;
+
+        if ((flags & ~CA_FORMAT_FEATURE_FLAGS_MAX) != 0)
+                return -EOPNOTSUPP;
+
+        if ((flags & CA_FORMAT_WITH_NSEC_TIME) &&
+            (flags & (CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_2SEC_TIME)))
+                return false;
+
+        if ((flags & CA_FORMAT_WITH_USEC_TIME) &&
+            (flags & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_2SEC_TIME)))
+                return false;
+
+        if ((flags & CA_FORMAT_WITH_SEC_TIME) &&
+            (flags & CA_FORMAT_WITH_2SEC_TIME))
+                return false;
+
+        if ((flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) == (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS))
+                return false;
+
+        if ((flags & CA_FORMAT_WITH_PERMISSIONS) &&
+            (flags & CA_FORMAT_WITH_READ_ONLY))
+                return false;
+
+        if ((flags & CA_FORMAT_WITH_ACL) &&
+            (flags & (CA_FORMAT_WITH_PERMISSIONS|CA_FORMAT_WITH_READ_ONLY)))
+                return false;
+
+        if ((flags & CA_FORMAT_WITH_ACL) &&
+            (flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_USER_NAMES)) == 0)
+                return false;
+
+        if ((flags & CA_FORMAT_RESPECT_FLAG_NODUMP) &&
+            (flags & CA_FORMAT_WITH_FLAG_NODUMP))
+                return false;
+
+        return true;
 }
 
 int ca_feature_flags_time_granularity_nsec(uint64_t flags, uint64_t *ret) {
