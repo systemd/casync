@@ -26,7 +26,7 @@ int ca_origin_concat(CaOrigin *origin, CaOrigin *other, uint64_t n_bytes);
 int ca_origin_put_void(CaOrigin *origin, uint64_t n_bytes);
 
 int ca_origin_advance_items(CaOrigin *origin, size_t n_drop);
-int ca_origin_advance_bytes(CaOrigin *origin, size_t n_bytes);
+int ca_origin_advance_bytes(CaOrigin *origin, uint64_t n_bytes);
 
 int ca_origin_dump(FILE *f, CaOrigin *origin);
 
