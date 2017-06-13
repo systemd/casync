@@ -160,8 +160,6 @@ struct CaEncoder {
 
         uid_t uid_shift;
         uid_t uid_range; /* uid_range == 0 means "full range" */
-
-        bool xdev;
 };
 
 CaEncoder *ca_encoder_new(void) {
@@ -171,9 +169,8 @@ CaEncoder *ca_encoder_new(void) {
         if (!e)
                 return NULL;
 
-        assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_RESPECT_FLAG_NODUMP, &e->feature_flags) >= 0);
+        assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_EXCLUDE_NODUMP, &e->feature_flags) >= 0);
         e->time_granularity = 1;
-        e->xdev = true;
 
         return e;
 }
@@ -520,7 +517,7 @@ static int ca_encoder_node_read_chattr(
                 return -EBADFD;
         if (n->chattr_flags_valid)
                 return 0;
-        if ((e->feature_flags & (CA_FORMAT_WITH_CHATTR|CA_FORMAT_RESPECT_FLAG_NODUMP)) == 0)
+        if ((e->feature_flags & (CA_FORMAT_WITH_CHATTR|CA_FORMAT_EXCLUDE_NODUMP)) == 0)
                 return 0;
 
         r = ioctl(n->fd, FS_IOC_GETFLAGS, &n->chattr_flags);
@@ -825,7 +822,7 @@ static int ca_encoder_node_read_mount_id(
         assert(e);
         assert(n);
 
-        if (e->xdev)
+        if (!(e->feature_flags & CA_FORMAT_EXCLUDE_SUBMOUNTS))
                 return 0;
         if (n->mount_id >= 0)
                 return 0;
@@ -1572,7 +1569,7 @@ static int ca_encoder_shall_store_child_node(CaEncoder *e, CaEncoderNode *n) {
         r = ca_encoder_node_read_chattr(e, child);
         if (r < 0)
                 return r;
-        if ((e->feature_flags & CA_FORMAT_RESPECT_FLAG_NODUMP) &&
+        if ((e->feature_flags & CA_FORMAT_EXCLUDE_NODUMP) &&
             (child->chattr_flags & FS_NODUMP_FL))
                 return false;
 
@@ -1583,7 +1580,7 @@ static int ca_encoder_shall_store_child_node(CaEncoder *e, CaEncoderNode *n) {
         r = ca_encoder_node_read_mount_id(e, child);
         if (r < 0)
                 return r;
-        if (!e->xdev && child->mount_id >= 0 && n->mount_id >= 0 && child->mount_id != n->mount_id)
+        if ((e->feature_flags & CA_FORMAT_EXCLUDE_SUBMOUNTS) && child->mount_id >= 0 && n->mount_id >= 0 && child->mount_id != n->mount_id)
                 return false;
 
         return true;
@@ -3258,13 +3255,5 @@ int ca_encoder_set_uid_range(CaEncoder *e, uid_t u) {
                 return -EINVAL;
 
         e->uid_range = u;
-        return 0;
-}
-
-int ca_encoder_set_xdev(CaEncoder *e, bool b) {
-        if (!e)
-                return -EINVAL;
-
-        e->xdev = b;
         return 0;
 }

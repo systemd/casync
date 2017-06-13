@@ -30,7 +30,7 @@ static int encode(int dfd, int fd) {
         if (r < 0)
                 goto finish;
 
-        flags = CA_FORMAT_WITH_BEST|CA_FORMAT_RESPECT_FLAG_NODUMP;
+        flags = CA_FORMAT_WITH_BEST|CA_FORMAT_EXCLUDE_NODUMP;
 
         if (geteuid() != 0)
                 flags &= ~CA_FORMAT_WITH_PRIVILEGED;

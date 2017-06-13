@@ -53,7 +53,7 @@ CaSeed *ca_seed_new(void) {
 
         s->chunker = (CaChunker) CA_CHUNKER_INIT;
 
-        assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_RESPECT_FLAG_NODUMP, &s->feature_flags) >= 0);
+        assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_EXCLUDE_NODUMP, &s->feature_flags) >= 0);
 
         return s;
 }

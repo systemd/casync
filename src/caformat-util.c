@@ -143,7 +143,7 @@ int ca_with_feature_flags_format(uint64_t features, char **ret) {
                 features &= ~f;
         }
 
-        if ((features & ~CA_FORMAT_RESPECT_FLAG_NODUMP) != 0) {
+        if ((features & ~(CA_FORMAT_EXCLUDE_NODUMP|CA_FORMAT_EXCLUDE_SUBMOUNTS)) != 0) {
                 free(s);
                 return -EINVAL;
         }
@@ -180,7 +180,7 @@ int ca_feature_flags_normalize(uint64_t flags, uint64_t *ret) {
         if (flags & CA_FORMAT_WITH_PERMISSIONS)
                 flags &= ~CA_FORMAT_WITH_READ_ONLY;
 
-        if (flags & CA_FORMAT_RESPECT_FLAG_NODUMP)
+        if (flags & CA_FORMAT_EXCLUDE_NODUMP)
                 flags &= ~CA_FORMAT_WITH_FLAG_NODUMP;
 
         *ret = flags;
@@ -222,7 +222,7 @@ int ca_feature_flags_are_normalized(uint64_t flags) {
             (flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_USER_NAMES)) == 0)
                 return false;
 
-        if ((flags & CA_FORMAT_RESPECT_FLAG_NODUMP) &&
+        if ((flags & CA_FORMAT_EXCLUDE_NODUMP) &&
             (flags & CA_FORMAT_WITH_FLAG_NODUMP))
                 return false;
 

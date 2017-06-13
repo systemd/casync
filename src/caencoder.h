@@ -29,8 +29,6 @@ int ca_encoder_get_covering_feature_flags(CaEncoder *e, uint64_t *ret);
 int ca_encoder_set_uid_shift(CaEncoder *e, uid_t u);
 int ca_encoder_set_uid_range(CaEncoder *e, uid_t u);
 
-int ca_encoder_set_xdev(CaEncoder *e, bool b);
-
 /* Input: a directory tree, block device node or regular file */
 int ca_encoder_set_base_fd(CaEncoder *e, int fd);
 int ca_encoder_get_base_fd(CaEncoder *e);

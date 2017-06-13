@@ -34,13 +34,14 @@ static enum {
         _WHAT_INVALID = -1,
 } arg_what = _WHAT_INVALID;
 static bool arg_verbose = false;
-static bool arg_respect_nodump = true;
-static bool arg_undo_immutable = false;
-static bool arg_delete = true;
-static bool arg_punch_holes = true;
+static bool arg_exclude_nodump = true;
+static bool arg_exclude_submounts = false;
 static bool arg_reflink = true;
-static bool arg_seed_output = true;
+static bool arg_punch_holes = true;
+static bool arg_delete = true;
+static bool arg_undo_immutable = false;
 static bool arg_recursive = true;
+static bool arg_seed_output = true;
 static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
@@ -51,7 +52,6 @@ static uint64_t arg_without = 0;
 static uid_t arg_uid_shift = 0, arg_uid_range = 0x10000U;
 static bool arg_uid_shift_apply = false;
 static bool arg_mkdir = true;
-static bool arg_xdev = true;
 
 static void help(void) {
         printf("%1$s [OPTIONS...] make [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
@@ -71,15 +71,15 @@ static void help(void) {
                "     --extra-store=PATH      Additional chunk store to look for chunks in\n"
                "     --chunk-size-avg=SIZE   The average number of bytes for a chunk file\n"
                "     --seed=PATH             Additional file or directory to use as seed\n"
-               "     --recursive=no          List non-recursively\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n"
-               "     --respect-nodump=no     Don't respect chattr(1)'s +d 'nodump' flag when creating archive\n"
-               "     --xdev=no               Don't cross mount points when creating archive\n"
+               "     --exclude-nodump=no     Don't exclude files with chattr(1)'s +d 'nodump' flag when creating archive\n"
+               "     --exclude-submounts=yes Exclude submounts when creating archive\n"
+               "     --reflink=no            Don't create reflinks from seeds when extracting\n"
+               "     --punch-holes=no        Don't create sparse files when extracting\n"
                "     --delete=no             Don't delete existing files not listed in archive after extraction\n"
-               "     --undo-immutable=yes    When removing existing files, undo chattr(1)'s +i 'immutable' flag\n"
-               "     --punch-holes=no        Don't create sparse files\n"
-               "     --reflink=no            Don't create reflinks from seeds\n"
-               "     --seed-output=no        Don't implicitly add pre-existing output as seed\n"
+               "     --undo-immutable=yes    When removing existing files, undo chattr(1)'s +i 'immutable' flag when extracting\n"
+               "     --seed-output=no        Don't implicitly add pre-existing output as seed when extracting\n"
+               "     --recursive=no          List non-recursively\n"
 #if HAVE_FUSE
                "     --mkdir=no              Don't automatically create mount directory if it is missing\n"
 #endif
@@ -145,7 +145,8 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_WITH,
                 ARG_WITHOUT,
                 ARG_WHAT,
-                ARG_RESPECT_NODUMP,
+                ARG_EXCLUDE_NODUMP,
+                ARG_EXCLUDE_SUBMOUNTS,
                 ARG_UNDO_IMMUTABLE,
                 ARG_PUNCH_HOLES,
                 ARG_REFLINK,
@@ -155,31 +156,30 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_UID_RANGE,
                 ARG_RECURSIVE,
                 ARG_MKDIR,
-                ARG_XDEV,
         };
 
         static const struct option options[] = {
-                { "help",           no_argument,       NULL, 'h'                },
-                { "verbose",        no_argument,       NULL, 'v'                },
-                { "store",          required_argument, NULL, ARG_STORE          },
-                { "extra-store",    required_argument, NULL, ARG_EXTRA_STORE    },
-                { "chunk-size-avg", required_argument, NULL, ARG_CHUNK_SIZE_AVG },
-                { "seed",           required_argument, NULL, ARG_SEED           },
-                { "rate-limit-bps", required_argument, NULL, ARG_RATE_LIMIT_BPS },
-                { "with",           required_argument, NULL, ARG_WITH           },
-                { "without",        required_argument, NULL, ARG_WITHOUT        },
-                { "what",           required_argument, NULL, ARG_WHAT           },
-                { "respect-nodump", required_argument, NULL, ARG_RESPECT_NODUMP },
-                { "undo-immutable", required_argument, NULL, ARG_UNDO_IMMUTABLE },
-                { "delete",         required_argument, NULL, ARG_DELETE         },
-                { "punch-holes",    required_argument, NULL, ARG_PUNCH_HOLES    },
-                { "reflink",        required_argument, NULL, ARG_REFLINK        },
-                { "seed-output",    required_argument, NULL, ARG_SEED_OUTPUT    },
-                { "uid-shift",      required_argument, NULL, ARG_UID_SHIFT      },
-                { "uid-range",      required_argument, NULL, ARG_UID_RANGE      },
-                { "recursive",      required_argument, NULL, ARG_RECURSIVE      },
-                { "mkdir",          required_argument, NULL, ARG_MKDIR          },
-                { "xdev",           required_argument, NULL, ARG_XDEV           },
+                { "help",              no_argument,       NULL, 'h'                   },
+                { "verbose",           no_argument,       NULL, 'v'                   },
+                { "store",             required_argument, NULL, ARG_STORE             },
+                { "extra-store",       required_argument, NULL, ARG_EXTRA_STORE       },
+                { "chunk-size-avg",    required_argument, NULL, ARG_CHUNK_SIZE_AVG    },
+                { "seed",              required_argument, NULL, ARG_SEED              },
+                { "rate-limit-bps",    required_argument, NULL, ARG_RATE_LIMIT_BPS    },
+                { "with",              required_argument, NULL, ARG_WITH              },
+                { "without",           required_argument, NULL, ARG_WITHOUT           },
+                { "what",              required_argument, NULL, ARG_WHAT              },
+                { "exclude-nodump",    required_argument, NULL, ARG_EXCLUDE_NODUMP    },
+                { "exclude-submounts", required_argument, NULL, ARG_EXCLUDE_SUBMOUNTS },
+                { "undo-immutable",    required_argument, NULL, ARG_UNDO_IMMUTABLE    },
+                { "delete",            required_argument, NULL, ARG_DELETE            },
+                { "punch-holes",       required_argument, NULL, ARG_PUNCH_HOLES       },
+                { "reflink",           required_argument, NULL, ARG_REFLINK           },
+                { "seed-output",       required_argument, NULL, ARG_SEED_OUTPUT       },
+                { "uid-shift",         required_argument, NULL, ARG_UID_SHIFT         },
+                { "uid-range",         required_argument, NULL, ARG_UID_RANGE         },
+                { "recursive",         required_argument, NULL, ARG_RECURSIVE         },
+                { "mkdir",             required_argument, NULL, ARG_MKDIR             },
                 {}
         };
 
@@ -300,14 +300,24 @@ static int parse_argv(int argc, char *argv[]) {
 
                         break;
 
-                case ARG_RESPECT_NODUMP:
+                case ARG_EXCLUDE_NODUMP:
                         r = parse_boolean(optarg);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to parse --respect-nodump= parameter: %s\n", optarg);
+                                fprintf(stderr, "Failed to parse --exclude-nodump= parameter: %s\n", optarg);
                                 return r;
                         }
 
-                        arg_respect_nodump = r;
+                        arg_exclude_nodump = r;
+                        break;
+
+                case ARG_EXCLUDE_SUBMOUNTS:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --exclude-submounts= parameter: %s\n", optarg);
+                                return r;
+                        }
+
+                        arg_exclude_submounts = r;
                         break;
 
                 case ARG_UNDO_IMMUTABLE:
@@ -428,16 +438,6 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_recursive = r;
                         break;
 
-                case ARG_XDEV:
-                        r = parse_boolean(optarg);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to parse --xdev= parameter: %s\n", optarg);
-                                return r;
-                        }
-
-                        arg_xdev = r;
-                        break;
-
                 case '?':
                         return -EINVAL;
 
@@ -543,8 +543,10 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
 
         flags = combined_with_flags(default_with_flags);
 
-        if (arg_respect_nodump)
-                flags |= CA_FORMAT_RESPECT_FLAG_NODUMP;
+        if (arg_exclude_nodump)
+                flags |= CA_FORMAT_EXCLUDE_NODUMP;
+        if (arg_exclude_submounts)
+                flags |= CA_FORMAT_EXCLUDE_SUBMOUNTS;
 
         r = ca_sync_set_feature_flags(s, flags);
         if (r < 0 && r != -ENOTTY) { /* sync object does not have an encoder */
@@ -569,12 +571,6 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
         r = ca_sync_set_undo_immutable(s, arg_undo_immutable);
         if (r < 0 && r != -ENOTTY) {
                 fprintf(stderr, "Failed to set undo immutable flag: %s\n", strerror(-r));
-                return r;
-        }
-
-        r = ca_sync_set_xdev(s, arg_xdev);
-        if (r < 0 && r != -ENOTTY) {
-                fprintf(stderr, "Failed to set xdev flag: %s\n", strerror(-r));
                 return r;
         }
 
@@ -647,7 +643,8 @@ static int verbose_print_feature_flags(CaSync *s) {
         }
 
         fprintf(stderr, "Using feature flags: %s\n", strnone(t));
-        fprintf(stderr, "Respecting chattr(1) -d flag: %s\n", yes_no(flags & CA_FORMAT_RESPECT_FLAG_NODUMP));
+        fprintf(stderr, "Excluding files with chattr(1) -d flag: %s\n", yes_no(flags & CA_FORMAT_EXCLUDE_NODUMP));
+        fprintf(stderr, "Excluding submounts: %s\n", yes_no(flags & CA_FORMAT_EXCLUDE_SUBMOUNTS));
 
         free(t);
 
