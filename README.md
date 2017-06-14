@@ -49,6 +49,7 @@ but there are other systems that use similar algorithms, in particular:
 - dedupfs (https://github.com/xolox/dedupfs)
 - LBFS (https://pdos.csail.mit.edu/archive/lbfs/)
 - Tahoe-LAFS (https://tahoe-lafs.org/trac/tahoe-lafs)
+- tarsnap (https://www.tarsnap.com/)
 - Venti (https://en.wikipedia.org/wiki/Venti)
 - zsync (http://zsync.moria.org.uk/)
 
