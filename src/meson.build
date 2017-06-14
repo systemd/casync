@@ -55,6 +55,8 @@ libshared_sources = files('''
 	siphash24.h
 	util.c
 	util.h
+        notify.c
+        notify.h
 '''.split())
 
 libshared = static_library(

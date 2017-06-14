@@ -21,6 +21,7 @@
 #include "castore.h"
 #include "casync.h"
 #include "gcrypt-util.h"
+#include "notify.h"
 #include "parse-util.h"
 #include "signal-handler.h"
 #include "util.h"
@@ -1037,6 +1038,8 @@ static int verb_make(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
+        (void) send_notify("READY=1");
+
         for (;;) {
                 if (quit) {
                         fprintf(stderr, "Got exit signal, quitting.\n");
@@ -1392,6 +1395,8 @@ static int verb_extract(int argc, char *argv[]) {
                         goto finish;
                 }
         }
+
+        (void) send_notify("READY=1");
 
         for (;;) {
                 if (quit) {
@@ -1756,6 +1761,8 @@ static int verb_list(int argc, char *argv[]) {
                         goto finish;
                 }
         }
+
+        (void) send_notify("READY=1");
 
         for (;;) {
                 if (quit) {
@@ -2375,6 +2382,8 @@ static int verb_digest(int argc, char *argv[]) {
                 }
         }
 
+        (void) send_notify("READY=1");
+
         for (;;) {
                 if (quit) {
                         fprintf(stderr, "Got exit signal, quitting.\n");
@@ -2778,6 +2787,8 @@ static int verb_mkdev(int argc, char *argv[]) {
 
                 rm_symlink = true;
         }
+
+        (void) send_notify("READY=1");
 
         for (;;) {
                 uint64_t req_offset = 0, req_size = 0;

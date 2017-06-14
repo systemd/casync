@@ -114,6 +114,7 @@ config_h = configure_file(
 add_project_arguments('-include', 'config.h', language : 'c')
 
 subdir('src')
+subdir('test')
 
 includes = include_directories('src')
 
@@ -151,6 +152,13 @@ meson.add_postconf_script('sh', '-c',
                          'ln -svf casync-http $MESON_BUILD_ROOT/casync-https')
 meson.add_postconf_script('sh', '-c',
                          'ln -svf casync-http $MESON_BUILD_ROOT/casync-ftp')
+
+############################################################
+
+executable('notify-wait',
+           notify_wait_sources,
+           include_directories : includes,
+           install : false)
 
 ############################################################
 

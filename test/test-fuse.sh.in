@@ -28,10 +28,7 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.caidx.digest
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/extract.digest
 
 if [ `id -u` == 0 ] ; then
-    @top_builddir@/casync $PARAMS mount $SCRATCH_DIR/test.caidx $SCRATCH_DIR/mount &
-    MOUNT_PID=$!
-
-    sleep 3
+    MOUNT_PID=`@top_builddir@/notify-wait @top_builddir@/casync $PARAMS mount $SCRATCH_DIR/test.caidx $SCRATCH_DIR/mount`
 
     @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract > $SCRATCH_DIR/mount.digest
 

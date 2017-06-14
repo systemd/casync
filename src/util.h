@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/vfs.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <linux/magic.h>
@@ -45,7 +46,7 @@
                 UNIQ_T(A,aq) < UNIQ_T(B,bq) ? UNIQ_T(A,aq) : UNIQ_T(B,bq); \
         })
 
-static inline uint64_t timespec_to_nsec(const struct timespec t) {
+static inline uint64_t timespec_to_nsec(struct timespec t) {
 
         if (t.tv_sec == (time_t) -1 &&
             t.tv_nsec == (long) -1)
@@ -71,6 +72,15 @@ static inline struct timespec nsec_to_timespec(uint64_t u) {
 #define NSEC_TO_TIMESPEC_INIT(u) \
         { .tv_sec = u == UINT64_MAX ? (time_t) -1 : (time_t) (u / UINT64_C(1000000000)), \
           .tv_nsec = u == UINT64_MAX ? (long) -1 : (long) (u % UINT64_C(1000000000)) }
+
+static inline uint64_t now(clockid_t id) {
+        struct timespec ts;
+
+        if (clock_gettime(id, &ts) < 0)
+                return UINT64_MAX;
+
+        return timespec_to_nsec(ts);
+}
 
 static inline int log_oom(void) {
         fprintf(stderr, "Out of memory\n");
@@ -630,5 +640,15 @@ void* greedy_realloc0(void **p, size_t *allocated, size_t need, size_t size);
 int skip_bytes_fd(int fd, uint64_t n_bytes);
 
 char *truncate_nl(char *p);
+
+#define SOCKADDR_UN_LEN(sa)                                             \
+        ({                                                              \
+                const struct sockaddr_un *_sa = &(sa);                  \
+                assert(_sa->sun_family == AF_UNIX);                     \
+                offsetof(struct sockaddr_un, sun_path) +                \
+                        (_sa->sun_path[0] == 0 ?                        \
+                         1 + strnlen(_sa->sun_path+1, sizeof(_sa->sun_path)-1) : \
+                         strnlen(_sa->sun_path, sizeof(_sa->sun_path))); \
+        })
 
 #endif

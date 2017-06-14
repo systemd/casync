@@ -7,6 +7,7 @@
 #include "caformat-util.h"
 #include "caformat.h"
 #include "cafuse.h"
+#include "notify.h"
 #include "signal-handler.h"
 #include "util.h"
 
@@ -774,6 +775,8 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
                 r = 0;
                 goto finish;
         }
+
+        (void) send_notify("READY=1");
 
         r = fuse_loop(fuse);
         if (r < 0) {
