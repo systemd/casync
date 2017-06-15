@@ -33,8 +33,10 @@ LATER:
 * fuse: expose acls and fcaps
 * fuse: possibly translate user names on access
 * fuse: provide "mount.casync" compat symlink so that people can list casync mounts in /etc/fstab
-* encoder: change seeking to be more like decoder's seeking
+* encoder: change seeking to be more like decoder's seeking (i.e. delay returned events until the next ca_encoder_step() call)
 * rename offset accessor functions (drop the "archive")
 * skip seeding logic if we process catars
 * when extracting, check that index feature flags and archive feature flags match
 * send progress information via sd_notify(), so that people can wrap casync nicely in UIs
+* maybe turn "recursive" mode into a numeric value specifying how far to descend?
+* make "casync stat" work on a directory with a subpath
