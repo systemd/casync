@@ -2943,7 +2943,7 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
                                 continue;
                         if (r == -EXDEV) /* cross-device reflinks aren't supported */
                                 continue;
-                        if (r == -ENOTTY) /* reflinks not supported */
+                        if (IN_SET(r, -ENOTTY, -EOPNOTSUPP)) /* reflinks not supported */
                                 break;
                         if (r < 0)
                                 return r;
