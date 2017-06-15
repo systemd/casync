@@ -156,10 +156,7 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test2.catar.digest
 CASYNC_PROTOCOL_PATH=@top_builddir@
 export CASYNC_PROTOCOL_PATH
 
-@top_srcdir@/test/http-server.py $SCRATCH_DIR &
-HTTP_PID=$!
-
-sleep 3
+HTTP_PID=`@top_builddir@/notify-wait  @top_srcdir@/test/http-server.py $SCRATCH_DIR`
 
 @top_builddir@/casync $PARAMS list http://localhost:4321/test2.caidx > $SCRATCH_DIR/test3.caidx.list
 @top_builddir@/casync $PARAMS mtree http://localhost:4321/test2.caidx > $SCRATCH_DIR/test3.caidx.mtree

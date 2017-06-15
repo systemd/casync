@@ -2,12 +2,33 @@
 
 PORT = 4321
 
-import http.server, socketserver, os, sys
+import http.server, socketserver, os, sys, socket, time
 
 os.chdir(sys.argv[1])
+
+def send_notify(text):
+
+    if text is None or text == "":
+        return
+
+    e = os.getenv("NOTIFY_SOCKET")
+    if e is None:
+        return
+
+    assert len(e) >= 2
+    assert e[0] == '/' or e[0] == '@'
+
+    fd = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    fd.connect("\0" + e[1:] if e[0] == '@' else e)
+    fd.send(bytes(text, 'utf-8'))
 
 class AllowReuseAddressServer(socketserver.TCPServer):
     allow_reuse_address = True
 
+    def server_activate(self):
+        super().server_activate()
+        send_notify("READY=1")
+
 httpd = AllowReuseAddressServer(("", PORT), http.server.SimpleHTTPRequestHandler)
+
 httpd.serve_forever()
