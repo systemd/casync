@@ -40,3 +40,4 @@ LATER:
 * send progress information via sd_notify(), so that people can wrap casync nicely in UIs
 * maybe turn "recursive" mode into a numeric value specifying how far to descend?
 * make "casync stat" work on a directory with a subpath
+* when issuing "casync digest" on an index file, read the digest directly from the index file cheaply
