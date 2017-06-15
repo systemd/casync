@@ -8,7 +8,7 @@ What is this?
 
 2. An efficient way to store and retrieve multiple related versions of large file systems or directory trees
 
-3. An efficient way to deliver and update OS and container images over the Internet
+3. An efficient way to deliver and update OS, VM, IoT and container images over the Internet in an HTTP and CDN friendly way
 
 4. An efficient backup system
 
@@ -24,9 +24,9 @@ chunk size.
 Decoding: Let's take the "chunk index" file, and reassemble the large linear
 data stream by concatenating the uncompressed chunks from the "chunk store".
 
-As an extra twist, we introduce a well-defined, reproducible serialization
-format for directory trees (i.e. a more modern "tar"), to permit efficient,
-stable storage of complete directory trees in the system.
+As an extra twist, we introduce a well-defined, reproducible, random-access
+serialization format for directory trees (i.e. a more modern "tar"), to permit
+efficient, stable storage of complete directory trees in the system.
 
 Why bother with all of this? Streams with similar contents will result in
 mostly the same chunk files in the chunk store. This means, it is very
