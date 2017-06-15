@@ -16,7 +16,6 @@
 #include "castore.h"
 #include "casync.h"
 #include "def.h"
-#include "gcrypt-util.h"
 #include "realloc-buffer.h"
 #include "util.h"
 
@@ -81,7 +80,6 @@ typedef struct CaSync {
         ReallocBuffer compress_buffer;
 
         gcry_md_hd_t chunk_digest;
-        gcry_md_hd_t archive_digest;
 
         bool archive_eof;
         bool remote_index_eof;
@@ -103,6 +101,10 @@ typedef struct CaSync {
         bool delete:1;
         bool payload:1;
         bool undo_immutable:1;
+
+        bool archive_digest:1;
+        bool hardlink_digest:1;
+        bool payload_digest:1;
 
         CaFileRoot *archive_root;
 
@@ -386,7 +388,6 @@ CaSync *ca_sync_unref(CaSync *s) {
         ca_file_root_unref(s->archive_root);
 
         gcry_md_close(s->chunk_digest);
-        gcry_md_close(s->archive_digest);
         free(s);
 
         return NULL;
@@ -1278,33 +1279,63 @@ static int ca_sync_start(CaSync *s) {
                         return r;
         }
 
-        if (s->direction == CA_SYNC_ENCODE && s->index) {
-                /* Propagate the chunk size to the index we generate */
-
-                r = ca_index_set_feature_flags(s->index, s->feature_flags);
+        if (s->encoder) {
+                /* If we are writing an index file we need the archive digest unconditionally, as it is included in its end */
+                r = ca_encoder_enable_archive_digest(s->encoder, s->archive_digest || s->index);
                 if (r < 0)
                         return r;
 
-                r = ca_index_set_chunk_size_min(s->index, s->chunker.chunk_size_min);
+                r = ca_encoder_enable_payload_digest(s->encoder, s->payload_digest);
                 if (r < 0)
                         return r;
 
-                r = ca_index_set_chunk_size_avg(s->index, s->chunker.chunk_size_avg);
+                r = ca_encoder_enable_hardlink_digest(s->encoder, s->hardlink_digest);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->decoder) {
+                r = ca_decoder_enable_archive_digest(s->decoder, s->archive_digest);
                 if (r < 0)
                         return r;
 
-                r = ca_index_set_chunk_size_max(s->index, s->chunker.chunk_size_max);
+                r = ca_decoder_enable_payload_digest(s->decoder, s->payload_digest);
                 if (r < 0)
                         return r;
 
-                if (s->make_mode != (mode_t) -1) {
-                        r = ca_index_set_make_mode(s->index, s->make_mode);
-                        if (r < 0 && r != -ENOTTY)
-                                return r;
-                }
+                r = ca_decoder_enable_hardlink_digest(s->decoder, s->hardlink_digest);
+                if (r < 0)
+                        return r;
         }
 
         if (s->index) {
+
+                if (s->direction == CA_SYNC_ENCODE) {
+                        /* Propagate the chunk size to the index we generate */
+
+                        r = ca_index_set_feature_flags(s->index, s->feature_flags);
+                        if (r < 0)
+                                return r;
+
+                        r = ca_index_set_chunk_size_min(s->index, s->chunker.chunk_size_min);
+                        if (r < 0)
+                                return r;
+
+                        r = ca_index_set_chunk_size_avg(s->index, s->chunker.chunk_size_avg);
+                        if (r < 0)
+                                return r;
+
+                        r = ca_index_set_chunk_size_max(s->index, s->chunker.chunk_size_max);
+                        if (r < 0)
+                                return r;
+
+                        if (s->make_mode != (mode_t) -1) {
+                                r = ca_index_set_make_mode(s->index, s->make_mode);
+                                if (r < 0 && r != -ENOTTY)
+                                        return r;
+                        }
+                }
+
                 r = ca_index_open(s->index);
                 if (r < 0)
                         return r;
@@ -1333,36 +1364,6 @@ static int ca_sync_write_remote_archive(CaSync *s, const void *p, size_t l) {
                 return 0;
 
         return ca_remote_put_archive(s->remote_archive, p, l);
-}
-
-static int ca_sync_allocate_archive_digest(CaSync *s) {
-        assert(s);
-
-        if (s->archive_digest)
-                return 0;
-
-        initialize_libgcrypt();
-
-        assert(gcry_md_get_algo_dlen(GCRY_MD_SHA256) == sizeof(CaChunkID));
-
-        if (gcry_md_open(&s->archive_digest, GCRY_MD_SHA256, 0) != 0)
-                return -EIO;
-
-        return 0;
-}
-
-static int ca_sync_write_archive_digest(CaSync *s, const void *p, size_t l) {
-        int r;
-
-        assert(s);
-        assert(p || l == 0);
-
-        r = ca_sync_allocate_archive_digest(s);
-        if (r < 0)
-                return r;
-
-        gcry_md_write(s->archive_digest, p, l);
-        return 0;
 }
 
 static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l) {
@@ -1461,17 +1462,13 @@ static int ca_sync_write_final_chunk(CaSync *s) {
                 return r;
 
         if (s->index) {
-                unsigned char *q;
+                CaChunkID digest;
 
-                r = ca_sync_allocate_archive_digest(s);
+                r = ca_encoder_get_archive_digest(s->encoder, &digest);
                 if (r < 0)
                         return r;
 
-                q = gcry_md_read(s->archive_digest, GCRY_MD_SHA256);
-                if (!q)
-                        return -EIO;
-
-                r = ca_index_set_digest(s->index, (CaChunkID*) q);
+                r = ca_index_set_digest(s->index, &digest);
                 if (r < 0)
                         return r;
 
@@ -1582,10 +1579,6 @@ static int ca_sync_step_encode(CaSync *s) {
                         if (r < 0)
                                 return r;
 
-                        r = ca_sync_write_archive_digest(s, p, l);
-                        if (r < 0)
-                                return r;
-
                 } else if (r != -ENODATA)
                         return r;
 
@@ -1684,10 +1677,6 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                 if (r < 0)
                         return r;
 
-                r = ca_sync_write_archive_digest(s, p, chunk_size);
-                if (r < 0)
-                        return r;
-
                 return CA_SYNC_STEP;
         }
 
@@ -1747,10 +1736,6 @@ static int ca_sync_process_decoder_request(CaSync *s) {
 
                         r = ca_decoder_put_data(s->decoder, p, n, origin);
                         ca_origin_unref(origin);
-                        if (r < 0)
-                                return r;
-
-                        r = ca_sync_write_archive_digest(s, p, n);
                         if (r < 0)
                                 return r;
                 }
@@ -1896,9 +1881,6 @@ static int ca_sync_step_decode(CaSync *s) {
                 return ca_sync_process_decoder_skip(s);
 
         case CA_DECODER_FOUND:
-                if (s->archive_digest)
-                        gcry_md_reset(s->archive_digest);
-
                 return CA_SYNC_FOUND;
 
         case CA_DECODER_NOT_FOUND:
@@ -2216,10 +2198,6 @@ static int ca_sync_remote_step_one(CaSync *s, CaRemote *rr) {
                         return r;
 
                 r = ca_decoder_put_data(s->decoder, data, size, NULL);
-                if (r < 0)
-                        return r;
-
-                r = ca_sync_write_archive_digest(s, data, size);
                 if (r < 0)
                         return r;
 
@@ -2582,29 +2560,55 @@ int ca_sync_make_chunk_id(CaSync *s, const void *p, size_t l, CaChunkID *ret) {
         return ca_chunk_id_make(&s->chunk_digest, p, l, ret);
 }
 
-int ca_sync_get_digest(CaSync *s, CaChunkID *ret) {
-        unsigned char *q;
-        int r;
-
+int ca_sync_get_archive_digest(CaSync *s, CaChunkID *ret) {
         if (!s)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
 
-        if (!s->archive_eof)
-                return -EBUSY;
+        if (!s->archive_digest)
+                return -ENOMEDIUM;
 
-        r = ca_sync_allocate_archive_digest(s);
-        if (r < 0)
-                return r;
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_get_archive_digest(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_get_archive_digest(s->decoder, ret);
 
-        q = gcry_md_read(s->archive_digest, GCRY_MD_SHA256);
-        if (!q)
-                return -EIO;
+        return -ENOTTY;
+}
 
-        memcpy(ret, q, sizeof(CaChunkID));
+int ca_sync_get_payload_digest(CaSync *s, CaChunkID *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
 
-        return 0;
+        if (!s->payload_digest)
+                return -ENOMEDIUM;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_get_payload_digest(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_get_payload_digest(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
+int ca_sync_get_hardlink_digest(CaSync *s, CaChunkID *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!s->hardlink_digest)
+                return -ENOMEDIUM;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_get_hardlink_digest(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_get_hardlink_digest(s->decoder, ret);
+
+        return -ENOTTY;
 }
 
 int ca_sync_current_path(CaSync *s, char **ret) {
@@ -3230,4 +3234,79 @@ int ca_sync_get_reflink_bytes(CaSync *s, uint64_t *ret) {
         }
 
         return ca_decoder_get_reflink_bytes(s->decoder, ret);
+}
+
+int ca_sync_enable_archive_digest(CaSync *s, bool b) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (s->archive_digest == b)
+                return 0;
+
+        if (s->encoder) {
+                /* If we are writing an index file we need the archive digest unconditionally, as it is included in its end */
+                r = ca_encoder_enable_archive_digest(s->encoder, b || s->index);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->decoder) {
+                r = ca_decoder_enable_archive_digest(s->decoder, b);
+                if (r < 0)
+                        return r;
+        }
+
+        s->archive_digest = b;
+        return 1;
+}
+
+int ca_sync_enable_payload_digest(CaSync *s, bool b) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+
+        if (s->payload_digest == b)
+                return 0;
+
+        if (s->encoder) {
+                r = ca_encoder_enable_payload_digest(s->encoder, b);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->decoder) {
+                r = ca_decoder_enable_payload_digest(s->decoder, b);
+                if (r < 0)
+                        return r;
+        }
+
+        s->payload_digest = b;
+        return 1;
+}
+
+int ca_sync_enable_hardlink_digest(CaSync *s, bool b) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+
+        if (s->hardlink_digest == b)
+                return 0;
+
+        if (s->encoder) {
+                r = ca_encoder_enable_hardlink_digest(s->encoder, b);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->decoder) {
+                r = ca_decoder_enable_hardlink_digest(s->decoder, b);
+                if (r < 0)
+                        return r;
+        }
+
+        s->hardlink_digest = b;
+        return 1;
 }

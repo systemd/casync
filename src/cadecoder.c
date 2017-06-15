@@ -17,6 +17,7 @@
 #include "caformat.h"
 #include "cautil.h"
 #include "def.h"
+#include "gcrypt-util.h"
 #include "realloc-buffer.h"
 #include "reflink.h"
 #include "rm-rf.h"
@@ -204,6 +205,13 @@ struct CaDecoder {
 
         uid_t uid_shift;
         uid_t uid_range; /* uid_range == 0 means "full range" */
+
+        gcry_md_hd_t archive_digest;
+        gcry_md_hd_t payload_digest;
+        gcry_md_hd_t hardlink_digest;
+
+        bool payload_digest_invalid:1;
+        bool hardlink_digest_invalid:1;
 };
 
 static inline bool CA_DECODER_IS_SEEKING(CaDecoder *d) {
@@ -372,6 +380,10 @@ CaDecoder *ca_decoder_unref(CaDecoder *d) {
         free(d->seek_path);
 
         safe_close(d->boundary_fd);
+
+        gcry_md_close(d->archive_digest);
+        gcry_md_close(d->payload_digest);
+        gcry_md_close(d->hardlink_digest);
 
         free(d);
 
@@ -2141,6 +2153,18 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         ca_decoder_enter_state(d, CA_DECODER_ENTRY);
         d->step_size = offset;
 
+        if (d->archive_digest)
+                gcry_md_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+        if (d->payload_digest) {
+                gcry_md_reset(d->payload_digest);
+                d->payload_digest_invalid = false;
+        }
+        if (d->hardlink_digest) {
+                gcry_md_reset(d->hardlink_digest);
+                gcry_md_write(d->hardlink_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                d->hardlink_digest_invalid = false;
+        }
+
         return CA_DECODER_NEXT_FILE;
 }
 
@@ -2319,6 +2343,13 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
 
                 d->step_size = l;
 
+                if (d->archive_digest) {
+                        if (arrived)
+                                gcry_md_reset(d->archive_digest);
+                        if (!seek_continues)
+                                gcry_md_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                }
+
                 return arrived ? CA_DECODER_FOUND : CA_DECODER_STEP;
         }
 
@@ -2358,6 +2389,9 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
 
                 ca_decoder_enter_state(d, CA_DECODER_GOODBYE);
                 d->step_size = l;
+
+                if (d->archive_digest)
+                        gcry_md_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
 
                 return CA_DECODER_STEP;
 
@@ -3623,6 +3657,9 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
 
                 ca_decoder_enter_state(d, CA_DECODER_ENTERED);
 
+                if (d->archive_digest)
+                        gcry_md_reset(d->archive_digest);
+
                 return CA_DECODER_FOUND;
 
         case CA_DECODER_ENTRY: {
@@ -3674,6 +3711,13 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                         else
                                 d->step_size = MIN(realloc_buffer_size(&d->buffer), n->size - d->payload_offset);
 
+                        if (d->archive_digest)
+                                gcry_md_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                        if (d->payload_digest && !d->payload_digest_invalid)
+                                gcry_md_write(d->payload_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                        if (d->hardlink_digest && !d->hardlink_digest_invalid)
+                                gcry_md_write(d->hardlink_digest, realloc_buffer_data(&d->buffer), d->step_size);
+
                         return CA_DECODER_PAYLOAD;
                 }
 
@@ -3693,7 +3737,7 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 }
 
                 /* If the caller doesn't want the payload, and we don't need it either, but know how large it is, then let's skip over it */
-                if (!d->payload && n->size != UINT64_MAX && n->fd < 0) {
+                if (!d->payload && !d->payload_digest && n->fd < 0 && n->size != UINT64_MAX) {
 
                         d->skip_bytes = n->size - d->payload_offset;
                         ca_decoder_enter_state(d, CA_DECODER_SKIPPING);
@@ -3780,6 +3824,10 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 d->payload_offset = d->seek_offset;
                 ca_decoder_reset_seek(d);
 
+                if (d->archive_digest)
+                        gcry_md_reset(d->archive_digest);
+                d->payload_digest_invalid = d->hardlink_digest_invalid = true;
+
                 return ca_decoder_step_node(d, n);
 
         case CA_DECODER_PREPARING_SEEK_TO_FILENAME:
@@ -3811,6 +3859,16 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 ca_decoder_enter_state(d, CA_DECODER_IN_PAYLOAD);
                 d->payload_offset = d->seek_payload;
                 ca_decoder_reset_seek(d);
+
+                if (d->archive_digest)
+                        gcry_md_reset(d->archive_digest);
+                if (d->payload_digest) {
+
+                        d->payload_digest_invalid = d->payload_offset > 0;
+                        if (!d->payload_digest_invalid)
+                                gcry_md_reset(d->payload_digest);
+                }
+                d->hardlink_digest_invalid = true;
 
                 return ca_decoder_step_node(d, n);
 
@@ -4524,6 +4582,8 @@ int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset) {
 
         ca_decoder_enter_state(d, CA_DECODER_PREPARING_SEEK_TO_OFFSET);
 
+        d->payload_digest_invalid = d->hardlink_digest_invalid = true;
+
         return 0;
 }
 
@@ -4793,5 +4853,115 @@ int ca_decoder_current_archive_offset(CaDecoder *d, uint64_t *ret) {
                 return -EINVAL;
 
         *ret = d->archive_offset;
+        return 0;
+}
+
+int ca_decoder_enable_archive_digest(CaDecoder *d, bool b) {
+        if (!d)
+                return -EINVAL;
+
+        return allocate_sha256_digest(&d->archive_digest, b);
+}
+
+int ca_decoder_enable_payload_digest(CaDecoder *d, bool b) {
+        if (!d)
+                return -EINVAL;
+
+        return allocate_sha256_digest(&d->payload_digest, b);
+}
+
+int ca_decoder_enable_hardlink_digest(CaDecoder *d, bool b) {
+        if (!d)
+                return -EINVAL;
+
+        return allocate_sha256_digest(&d->hardlink_digest, b);
+}
+
+int ca_decoder_get_archive_digest(CaDecoder *d, CaChunkID *ret) {
+        const void *q;
+
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!d->archive_digest)
+                return -ENOMEDIUM;
+        if (d->state != CA_DECODER_EOF)
+                return -EBUSY;
+
+        q = gcry_md_read(d->archive_digest, GCRY_MD_SHA256);
+        if (!q)
+                return -EIO;
+
+        memcpy(ret, q, sizeof(CaChunkID));
+        return 0;
+}
+
+int ca_decoder_get_payload_digest(CaDecoder *d, CaChunkID *ret) {
+        CaDecoderNode *n;
+        const void *q;
+        mode_t mode;
+
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!d->payload_digest)
+                return -ENOMEDIUM;
+        if (d->state != CA_DECODER_FINALIZE)
+                return -EBUSY;
+        if (d->payload_digest_invalid)
+                return -ESTALE;
+
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
+        mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -ENODATA;
+        if (!S_ISREG(mode) && !S_ISBLK(mode))
+                return -ENOTTY;
+
+        q = gcry_md_read(d->payload_digest, GCRY_MD_SHA256);
+        if (!q)
+                return -EIO;
+
+        memcpy(ret, q, sizeof(CaChunkID));
+        return 0;
+}
+
+int ca_decoder_get_hardlink_digest(CaDecoder *d, CaChunkID *ret) {
+        CaDecoderNode *n;
+        const void *q;
+        mode_t mode;
+
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!d->hardlink_digest)
+                return -ENOMEDIUM;
+        if (d->state != CA_DECODER_FINALIZE)
+                return -EBUSY;
+        if (d->hardlink_digest_invalid)
+                return -ESTALE;
+
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
+        mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -ENODATA;
+        if (S_ISDIR(mode))
+                return -EISDIR;
+
+        q = gcry_md_read(d->hardlink_digest, GCRY_MD_SHA256);
+        if (!q)
+                return -EIO;
+
+        memcpy(ret, q, sizeof(CaChunkID));
         return 0;
 }

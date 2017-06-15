@@ -30,6 +30,7 @@ int main(int argc, char *argv[]) {
         assert_se(base_fd >= 0);
         assert_se(ca_sync_set_base_fd(s, base_fd) >= 0);
 
+        assert_se(ca_sync_enable_archive_digest(s, true) >= 0);
         assert_se(ca_sync_set_store_path(s, teststore) >= 0);
         assert_se(ca_sync_set_index_path(s, testindex) >= 0);
 
@@ -40,7 +41,7 @@ int main(int argc, char *argv[]) {
                 switch (r) {
 
                 case CA_SYNC_FINISHED: {
-                        assert_se(ca_sync_get_digest(s, &digest) >= 0);
+                        assert_se(ca_sync_get_archive_digest(s, &digest) >= 0);
                         printf("%s\n", ca_chunk_id_format(&digest, t));
                         goto step2;
                 }
@@ -66,6 +67,7 @@ step2:
         assert_se(base_fd >= 0);
         assert_se(ca_sync_set_base_fd(s, base_fd) >= 0);
 
+        assert_se(ca_sync_enable_archive_digest(s, true) >= 0);
         assert_se(ca_sync_set_store_path(s, teststore) >= 0);
         assert_se(ca_sync_set_index_path(s, testindex) >= 0);
 
@@ -76,7 +78,7 @@ step2:
                 switch (r) {
 
                 case CA_SYNC_FINISHED: {
-                        assert_se(ca_sync_get_digest(s, &digest) >= 0);
+                        assert_se(ca_sync_get_archive_digest(s, &digest) >= 0);
                         printf("%s\n", ca_chunk_id_format(&digest, t));
                         goto finish;
                 }

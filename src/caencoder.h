@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <sys/types.h>
 
+#include "cachunkid.h"
 #include "cacommon.h"
 #include "calocation.h"
 
@@ -58,5 +59,13 @@ int ca_encoder_current_archive_offset(CaEncoder *e, uint64_t *ret);
 int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret);
 
 int ca_encoder_seek_location(CaEncoder *e, CaLocation *location);
+
+int ca_encoder_enable_archive_digest(CaEncoder *e, bool b);
+int ca_encoder_enable_payload_digest(CaEncoder *e, bool b);
+int ca_encoder_enable_hardlink_digest(CaEncoder *e, bool b);
+
+int ca_encoder_get_archive_digest(CaEncoder *e, CaChunkID *ret);
+int ca_encoder_get_hardlink_digest(CaEncoder *e, CaChunkID *ret);
+int ca_encoder_get_payload_digest(CaEncoder *e, CaChunkID *ret);
 
 #endif

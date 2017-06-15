@@ -23,13 +23,14 @@
 #include "caencoder.h"
 #include "caformat-util.h"
 #include "caformat.h"
+#include "camakebst.h"
 #include "cautil.h"
 #include "def.h"
 #include "fssize.h"
+#include "gcrypt-util.h"
 #include "realloc-buffer.h"
 #include "siphash24.h"
 #include "util.h"
-#include "camakebst.h"
 
 /* #undef EINVAL */
 /* #define EINVAL __LINE__ */
@@ -160,6 +161,13 @@ struct CaEncoder {
 
         uid_t uid_shift;
         uid_t uid_range; /* uid_range == 0 means "full range" */
+
+        gcry_md_hd_t archive_digest;
+        gcry_md_hd_t payload_digest;
+        gcry_md_hd_t hardlink_digest;
+
+        bool payload_digest_invalid:1;
+        bool hardlink_digest_invalid:1;
 };
 
 CaEncoder *ca_encoder_new(void) {
@@ -251,6 +259,10 @@ CaEncoder *ca_encoder_unref(CaEncoder *e) {
         realloc_buffer_free(&e->buffer);
         realloc_buffer_free(&e->xattr_list_buffer);
         realloc_buffer_free(&e->xattr_value_buffer);
+
+        gcry_md_close(e->archive_digest);
+        gcry_md_close(e->payload_digest);
+        gcry_md_close(e->hardlink_digest);
 
         free(e);
 
@@ -1686,6 +1698,16 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
 
                 /* We just entered this node. In this case, generate the ENTRY record for it */
 
+                if (e->payload_digest) {
+                        gcry_md_reset(e->payload_digest);
+                        e->payload_digest_invalid = false;
+                }
+
+                if (e->hardlink_digest) {
+                        gcry_md_reset(e->hardlink_digest);
+                        e->hardlink_digest_invalid = false;
+                }
+
                 r = ca_encoder_collect_covering_feature_flags(e, n);
                 if (r < 0)
                         return r;
@@ -2499,6 +2521,13 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
                 return 0;
         }
 
+        if (e->archive_digest)
+                gcry_md_write(e->archive_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
+        if (e->hardlink_digest && !e->hardlink_digest_invalid && IN_SET(e->state, CA_ENCODER_ENTRY, CA_ENCODER_IN_PAYLOAD))
+                gcry_md_write(e->hardlink_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
+        if (e->payload_digest && !e->payload_digest_invalid && e->state == CA_ENCODER_IN_PAYLOAD)
+                gcry_md_write(e->payload_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
+
         *ret = realloc_buffer_data(&e->buffer);
         *ret_size = realloc_buffer_size(&e->buffer);
 
@@ -3149,6 +3178,18 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 realloc_buffer_empty(&e->buffer);
 
+                if (e->archive_digest)
+                        gcry_md_reset(e->archive_digest);
+
+                if (e->payload_digest) {
+                        gcry_md_reset(e->payload_digest);
+                        e->payload_digest_invalid = false;
+                }
+
+                e->hardlink_digest_invalid = location->offset > 0;
+                if (e->hardlink_digest && !e->hardlink_digest_invalid)
+                        gcry_md_reset(e->hardlink_digest);
+
                 return CA_ENCODER_DATA;
 
         case CA_LOCATION_PAYLOAD: {
@@ -3184,6 +3225,14 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 realloc_buffer_empty(&e->buffer);
 
+                if (e->archive_digest)
+                        gcry_md_reset(e->archive_digest);
+
+                e->payload_digest_invalid = location->offset > 0;
+                if (e->payload_digest && !e->payload_digest_invalid)
+                        gcry_md_reset(e->payload_digest);
+
+                e->hardlink_digest_invalid = true;
                 return CA_ENCODER_PAYLOAD;
         }
 
@@ -3205,6 +3254,9 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                 e->archive_offset = UINT64_MAX;
 
                 realloc_buffer_empty(&e->buffer);
+
+                if (e->archive_digest)
+                        gcry_md_reset(e->archive_digest);
 
                 return CA_ENCODER_DATA;
 
@@ -3233,6 +3285,9 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 realloc_buffer_empty(&e->buffer);
 
+                if (e->archive_digest)
+                        gcry_md_reset(e->archive_digest);
+
                 return CA_ENCODER_DATA;
 
         default:
@@ -3255,5 +3310,111 @@ int ca_encoder_set_uid_range(CaEncoder *e, uid_t u) {
                 return -EINVAL;
 
         e->uid_range = u;
+        return 0;
+}
+
+int ca_encoder_enable_archive_digest(CaEncoder *e, bool b) {
+        if (!e)
+                return -EINVAL;
+
+        return allocate_sha256_digest(&e->archive_digest, b);
+}
+
+int ca_encoder_enable_payload_digest(CaEncoder *e, bool b) {
+        if (!e)
+                return -EINVAL;
+
+        return allocate_sha256_digest(&e->payload_digest, b);
+}
+
+int ca_encoder_enable_hardlink_digest(CaEncoder *e, bool b) {
+        if (!e)
+                return -EINVAL;
+
+        return allocate_sha256_digest(&e->hardlink_digest, b);
+}
+
+int ca_encoder_get_archive_digest(CaEncoder *e, CaChunkID *ret) {
+        const void *q;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!e->archive_digest)
+                return -ENOMEDIUM;
+        if (e->state != CA_ENCODER_EOF)
+                return -EBUSY;
+
+        q = gcry_md_read(e->archive_digest, GCRY_MD_SHA256);
+        if (!q)
+                return -EIO;
+
+        memcpy(ret, q, sizeof(CaChunkID));
+
+        return 0;
+}
+
+int ca_encoder_get_payload_digest(CaEncoder *e, CaChunkID *ret) {
+        CaEncoderNode *n;
+        const void *q;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!e->payload_digest)
+                return -ENOMEDIUM;
+        if (e->state != CA_ENCODER_FINALIZE)
+                return -EBUSY;
+        if (e->payload_digest_invalid)
+                return -ESTALE;
+
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
+        if (!S_ISREG(n->stat.st_mode) && !S_ISBLK(n->stat.st_mode))
+                return -ENOTTY;
+
+        q = gcry_md_read(e->payload_digest, GCRY_MD_SHA256);
+        if (!q)
+                return -EIO;
+
+        memcpy(ret, q, sizeof(CaChunkID));
+
+        return 0;
+}
+
+int ca_encoder_get_hardlink_digest(CaEncoder *e, CaChunkID *ret) {
+        CaEncoderNode *n;
+        const void *q;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!e->hardlink_digest)
+                return -ENOMEDIUM;
+        if (e->state != CA_ENCODER_FINALIZE)
+                return -EBUSY;
+        if (e->hardlink_digest_invalid)
+                return -ESTALE;
+
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
+
+        if (S_ISDIR(n->stat.st_mode))
+                return -EISDIR;
+
+        q = gcry_md_read(e->hardlink_digest, GCRY_MD_SHA256);
+        if (!q)
+                return -EIO;
+
+        memcpy(ret, q, sizeof(CaChunkID));
+
         return 0;
 }

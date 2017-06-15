@@ -1,7 +1,6 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <gcrypt.h>
 #include <getopt.h>
 #include <signal.h>
 #include <stdio.h>
@@ -20,7 +19,6 @@
 #include "caremote.h"
 #include "castore.h"
 #include "casync.h"
-#include "gcrypt-util.h"
 #include "notify.h"
 #include "parse-util.h"
 #include "signal-handler.h"
@@ -1038,6 +1036,12 @@ static int verb_make(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
+        r = ca_sync_enable_archive_digest(s, true);
+        if (r < 0) {
+                fprintf(stderr, "Failed to enable archive digest: %s\n", strerror(-r));
+                goto finish;
+        }
+
         (void) send_notify("READY=1");
 
         for (;;) {
@@ -1061,7 +1065,7 @@ static int verb_make(int argc, char *argv[]) {
 
                         verbose_print_done_make(s);
 
-                        assert_se(ca_sync_get_digest(s, &digest) >= 0);
+                        assert_se(ca_sync_get_archive_digest(s, &digest) >= 0);
                         printf("%s\n", ca_chunk_id_format(&digest, t));
 
                         r = 0;
@@ -1472,28 +1476,6 @@ finish:
         return r;
 }
 
-static int do_print_digest(gcry_md_hd_t digest) {
-        const void *q;
-        char *h;
-
-        assert(digest);
-
-        q = gcry_md_read(digest, GCRY_MD_SHA256);
-        if (!q) {
-                fprintf(stderr, "Failed to read SHA256 sum.\n");
-                return -EINVAL;
-        }
-
-        h = hexmem(q, gcry_md_get_algo_dlen(GCRY_MD_SHA256));
-        if (!h)
-                return log_oom();
-
-        printf(" sha256digest=%s\n", h);
-        free(h);
-
-        return 0;
-}
-
 static int mtree_escape_full(const char *p, size_t l, char **ret) {
         const char *a;
         char *n, *b;
@@ -1543,8 +1525,6 @@ static int verb_list(int argc, char *argv[]) {
 
         ListOperation operation = _LIST_OPERATION_INVALID;
         const char *seek_path = NULL;
-        gcry_md_hd_t digest = NULL;
-        bool print_digest = false;
         int r, input_fd = -1;
         char *input = NULL;
         CaSync *s = NULL;
@@ -1735,8 +1715,7 @@ static int verb_list(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
-        if (streq(argv[0], "list") && operation != LIST_DIRECTORY) {
-                /* If we shall just list the archive contents we don't need the payload contents, hence let's skip over it */
+        if (operation != LIST_DIRECTORY) {
                 r = ca_sync_set_payload(s, false);
                 if (r < 0) {
                         fprintf(stderr, "Failed to enable skipping over payload: %s\n", strerror(-r));
@@ -1752,12 +1731,18 @@ static int verb_list(int argc, char *argv[]) {
                 }
         }
 
-        initialize_libgcrypt();
+        if (STR_IN_SET(argv[0], "mtree", "stat")) {
+                r = ca_sync_enable_payload_digest(s, true);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to enable payload digest: %s\n", strerror(-r));
+                        goto finish;
+                }
+        }
 
-        if (streq(argv[0], "mtree")) {
-                if (gcry_md_open(&digest, GCRY_MD_SHA256, 0) != 0) {
-                        fprintf(stderr, "Couldn't allocate SHA256 digest.\n");
-                        r = -EIO;
+        if (streq(argv[0], "stat")) {
+                r = ca_sync_enable_hardlink_digest(s, true);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to enable hardlink digest: %s\n", strerror(-r));
                         goto finish;
                 }
         }
@@ -1787,23 +1772,6 @@ static int verb_list(int argc, char *argv[]) {
                         r = 0;
                         goto finish;
 
-                case CA_SYNC_PAYLOAD: {
-                        const void *p;
-                        size_t sz;
-
-                        if (!digest)
-                                break;
-
-                        r = ca_sync_get_payload(s, &p, &sz);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to acquire payload: %s\n", strerror(-r));
-                                goto finish;
-                        }
-
-                        gcry_md_write(digest, p, sz);
-                        break;
-                }
-
                 case CA_SYNC_NEXT_FILE: {
                         char *path;
                         mode_t mode;
@@ -1824,7 +1792,6 @@ static int verb_list(int argc, char *argv[]) {
                                 char ls_mode[LS_FORMAT_MODE_MAX];
 
                                 printf("%s %s\n", ls_format_mode(mode, ls_mode), path);
-                                print_digest = false;
 
                                 if (!arg_recursive && toplevel_shown) {
                                         r = ca_sync_seek_next_sibling(s);
@@ -1938,11 +1905,7 @@ static int verb_list(int argc, char *argv[]) {
                                                mtime / UINT64_C(1000000000),
                                                mtime % UINT64_C(1000000000));
 
-                                print_digest = S_ISREG(mode);
-
-                                if (print_digest)
-                                        gcry_md_reset(digest);
-                                else
+                                if (!S_ISREG(mode)) /* End this in a newline — unless this is a regular file, in which case we'll print the payload checksum shortly */
                                         putchar('\n');
                         } else {
                                 const char *target = NULL, *user = NULL, *group = NULL;
@@ -1990,7 +1953,7 @@ static int verb_list(int argc, char *argv[]) {
                                         printf("FileAttr: %s\n", strna(ls_format_chattr(flags, ls_flags)));
 
                                 if (fat_attrs != (uint32_t) -1)
-                                        printf("FATAttrs: %s\n", strna(ls_format_fat_attrs(fat_attrs, ls_fat_attrs)));
+                                        printf(" FATAttr: %s\n", strna(ls_format_fat_attrs(fat_attrs, ls_fat_attrs)));
 
                                 if (offset != UINT64_MAX)
                                         printf("  Offset: %" PRIu64 "\n", offset);
@@ -2102,27 +2065,59 @@ static int verb_list(int argc, char *argv[]) {
                                         r = ca_sync_current_xattr(s, CA_ITERATE_NEXT, &xname, &xvalue, &xsize);
                                 }
 
-                                r = 0;
-                                goto finish;
+                                if (S_ISDIR(mode)) {
+                                        /* If this is a directory, we are done now. Otherwise, continue so that we can show the payload and hardlink digests */
+                                        r = 0;
+                                        goto finish;
+                                }
                         }
 
                         free(path);
                         break;
                 }
 
-                case CA_SYNC_DONE_FILE:
+                case CA_SYNC_DONE_FILE: {
+                        mode_t mode;
 
-                        if (print_digest) {
-                                r = do_print_digest(digest);
-                                if (r < 0)
-                                        goto finish;
+                        r = ca_sync_current_mode(s, &mode);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to query current mode: %s\n", strerror(-r));
+                                goto finish;
+                        }
 
-                                print_digest = false;
+                        if (streq(argv[0], "mtree") && S_ISREG(mode)) {
+                                CaChunkID digest;
+                                char v[CA_CHUNK_ID_FORMAT_MAX];
+
+                                r = ca_sync_get_payload_digest(s, &digest);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to read SHA256 sum.\n");
+                                        return -EINVAL;
+                                }
+
+                                printf(" sha256digest=%s\n", ca_chunk_id_format(&digest, v));
+
+                        } else if (streq(argv[0], "stat") && !S_ISDIR(mode)) {
+                                CaChunkID payload_digest, hardlink_digest;
+                                char v[CA_CHUNK_ID_FORMAT_MAX];
+
+                                r = ca_sync_get_payload_digest(s, &payload_digest);
+                                if (r >= 0)
+                                        printf("  Digest: %s\n", ca_chunk_id_format(&payload_digest, v));
+
+                                r = ca_sync_get_hardlink_digest(s, &hardlink_digest);
+                                if (r >= 0)
+                                        printf("HLDigest: %s\n", ca_chunk_id_format(&hardlink_digest, v));
+
+                                r = 0;
+                                goto finish;
                         }
 
                         break;
+                }
 
                 case CA_SYNC_STEP:
+                case CA_SYNC_PAYLOAD:
                 case CA_SYNC_SEED_NEXT_FILE:
                 case CA_SYNC_SEED_DONE_FILE:
                 case CA_SYNC_POLL:
@@ -2146,12 +2141,6 @@ static int verb_list(int argc, char *argv[]) {
         }
 
 finish:
-        if (print_digest)
-                putchar('\n');
-
-        if (digest)
-                gcry_md_close(digest);
-
         ca_sync_unref(s);
 
         if (input_fd >= 3)
@@ -2374,6 +2363,12 @@ static int verb_digest(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
+        r = ca_sync_enable_archive_digest(s, true);
+        if (r < 0) {
+                fprintf(stderr, "Failed to enable archive digest: %s\n", strerror(-r));
+                goto finish;
+        }
+
         if (seek_path) {
                 r = ca_sync_seek_path(s, seek_path);
                 if (r < 0) {
@@ -2407,7 +2402,7 @@ static int verb_digest(int argc, char *argv[]) {
                         CaChunkID digest;
                         char t[CA_CHUNK_ID_FORMAT_MAX];
 
-                        assert_se(ca_sync_get_digest(s, &digest) >= 0);
+                        assert_se(ca_sync_get_archive_digest(s, &digest) >= 0);
                         printf("%s\n", ca_chunk_id_format(&digest, t));
                         r = 0;
                         goto finish;

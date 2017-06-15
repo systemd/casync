@@ -99,7 +99,6 @@ int ca_sync_current_chattr(CaSync *sync, unsigned *ret);
 int ca_sync_current_fat_attrs(CaSync *sync, uint32_t *ret);
 int ca_sync_current_xattr(CaSync *sync, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size);
 
-int ca_sync_get_digest(CaSync *s, CaChunkID *ret);
 int ca_sync_get_archive_size(CaSync *s, uint64_t *ret);
 
 /* Low level chunk access */
@@ -128,5 +127,13 @@ int ca_sync_get_payload(CaSync *s, const void **ret, size_t *ret_size);
 
 int ca_sync_get_punch_holes_bytes(CaSync *s, uint64_t *ret);
 int ca_sync_get_reflink_bytes(CaSync *s, uint64_t *ret);
+
+int ca_sync_enable_hardlink_digest(CaSync *s, bool b);
+int ca_sync_enable_payload_digest(CaSync *s, bool b);
+int ca_sync_enable_archive_digest(CaSync *s, bool b);
+
+int ca_sync_get_archive_digest(CaSync *s, CaChunkID *ret);
+int ca_sync_get_payload_digest(CaSync *s, CaChunkID *ret);
+int ca_sync_get_hardlink_digest(CaSync *s, CaChunkID *ret);
 
 #endif
