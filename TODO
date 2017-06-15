@@ -1,5 +1,4 @@
 BEFORE FIRST BLOG STORY:
-* hardlink from seed
 * replace adler32 by something better (buzhash)
 
 LATER:
@@ -41,3 +40,4 @@ LATER:
 * maybe turn "recursive" mode into a numeric value specifying how far to descend?
 * make "casync stat" work on a directory with a subpath
 * when issuing "casync digest" on an index file, read the digest directly from the index file cheaply
+* ensure that reflinks work fine if we sync raw files
