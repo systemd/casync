@@ -119,8 +119,13 @@ int main(int argc, char *argv[]) {
                 new_stdout = open("/dev/tty", O_WRONLY);
                 if (new_stdout < 0) {
                         r = -errno;
-                        fprintf(stderr, "Failed to open new STDOUT: %s\n", strerror(-r));
-                        goto inner_fail;
+
+                        /* If that didn't work (which it won't if we are being run from "ninja test"), then let's use /dev/null */
+                        new_stdout = open("/dev/null", O_WRONLY);
+                        if (new_stdout < 0) {
+                                fprintf(stderr, "Failed to open new STDOUT: %s\n", strerror(-r));
+                                goto inner_fail;
+                        }
                 }
 
                 if (new_stdout != STDOUT_FILENO) {
