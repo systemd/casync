@@ -109,6 +109,7 @@ typedef struct CaDecoderNode {
         size_t n_dirents_allocated;
 
         bool dirents_invalid;
+        bool hardlinked;
 } CaDecoderNode;
 
 typedef enum CaDecoderState {
@@ -196,12 +197,14 @@ struct CaDecoder {
 
         bool punch_holes:1;
         bool reflink:1;
+        bool hardlink:1;
         bool delete:1;
         bool payload:1;
         bool undo_immutable:1;
 
         uint64_t n_punch_holes_bytes;
         uint64_t n_reflink_bytes;
+        uint64_t n_hardlink_bytes;
 
         uid_t uid_shift;
         uid_t uid_range; /* uid_range == 0 means "full range" */
@@ -351,6 +354,8 @@ static void ca_decoder_node_free(CaDecoderNode *n) {
         n->dirents = strv_free(n->dirents);
         n->n_dirents = n->n_dirents_allocated = 0;
         n->dirents_invalid = false;
+
+        n->hardlinked = false;
 }
 
 static void ca_decoder_flush_nodes(CaDecoder *d, size_t leave) {
@@ -3133,6 +3138,68 @@ finish:
         return r;
 }
 
+static int ca_decoder_install_file(CaDecoder *d, int dir_fd, const char *temporary_name, const char *name) {
+        int r;
+
+        assert(d);
+        assert(dir_fd >= 0);
+        assert(temporary_name);
+        assert(name);
+
+        r = renameat(dir_fd, temporary_name, dir_fd, name) < 0 ? -errno : 0;
+        if (r == -EPERM && d->undo_immutable) {
+                /* Renaming the file failed. This could be because the "immutable" flag was set on the destination. Let's see if we can drop that */
+                r = drop_immutable(dir_fd, name);
+                if (r < 0)
+                        return r;
+                if (r == 0) /* Couldn't change? Then propagate the EPERM */
+                        r = -EPERM;
+                else /* try again... */
+                        r = renameat(dir_fd, temporary_name, dir_fd, name) < 0 ? -errno : 0;
+        }
+
+        if (r < 0) {
+                if (!IN_SET(r, -ENOTDIR, -EISDIR))
+                        return r;
+
+                /* The destination exists already, and we couldn't rename the file overriding it. This most likely
+                 * happened because we tried to move a directory over a regular file or vice versa. Let's now try to
+                 * swap the temporary file and the destination. If that works, we can remove the temporary file, and
+                 * expose atomic behaviour to the outside. */
+
+                r = renameat2(dir_fd, temporary_name, dir_fd, name, RENAME_EXCHANGE) < 0 ? -errno : 0;
+                if (r == -EPERM && d->undo_immutable) {
+                        /* EPERM could mean the immutable flag was set on the destination, let's see if we can drop that. */
+                        r = drop_immutable(dir_fd, name);
+                        if (r < 0)
+                                return r;
+                        if (r == 0) /* Couldn't change? */
+                                r = -EPERM;
+                        else
+                                r = renameat2(dir_fd, temporary_name, dir_fd, name, RENAME_EXCHANGE) < 0 ? -errno : 0;
+                }
+                if (r < 0) {
+
+                        /* If that didn't work (kernel too old?), then let's remove the destination first, and
+                         * then try again. Of course in this mode we lose atomicity, but it's the best we can
+                         * do */
+
+                        (void) rm_rf_at(dir_fd, name, REMOVE_ROOT|REMOVE_PHYSICAL|(d->undo_immutable ? REMOVE_UNDO_IMMUTABLE : 0));
+
+                        if (renameat(dir_fd, temporary_name, dir_fd, name) < 0)
+                                return -errno;
+                } else {
+                        /* The exchange worked! In that case the temporary name is now the old version, let's remove it */
+
+                        r = rm_rf_at(dir_fd, temporary_name, REMOVE_ROOT|REMOVE_PHYSICAL|(d->undo_immutable ? REMOVE_UNDO_IMMUTABLE : 0));
+                        if (r < 0)
+                                return r;
+                }
+        }
+
+        return 0;
+}
+
 static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *child) {
         statfs_f_type_t magic = 0;
         const char *name;
@@ -3142,6 +3209,10 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
         assert(d);
         assert(child);
+
+        /* If the child got replaced by a hardlink to a seed file we don't need to finalize it. */
+        if (child->hardlinked)
+                return 0;
 
         /* Finalizes the file attributes on the specified child node. 'n' specifies it's parent, except for the special
          * case where we are processing the root direction of the serialization, where it is NULL. */
@@ -3511,55 +3582,9 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 /* Move the final result into place. Note that the chattr() file attributes we only apply after this,
                  * as they might make prohibit us from renaming the file (consider the "immutable" flag) */
 
-                r = renameat(dir_fd, child->temporary_name, dir_fd, child->name) < 0 ? -errno : 0;
-                if (r == -EPERM && d->undo_immutable) {
-                        /* Renaming the file failed. This could be because the "immutable" flag was set on the destination. Let's see if we can drop that */
-                        r = drop_immutable(dir_fd, child->name);
-                        if (r < 0)
-                                return r;
-                        if (r == 0) /* Couldn't change? Then propagate the EPERM */
-                                r = -EPERM;
-                        else /* try again... */
-                                r = renameat(dir_fd, child->temporary_name, dir_fd, child->name) < 0 ? -errno : 0;
-                }
-                if (r < 0) {
-                        if (!IN_SET(r, -ENOTDIR, -EISDIR))
-                                return r;
-
-                        /* The destination exists already, and we couldn't rename the file overriding it. This most
-                         * likely happened because we tried to move a directory over a regular file or vice
-                         * versa. Let's now try to swap the temporary file and the destination. If that works, we can
-                         * remove the temporary file, and expose atomic behaviour to the outside. */
-
-                        r = renameat2(dir_fd, child->temporary_name, dir_fd, child->name, RENAME_EXCHANGE) < 0 ? -errno : 0;
-                        if (r == -EPERM && d->undo_immutable) {
-                                /* EPERM could mean the immutable flag was set on the destination, let's see if we can drop that. */
-                                r = drop_immutable(dir_fd, child->name);
-                                if (r < 0)
-                                        return r;
-                                if (r == 0) /* Couldn't change? */
-                                        r = -EPERM;
-                                else
-                                        r = renameat2(dir_fd, child->temporary_name, dir_fd, child->name, RENAME_EXCHANGE) < 0 ? -errno : 0;
-                        }
-                        if (r < 0) {
-
-                                /* If that didn't work (kernel too old?), then let's remove the destination first, and
-                                 * then try again. Of course in this mode we lose atomicity, but it's the best we can
-                                 * do */
-
-                                (void) rm_rf_at(dir_fd, child->name, REMOVE_ROOT|REMOVE_PHYSICAL|(d->undo_immutable ? REMOVE_UNDO_IMMUTABLE : 0));
-
-                                if (renameat(dir_fd, child->temporary_name, dir_fd, child->name) < 0)
-                                        return -errno;
-                        } else {
-                                /* The exchange worked! In that case the temporary name is now the old version, let's remove it */
-
-                                r = rm_rf_at(dir_fd, child->temporary_name, REMOVE_ROOT|REMOVE_PHYSICAL|(d->undo_immutable ? REMOVE_UNDO_IMMUTABLE : 0));
-                                if (r < 0)
-                                        return r;
-                        }
-                }
+                r = ca_decoder_install_file(d, dir_fd, child->temporary_name, child->name);
+                if (r < 0)
+                        return r;
 
                 child->temporary_name = mfree(child->temporary_name);
                 name = child->name;
@@ -4777,6 +4802,15 @@ int ca_decoder_set_reflink(CaDecoder *d, bool enabled) {
         return 0;
 }
 
+int ca_decoder_set_hardlink(CaDecoder *d, bool enabled) {
+
+        if (!d)
+                return -EINVAL;
+
+        d->hardlink = enabled;
+        return 0;
+}
+
 int ca_decoder_set_delete(CaDecoder *d, bool enabled) {
 
         if (!d)
@@ -4827,6 +4861,19 @@ int ca_decoder_get_reflink_bytes(CaDecoder *d, uint64_t *ret) {
                 return -ENODATA;
 
         *ret = d->n_reflink_bytes;
+        return 0;
+}
+
+int ca_decoder_get_hardlink_bytes(CaDecoder *d, uint64_t *ret) {
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!d->hardlink)
+                return -ENODATA;
+
+        *ret = d->n_hardlink_bytes;
         return 0;
 }
 
@@ -4964,4 +5011,140 @@ int ca_decoder_get_hardlink_digest(CaDecoder *d, CaChunkID *ret) {
 
         memcpy(ret, q, sizeof(CaChunkID));
         return 0;
+}
+
+static mode_t ca_decoder_mode_mask(CaDecoder *d) {
+        assert(d);
+
+        if (d->feature_flags & CA_FORMAT_WITH_PERMISSIONS)
+                return 07777;
+
+        if (d->feature_flags & CA_FORMAT_WITH_READ_ONLY)
+                return 00200;
+
+        return 0;
+}
+
+int ca_decoder_try_hardlink(CaDecoder *d, CaFileRoot *root, const char *path) {
+        CaDecoderNode *n, *parent;
+        struct stat st;
+        mode_t mode;
+        int r, dir_fd;
+
+        if (!d)
+                return -EINVAL;
+        if (!root)
+                return -EINVAL;
+        if (!path)
+                return -EINVAL;
+
+        if (d->state != CA_DECODER_FINALIZE)
+                return -EBUSY;
+        if (!d->hardlink)
+                return 0;
+
+        parent = ca_decoder_current_parent_node(d);
+        if (!parent)
+                return -EUNATCH;
+        if (parent->fd < 0)
+                return 0;
+
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
+
+        mode = ca_decoder_node_mode(n);
+        if (mode == (mode_t) -1)
+                return -EUNATCH;
+        if (!S_ISREG(mode))
+                return -ENOTTY;
+
+        if (fstatat(root->fd, path, &st, AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW) < 0) {
+                if (errno == ENOENT) /* vanished by now? */
+                        return 0;
+
+                return -errno;
+        }
+
+        /* Before we put the symlink in place, make some superficial checks if the node is still the same as when we
+         * generated the seed for it. */
+
+        if (!S_ISREG(st.st_mode)) /* Not a regular file anymore? */
+                return 0;
+        if ((uint64_t) st.st_size != n->size)
+                return 0;
+
+        if (((st.st_mode ^ mode) & ca_decoder_mode_mask(d)) != 0)
+                return 0;
+
+        assert(n->entry);
+
+        if ((d->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) &&
+            (st.st_uid != read_le64(&n->entry->uid) || st.st_gid != read_le64(&n->entry->gid)))
+                return 0;
+
+        if (d->feature_flags & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_NSEC_TIME|CA_FORMAT_WITH_2SEC_TIME)) {
+                uint64_t granularity;
+
+                r = ca_feature_flags_time_granularity_nsec(d->feature_flags, &granularity);
+                if (r < 0)
+                        return r;
+
+                if (timespec_to_nsec(st.st_mtim) / granularity != read_le64(&n->entry->mtime) / granularity)
+                        return 0;
+        }
+
+        dir_fd = ca_decoder_node_get_fd(d, parent);
+        if (dir_fd < 0)
+                return dir_fd;
+
+        if (linkat(root->fd, path, dir_fd, n->name, 0) < 0) {
+                char *t;
+
+                /* NB: If a file system doesn't support hardlinks, it will return EPERM, yuck! */
+                if (IN_SET(errno, EXDEV, EMLINK, EPERM))
+                        return 0;
+
+                if (errno != EEXIST)
+                        return -errno;
+
+                /* The file exists already. In that case, let's link it as temporary file first, and then rename it
+                 * (which makes the replacement nicely atomic) */
+
+                r = tempfn_random(n->name, &t);
+                if (r < 0)
+                        return r;
+
+                if (linkat(root->fd, path, dir_fd, t, 0) < 0) {
+                        free(t);
+
+                        if (IN_SET(errno, EXDEV, EMLINK, EPERM))
+                                return 0;
+
+                        return -errno;
+                }
+
+                r = ca_decoder_install_file(d, dir_fd, t, n->name);
+                if (r < 0) {
+                        (void) unlinkat(dir_fd, t, 0);
+                        free(t);
+                        return r;
+                }
+
+                free(t);
+        }
+
+        /* All good. Let's remove the file we just wrote, we don't need it if we managed to create the hard link */
+        assert(n->temporary_name);
+        if (unlinkat(dir_fd, n->temporary_name, 0) < 0)
+                return -errno;
+
+        n->temporary_name = mfree(n->temporary_name);
+        n->fd = safe_close(n->fd);
+
+        n->hardlinked = true;
+
+        d->n_hardlink_bytes += st.st_size;
+
+        return 1;
 }

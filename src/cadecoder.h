@@ -39,6 +39,7 @@ int ca_decoder_get_feature_flags(CaDecoder *d, uint64_t *ret);
 /* Various booleans to configure the mode of operation */
 int ca_decoder_set_punch_holes(CaDecoder *d, bool enabled);
 int ca_decoder_set_reflink(CaDecoder *d, bool enabled);
+int ca_decoder_set_hardlink(CaDecoder *d, bool enabled);
 int ca_decoder_set_delete(CaDecoder *d, bool enabled);
 int ca_decoder_set_payload(CaDecoder *d, bool enabled);
 int ca_decoder_set_undo_immutable(CaDecoder *d, bool enabled);
@@ -101,6 +102,7 @@ int ca_decoder_seek_next_sibling(CaDecoder *d);
 /* Statistics */
 int ca_decoder_get_punch_holes_bytes(CaDecoder *d, uint64_t *ret);
 int ca_decoder_get_reflink_bytes(CaDecoder *d, uint64_t *ret);
+int ca_decoder_get_hardlink_bytes(CaDecoder *d, uint64_t *ret);
 
 int ca_decoder_current_archive_offset(CaDecoder *d, uint64_t *ret);
 
@@ -111,5 +113,7 @@ int ca_decoder_enable_hardlink_digest(CaDecoder *d, bool b);
 int ca_decoder_get_archive_digest(CaDecoder *d, CaChunkID *ret);
 int ca_decoder_get_hardlink_digest(CaDecoder *d, CaChunkID *ret);
 int ca_decoder_get_payload_digest(CaDecoder *d, CaChunkID *ret);
+
+int ca_decoder_try_hardlink(CaDecoder *d, CaFileRoot *root, const char *path);
 
 #endif

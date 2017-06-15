@@ -32,6 +32,7 @@ struct CaSeed {
 
         bool ready;
         bool remove_cache;
+        bool hardlink;
 
         ReallocBuffer buffer;
         CaLocation *buffer_location;
@@ -184,6 +185,10 @@ static int ca_seed_open(CaSeed *s) {
                 if (r < 0)
                         return r;
 
+                r = ca_encoder_enable_hardlink_digest(s->encoder, s->hardlink);
+                if (r < 0)
+                        return r;
+
                 s->base_fd = -1;
         }
 
@@ -206,8 +211,8 @@ static int ca_seed_open(CaSeed *s) {
 }
 
 static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void *data, size_t l) {
-        const char *t, *four, *combined;
         char ids[CA_CHUNK_ID_FORMAT_MAX];
+        const char *t, *four, *combined;
         CaChunkID id;
         int r;
 
@@ -324,6 +329,69 @@ static int ca_seed_cache_final_chunk(CaSeed *s) {
         return 0;
 }
 
+static int ca_seed_cache_hardlink(CaSeed *s) {
+        const char *t, *four, *combined;
+        char v[CA_CHUNK_ID_FORMAT_MAX];
+        CaLocation *location = NULL;
+        char *path = NULL;
+        CaChunkID digest;
+        mode_t mode;
+        int r;
+
+        assert(s);
+
+        if (!s->hardlink)
+                return 0;
+        if (!s->encoder)
+                return -EUNATCH;
+
+        r = ca_encoder_current_mode(s->encoder, &mode);
+        if (r < 0)
+                return r;
+        if (!S_ISREG(mode))
+                return 0;
+
+        r = ca_encoder_get_hardlink_digest(s->encoder, &digest);
+        if (r < 0)
+                return r;
+
+        r = ca_encoder_current_path(s->encoder, &path);
+        if (r < 0)
+                return r;
+
+        r = ca_location_new(path, CA_LOCATION_ENTRY, 0, UINT64_MAX, &location);
+        free(path);
+        if (r < 0)
+                return r;
+
+        t = ca_location_format(location);
+        if (!t) {
+                r = -ENOMEM;
+                goto finish;
+        }
+
+        if (!ca_chunk_id_format(&digest, v)) {
+                r = -EINVAL;
+                goto finish;
+        }
+
+        four = strndupa(v, 4);
+        combined = strjoina(four, "/", v);
+
+        (void) mkdirat(s->cache_fd, four, 0777);
+
+        if (symlinkat(t, s->cache_fd, combined) < 0 && errno != EEXIST) {
+                r = -errno;
+                goto finish;
+        }
+
+        r = 0;
+
+finish:
+        ca_location_unref(location);
+        return r;
+}
+
 int ca_seed_step(CaSeed *s) {
         int r;
 
@@ -365,6 +433,12 @@ int ca_seed_step(CaSeed *s) {
                         if (r < 0)
                                 return r;
 
+                        if (step == CA_ENCODER_DONE_FILE) {
+                                r = ca_seed_cache_hardlink(s);
+                                if (r < 0)
+                                        return r;
+                        }
+
                         return step == CA_ENCODER_NEXT_FILE ? CA_SEED_NEXT_FILE :
                                 step == CA_ENCODER_DONE_FILE ? CA_SEED_DONE_FILE : CA_SEED_STEP;
 
@@ -398,7 +472,7 @@ int ca_seed_get(CaSeed *s,
         if (!ret_size)
                 return -EINVAL;
         if (s->cache_fd < 0)
-                return -EBUSY;
+                return -EUNATCH;
 
         if (!ca_chunk_id_format(chunk_id, id))
                 return -EINVAL;
@@ -417,7 +491,10 @@ int ca_seed_get(CaSeed *s,
         if (r < 0)
                 return r;
 
-        if (l->size == UINT64_MAX || l->size > s->chunker.chunk_size_max) {
+        if (l->size == UINT64_MAX) /* If the size is not specified, then this is a hardlink entry */
+                return -ENOENT;
+
+        if (l->size > s->chunker.chunk_size_max) {
                 ca_location_unref(l);
                 return -EINVAL;
         }
@@ -564,6 +641,60 @@ int ca_seed_has(CaSeed *s, const CaChunkID *chunk_id) {
         return 1;
 }
 
+int ca_seed_get_hardlink_target(
+                CaSeed *s,
+                const CaChunkID *id,
+                char **ret) {
+
+        char v[CA_CHUNK_ID_FORMAT_MAX];
+        const char *four, *combined;
+        CaLocation *l = NULL;
+        char *target;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!id)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+        if (s->cache_fd < 0)
+                return -EUNATCH;
+        if (!s->hardlink)
+                return -ENOMEDIUM;
+
+        if (!ca_chunk_id_format(id, v))
+                return -EINVAL;
+
+        four = strndupa(v, 4);
+        combined = strjoina(four, "/", v);
+
+        r = readlinkat_malloc(s->cache_fd, combined, &target);
+        if (r < 0)
+                return r;
+
+        r = ca_location_parse(target, &l);
+        free(target);
+        if (r < 0)
+                return r;
+
+        if (l->designator != CA_LOCATION_ENTRY ||
+            l->offset != 0 ||
+            l->size != UINT64_MAX) { /* If the size is specified, this this a normal chunk reference */
+                r = -ENOENT;
+                goto finish;
+        }
+
+        *ret = l->path;
+        l->path = NULL;
+
+        r = 0;
+
+finish:
+        ca_location_unref(l);
+        return r;
+}
+
 int ca_seed_current_path(CaSeed *seed, char **ret) {
         if (!seed)
                 return -EINVAL;
@@ -658,4 +789,24 @@ int ca_seed_get_file_root(CaSeed *s, CaFileRoot **ret) {
 
         *ret = s->root;
         return 0;
+}
+
+int ca_seed_set_hardlink(CaSeed *s, bool b) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+
+        if (s->hardlink == b)
+                return 0;
+
+        if (s->encoder) {
+                r = ca_encoder_enable_hardlink_digest(s->encoder, b);
+                if (r < 0)
+                        return r;
+        }
+
+        s->hardlink = b;
+
+        return 1;
 }

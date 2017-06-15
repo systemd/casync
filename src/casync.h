@@ -37,6 +37,7 @@ int ca_sync_get_covering_feature_flags(CaSync *s, uint64_t *ret);
 
 int ca_sync_set_punch_holes(CaSync *s, bool enabled);
 int ca_sync_set_reflink(CaSync *s, bool enabled);
+int ca_sync_set_hardlink(CaSync *s, bool enabled);
 int ca_sync_set_delete(CaSync *s, bool enabled);
 int ca_sync_set_payload(CaSync *s, bool enabled);
 int ca_sync_set_undo_immutable(CaSync *s, bool enabled);
@@ -127,6 +128,7 @@ int ca_sync_get_payload(CaSync *s, const void **ret, size_t *ret_size);
 
 int ca_sync_get_punch_holes_bytes(CaSync *s, uint64_t *ret);
 int ca_sync_get_reflink_bytes(CaSync *s, uint64_t *ret);
+int ca_sync_get_hardlink_bytes(CaSync *s, uint64_t *ret);
 
 int ca_sync_enable_hardlink_digest(CaSync *s, bool b);
 int ca_sync_enable_payload_digest(CaSync *s, bool b);

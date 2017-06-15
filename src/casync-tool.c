@@ -36,6 +36,7 @@ static bool arg_verbose = false;
 static bool arg_exclude_nodump = true;
 static bool arg_exclude_submounts = false;
 static bool arg_reflink = true;
+static bool arg_hardlink = false;
 static bool arg_punch_holes = true;
 static bool arg_delete = true;
 static bool arg_undo_immutable = false;
@@ -74,6 +75,7 @@ static void help(void) {
                "     --exclude-nodump=no     Don't exclude files with chattr(1)'s +d 'nodump' flag when creating archive\n"
                "     --exclude-submounts=yes Exclude submounts when creating archive\n"
                "     --reflink=no            Don't create reflinks from seeds when extracting\n"
+               "     --hardlink=yes          Create hardlinks from seeds when extracting\n"
                "     --punch-holes=no        Don't create sparse files when extracting\n"
                "     --delete=no             Don't delete existing files not listed in archive after extraction\n"
                "     --undo-immutable=yes    When removing existing files, undo chattr(1)'s +i 'immutable' flag when extracting\n"
@@ -149,6 +151,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_UNDO_IMMUTABLE,
                 ARG_PUNCH_HOLES,
                 ARG_REFLINK,
+                ARG_HARDLINK,
                 ARG_SEED_OUTPUT,
                 ARG_DELETE,
                 ARG_UID_SHIFT,
@@ -174,6 +177,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "delete",            required_argument, NULL, ARG_DELETE            },
                 { "punch-holes",       required_argument, NULL, ARG_PUNCH_HOLES       },
                 { "reflink",           required_argument, NULL, ARG_REFLINK           },
+                { "hardlink",          required_argument, NULL, ARG_HARDLINK          },
                 { "seed-output",       required_argument, NULL, ARG_SEED_OUTPUT       },
                 { "uid-shift",         required_argument, NULL, ARG_UID_SHIFT         },
                 { "uid-range",         required_argument, NULL, ARG_UID_RANGE         },
@@ -347,6 +351,16 @@ static int parse_argv(int argc, char *argv[]) {
                         }
 
                         arg_reflink = r;
+                        break;
+
+                case ARG_HARDLINK:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to parse --hardlink= parameter: %s\n", optarg);
+                                return r;
+                        }
+
+                        arg_hardlink = r;
                         break;
 
                 case ARG_DELETE:
@@ -780,6 +794,16 @@ static int verbose_print_done_extract(CaSync *s) {
                 }
 
                 fprintf(stderr, "Bytes cloned through reflinks: %" PRIu64 "\n", n_bytes);
+        }
+
+        r = ca_sync_get_hardlink_bytes(s, &n_bytes);
+        if (!IN_SET(r, -ENODATA, -ENOTTY)) {
+                if (r < 0) {
+                        fprintf(stderr, "Failed to determine number of hardlink bytes: %s\n", strerror(-r));
+                        return r;
+                }
+
+                fprintf(stderr, "Bytes cloned through hardlinks: %" PRIu64 "\n", n_bytes);
         }
 
         return 1;
@@ -1389,6 +1413,12 @@ static int verb_extract(int argc, char *argv[]) {
         r = ca_sync_set_reflink(s, arg_reflink);
         if (r < 0) {
                 fprintf(stderr, "Failed to configure reflinking: %s\n", strerror(-r));
+                goto finish;
+        }
+
+        r = ca_sync_set_hardlink(s, arg_hardlink);
+        if (r < 0) {
+                fprintf(stderr, "Failed to configure hardlinking: %s\n", strerror(-r));
                 goto finish;
         }
 

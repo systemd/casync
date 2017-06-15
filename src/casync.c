@@ -98,6 +98,7 @@ typedef struct CaSync {
 
         bool punch_holes:1;
         bool reflink:1;
+        bool hardlink:1;
         bool delete:1;
         bool payload:1;
         bool undo_immutable:1;
@@ -229,6 +230,29 @@ int ca_sync_set_reflink(CaSync *s, bool enabled) {
         }
 
         s->reflink = enabled;
+
+        return 0;
+}
+
+int ca_sync_set_hardlink(CaSync *s, bool enabled) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        if (s->decoder) {
+                r = ca_decoder_enable_hardlink_digest(s->decoder, s->hardlink_digest || enabled);
+                if (r < 0)
+                        return r;
+
+                r = ca_decoder_set_hardlink(s->decoder, enabled);
+                if (r < 0)
+                        return r;
+        }
+
+        s->hardlink = enabled;
 
         return 0;
 }
@@ -1076,6 +1100,7 @@ int ca_sync_add_seed_path(CaSync *s, const char *path) {
 }
 
 static int ca_sync_start(CaSync *s) {
+        size_t i;
         int r;
 
         assert(s);
@@ -1234,6 +1259,9 @@ static int ca_sync_start(CaSync *s) {
                 r = ca_decoder_set_reflink(s->decoder, s->reflink);
                 if (r < 0)
                         return r;
+                r = ca_decoder_set_hardlink(s->decoder, s->hardlink);
+                if (r < 0)
+                        return r;
                 r = ca_decoder_set_delete(s->decoder, s->delete);
                 if (r < 0)
                         return r;
@@ -1303,7 +1331,7 @@ static int ca_sync_start(CaSync *s) {
                 if (r < 0)
                         return r;
 
-                r = ca_decoder_enable_hardlink_digest(s->decoder, s->hardlink_digest);
+                r = ca_decoder_enable_hardlink_digest(s->decoder, s->hardlink_digest || s->hardlink);
                 if (r < 0)
                         return r;
         }
@@ -1337,6 +1365,14 @@ static int ca_sync_start(CaSync *s) {
                 }
 
                 r = ca_index_open(s->index);
+                if (r < 0)
+                        return r;
+        }
+
+        for (i = 0; i < s->n_seeds; i++) {
+                /* Tell seeders whether to calculate hardlink seeds */
+
+                r = ca_seed_set_hardlink(s->seeds[i], s->hardlink);
                 if (r < 0)
                         return r;
         }
@@ -1832,6 +1868,56 @@ static int ca_sync_process_decoder_skip(CaSync *s) {
         return CA_SYNC_STEP;
 }
 
+static int ca_sync_try_hardlink(CaSync *s) {
+        CaChunkID digest;
+        mode_t mode;
+        size_t i;
+        int r;
+
+        assert(s);
+
+        if (!s->hardlink)
+                return 0;
+        if (s->n_seeds == 0)
+                return 0;
+
+        r = ca_decoder_current_mode(s->decoder, &mode);
+        if (r < 0)
+                return r;
+        if (!S_ISREG(mode))
+                return r;
+
+        r = ca_decoder_get_hardlink_digest(s->decoder, &digest);
+        if (r < 0)
+                return r;
+
+        for (i = 0; i < s->n_seeds; i++) {
+                CaFileRoot *root;
+                char *p;
+
+                r = ca_seed_get_hardlink_target(s->seeds[i], &digest, &p);
+                if (r == -ENOENT)
+                        continue;
+                if (r < 0)
+                        return r;
+
+                r = ca_seed_get_file_root(s->seeds[i], &root);
+                if (r < 0) {
+                        free(p);
+                        return r;
+                }
+
+                r = ca_decoder_try_hardlink(s->decoder, root, p);
+                free(p);
+                if (r < 0)
+                        return r;
+                if (r > 0)
+                        return 1;
+        }
+
+        return 0;
+}
+
 static int ca_sync_step_decode(CaSync *s) {
         int step, r;
 
@@ -1863,6 +1949,10 @@ static int ca_sync_step_decode(CaSync *s) {
                 return CA_SYNC_NEXT_FILE;
 
         case CA_DECODER_DONE_FILE:
+                r = ca_sync_try_hardlink(s);
+                if (r < 0)
+                        return r;
+
                 return CA_SYNC_DONE_FILE;
 
         case CA_DECODER_STEP:
@@ -3236,6 +3326,26 @@ int ca_sync_get_reflink_bytes(CaSync *s, uint64_t *ret) {
         return ca_decoder_get_reflink_bytes(s->decoder, ret);
 }
 
+int ca_sync_get_hardlink_bytes(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+
+        if (!s->hardlink)
+                return -ENODATA;
+
+        if (!s->decoder) {
+                *ret = 0;
+                return 0;
+        }
+
+        return ca_decoder_get_hardlink_bytes(s->decoder, ret);
+}
+
 int ca_sync_enable_archive_digest(CaSync *s, bool b) {
         int r;
 
@@ -3302,7 +3412,7 @@ int ca_sync_enable_hardlink_digest(CaSync *s, bool b) {
         }
 
         if (s->decoder) {
-                r = ca_decoder_enable_hardlink_digest(s->decoder, b);
+                r = ca_decoder_enable_hardlink_digest(s->decoder, b || s->hardlink);
                 if (r < 0)
                         return r;
         }
