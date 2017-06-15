@@ -102,9 +102,13 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.extract-caidx2.digest
 @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-seek-catar/test-files > $SCRATCH_DIR/extract-seek-catar.digest
 @top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/extract-seek-caidx/test-files > $SCRATCH_DIR/extract-seek-caidx.mtree
 @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-seek-caidx/test-files > $SCRATCH_DIR/extract-seek-caidx.digest
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/seek.catar casync/test-files > $SCRATCH_DIR/extract-seek-catar-direct.digest
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/seek.caidx casync/test-files > $SCRATCH_DIR/extract-seek-caidx-direct.digest
 
 diff -q $SCRATCH_DIR/original-seek.digest $SCRATCH_DIR/extract-seek-catar.digest
 diff -q $SCRATCH_DIR/original-seek.digest $SCRATCH_DIR/extract-seek-caidx.digest
+diff -q $SCRATCH_DIR/original-seek.digest $SCRATCH_DIR/extract-seek-catar-direct.digest
+diff -q $SCRATCH_DIR/original-seek.digest $SCRATCH_DIR/extract-seek-caidx-direct.digest
 
 diff -q $SCRATCH_DIR/original-seek.mtree $SCRATCH_DIR/extract-seek-catar.mtree
 diff -q $SCRATCH_DIR/original-seek.mtree $SCRATCH_DIR/extract-seek-caidx.mtree

@@ -2167,6 +2167,8 @@ static int verb_digest(int argc, char *argv[]) {
         int r, input_fd = -1;
         char *input = NULL;
         CaSync *s = NULL;
+        bool show_payload_digest = false;
+        int seeking = false;
 
         if (argc > 3) {
                 fprintf(stderr, "Input path/URL and subtree path expected.\n");
@@ -2375,6 +2377,8 @@ static int verb_digest(int argc, char *argv[]) {
                         fprintf(stderr, "Failed to seek to %s: %s\n", seek_path, strerror(-r));
                         goto finish;
                 }
+
+                seeking = true;
         }
 
         (void) send_notify("READY=1");
@@ -2398,20 +2402,87 @@ static int verb_digest(int argc, char *argv[]) {
 
                 switch (r) {
 
-                case CA_SYNC_FINISHED: {
-                        CaChunkID digest;
-                        char t[CA_CHUNK_ID_FORMAT_MAX];
+                case CA_SYNC_FINISHED:
 
-                        assert_se(ca_sync_get_archive_digest(s, &digest) >= 0);
-                        printf("%s\n", ca_chunk_id_format(&digest, t));
-                        r = 0;
-                        goto finish;
-                }
+                        if (!show_payload_digest) { /* When we calc the digest of a directory tree (or top-level blob), show the archive digest */
+                                CaChunkID digest;
+                                char t[CA_CHUNK_ID_FORMAT_MAX];
+
+                                r = ca_sync_get_archive_digest(s, &digest);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to get archive digest: %s\n", strerror(-r));
+                                        goto finish;
+                                }
+
+                                printf("%s\n", ca_chunk_id_format(&digest, t));
+                                r = 0;
+                                goto finish;
+                        }
+
+                        break;
+
+                case CA_SYNC_NEXT_FILE:
+
+                        if (seeking) {
+                                mode_t mode;
+
+                                /* If we are seeking to a specific path in our archive, then check here if it is a regular file
+                                 * (in which case we show the payload checksum) or a directory (in which case we show the
+                                 * archive checksum from here. If it is neither, we return failure. */
+
+                                r = ca_sync_current_mode(s, &mode);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to get current mode: %s\n", strerror(-r));
+                                        goto finish;
+                                }
+
+                                if (S_ISREG(mode)) {
+                                        show_payload_digest = true;
+
+                                        r = ca_sync_enable_payload_digest(s, true);
+                                        if (r < 0) {
+                                                fprintf(stderr, "Failed to enable payload digest: %s\n", strerror(-r));
+                                                goto finish;
+                                        }
+
+                                } else if (S_ISDIR(mode))
+                                        show_payload_digest = false;
+                                else {
+                                        fprintf(stderr, "Path %s does not refer to a file or directory: %s\n", seek_path, strerror(-r));
+                                        r = -ENOTTY;
+                                        goto finish;
+                                }
+
+                                seeking = false;
+                        }
+
+                        r = process_step_generic(s, r, false);
+                        if (r < 0)
+                                goto finish;
+
+                        break;
+
+                case CA_SYNC_DONE_FILE:
+
+                        if (show_payload_digest) { /* When we calc the digest of a file, show the payload digest */
+                                CaChunkID digest;
+                                char t[CA_CHUNK_ID_FORMAT_MAX];
+
+                                r = ca_sync_get_payload_digest(s, &digest);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to get payload digest: %s\n", strerror(-r));
+                                        goto finish;
+                                }
+
+                                printf("%s\n", ca_chunk_id_format(&digest, t));
+                                r = 0;
+                                goto finish;
+                        }
+
+                        /* fall through */
 
                 case CA_SYNC_STEP:
                 case CA_SYNC_PAYLOAD:
-                case CA_SYNC_NEXT_FILE:
-                case CA_SYNC_DONE_FILE:
                 case CA_SYNC_SEED_NEXT_FILE:
                 case CA_SYNC_SEED_DONE_FILE:
                 case CA_SYNC_POLL:

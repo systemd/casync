@@ -2346,7 +2346,7 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
                 if (d->archive_digest) {
                         if (arrived)
                                 gcry_md_reset(d->archive_digest);
-                        if (!seek_continues)
+                        else if (!seek_continues)
                                 gcry_md_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
                 }
 
