@@ -25,6 +25,9 @@
 /* #undef ENXIO */
 /* #define ENXIO __LINE__ */
 
+/* #undef EUNATCH */
+/* #define EUNATCH __LINE__ */
+
 typedef enum CaDirection {
         CA_SYNC_ENCODE,
         CA_SYNC_DECODE,
@@ -1370,9 +1373,13 @@ static int ca_sync_start(CaSync *s) {
         }
 
         for (i = 0; i < s->n_seeds; i++) {
-                /* Tell seeders whether to calculate hardlink seeds */
+                /* Tell seeders whether to calculate hardlink and/or chunk seeds */
 
                 r = ca_seed_set_hardlink(s->seeds[i], s->hardlink);
+                if (r < 0)
+                        return r;
+
+                r = ca_seed_set_chunks(s->seeds[i], !!s->index);
                 if (r < 0)
                         return r;
         }
@@ -1629,8 +1636,26 @@ static int ca_sync_step_encode(CaSync *s) {
         }
 }
 
+static bool ca_sync_shall_seed(CaSync *s) {
+
+        assert(s);
+
+        if (s->direction != CA_SYNC_DECODE)
+                return false;  /* only run the seeds when decoding */
+        if (s->n_seeds == 0) /* no point in bothering if there are no seeds */
+                return false;
+
+        if (!s->index && !s->hardlink) /* If there's no chunk index and hardlinking is turned off, there's no point of managing seeds. */
+                return false;
+
+        return true;
+}
+
 static bool ca_sync_seed_ready(CaSync *s) {
         assert(s);
+
+        if (!ca_sync_shall_seed(s))
+                return true;
 
         return s->current_seed >= s->n_seeds;
 }
@@ -1876,6 +1901,8 @@ static int ca_sync_try_hardlink(CaSync *s) {
 
         assert(s);
 
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
         if (!s->hardlink)
                 return 0;
         if (s->n_seeds == 0)
@@ -1981,26 +2008,11 @@ static int ca_sync_step_decode(CaSync *s) {
         }
 }
 
-static int ca_sync_index_flags_propagated(CaSync *s) {
-
-        /* If we read the header of the index file, make sure to propagate the feature flags + chunk size stored in it
-         * to the seeds. Return > 0 if we successfully propagated the feature flags/chunk size, and thus can start
-         * running the seeds. */
-
-        if (s->direction != CA_SYNC_DECODE)
-                return 1;
-        if (!s->index)
-                return 1;
-        if (s->n_seeds == 0)
-                return 1;
-        if (s->index_flags_propagated)
-                return 1;
-
-        return 0;
-}
-
 static CaSeed *ca_sync_current_seed(CaSync *s) {
         assert(s);
+
+        if (!ca_sync_shall_seed(s))
+                return NULL;
 
         if (s->current_seed >= s->n_seeds)
                 return NULL;
@@ -2013,10 +2025,10 @@ static int ca_sync_seed_step(CaSync *s) {
 
         assert(s);
 
-        r = ca_sync_index_flags_propagated(s);
-        if (r < 0)
-                return r;
-        if (r == 0) /* Index flags/chunk sizes not propagated to the seeds yet. Let's wait until then */
+        if (!ca_sync_shall_seed(s))
+                return CA_SYNC_POLL;
+
+        if (s->index && !s->index_flags_propagated) /* Index flags/chunk sizes not propagated to the seeds yet. Let's wait until then */
                 return CA_SYNC_POLL;
 
         for (;;) {
@@ -2359,12 +2371,13 @@ static int ca_sync_propagate_index_flags(CaSync *s) {
 
         assert(s);
 
-        /* If we read the header of the index file, make sure to propagate the flags and chunk size stored in it to the seeds. */
+        /* If we read the header of the index file, make sure to propagate the flags and chunk size stored in it to the
+         * seeds. */
 
-        r = ca_sync_index_flags_propagated(s);
-        if (r < 0)
-                return r;
-        if (r > 0) /* The flags/chunk size is already propagated */
+        if (!ca_sync_shall_seed(s))
+                return CA_SYNC_POLL;
+
+        if (!s->index || s->index_flags_propagated) /* The flags/chunk size is already propagated */
                 return CA_SYNC_POLL;
 
         r = ca_index_get_feature_flags(s->index, &flags);

@@ -41,6 +41,7 @@ int ca_seed_set_chunk_size_avg(CaSeed *s, size_t cavg);
 int ca_seed_set_chunk_size_max(CaSeed *s, size_t cmax);
 
 int ca_seed_set_hardlink(CaSeed *s, bool b);
+int ca_seed_set_chunks(CaSeed *s, bool b);
 
 int ca_seed_get_file_root(CaSeed *s, CaFileRoot **ret);
 

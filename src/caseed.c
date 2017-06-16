@@ -30,9 +30,10 @@ struct CaSeed {
         CaChunker chunker;
         gcry_md_hd_t chunk_digest;
 
-        bool ready;
-        bool remove_cache;
-        bool hardlink;
+        bool ready:1;
+        bool remove_cache:1;
+        bool cache_hardlink:1;
+        bool cache_chunks:1;
 
         ReallocBuffer buffer;
         CaLocation *buffer_location;
@@ -51,6 +52,8 @@ CaSeed *ca_seed_new(void) {
 
         s->cache_fd = -1;
         s->base_fd = -1;
+
+        s->cache_chunks = true;
 
         s->chunker = (CaChunker) CA_CHUNKER_INIT;
 
@@ -185,7 +188,7 @@ static int ca_seed_open(CaSeed *s) {
                 if (r < 0)
                         return r;
 
-                r = ca_encoder_enable_hardlink_digest(s->encoder, s->hardlink);
+                r = ca_encoder_enable_hardlink_digest(s->encoder, s->cache_hardlink);
                 if (r < 0)
                         return r;
 
@@ -263,6 +266,9 @@ static int ca_seed_cache_chunks(CaSeed *s) {
         if (r < 0)
                 return r;
 
+        if (!s->cache_chunks)
+                return 0;
+
         while (l > 0) {
                 const void *chunk;
                 size_t chunk_size, k;
@@ -313,6 +319,9 @@ static int ca_seed_cache_final_chunk(CaSeed *s) {
 
         assert(s);
 
+        if (!s->cache_chunks)
+                return 0;
+
         if (realloc_buffer_size(&s->buffer) == 0)
                 return 0;
 
@@ -340,7 +349,7 @@ static int ca_seed_cache_hardlink(CaSeed *s) {
 
         assert(s);
 
-        if (!s->hardlink)
+        if (!s->cache_hardlink)
                 return 0;
         if (!s->encoder)
                 return -EUNATCH;
@@ -401,6 +410,11 @@ int ca_seed_step(CaSeed *s) {
         if (s->ready)
                 return -EALREADY;
 
+        if (!s->cache_chunks && !s->cache_hardlink) {
+                s->ready = true;
+                return CA_SEED_READY;
+        }
+
         r = ca_seed_open(s);
         if (r < 0)
                 return r;
@@ -421,7 +435,6 @@ int ca_seed_step(CaSeed *s) {
                                 return r;
 
                         s->ready = true;
-
                         return CA_SEED_READY;
 
                 case CA_ENCODER_DATA:
@@ -473,6 +486,8 @@ int ca_seed_get(CaSeed *s,
                 return -EINVAL;
         if (s->cache_fd < 0)
                 return -EUNATCH;
+        if (!s->cache_chunks)
+                return -ENOMEDIUM;
 
         if (!ca_chunk_id_format(chunk_id, id))
                 return -EINVAL;
@@ -623,7 +638,9 @@ int ca_seed_has(CaSeed *s, const CaChunkID *chunk_id) {
         if (!chunk_id)
                 return -EINVAL;
         if (s->cache_fd < 0)
-                return -EBUSY;
+                return -EUNATCH;
+        if (!s->cache_chunks)
+                return -ENOMEDIUM;
 
         if (!ca_chunk_id_format(chunk_id, id))
                 return -EINVAL;
@@ -660,7 +677,7 @@ int ca_seed_get_hardlink_target(
                 return -EINVAL;
         if (s->cache_fd < 0)
                 return -EUNATCH;
-        if (!s->hardlink)
+        if (!s->cache_hardlink)
                 return -ENOMEDIUM;
 
         if (!ca_chunk_id_format(id, v))
@@ -797,7 +814,7 @@ int ca_seed_set_hardlink(CaSeed *s, bool b) {
         if (!s)
                 return -EINVAL;
 
-        if (s->hardlink == b)
+        if (s->cache_hardlink == b)
                 return 0;
 
         if (s->encoder) {
@@ -806,7 +823,19 @@ int ca_seed_set_hardlink(CaSeed *s, bool b) {
                         return r;
         }
 
-        s->hardlink = b;
+        s->cache_hardlink = b;
 
+        return 1;
+}
+
+int ca_seed_set_chunks(CaSeed *s, bool b) {
+
+        if (!s)
+                return -EINVAL;
+
+        if (s->cache_chunks == b)
+                return 0;
+
+        s->cache_chunks = b;
         return 1;
 }
