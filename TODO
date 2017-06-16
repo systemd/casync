@@ -1,5 +1,6 @@
 BEFORE FIRST BLOG STORY:
 * replace adler32 by something better (buzhash)
+* end the GOODBYE table in a marker, so that we can search backwards for it
 
 LATER:
 * verify
@@ -23,7 +24,6 @@ LATER:
 * implicitly generate index + chunks when accessing base trees or archives through native protocol
 * rework caindex to read multiple chunks per read (use reallocbuffer like elsewhere)
 * permit 511 (or 4095?) redundant NUL bytes at the end of archive and index files, so that they could in theory stored on block devices
-* archive digest can't sanely process subdirectories right now, since it will include trailing data that belongs to the next objects already
 * seed: cache GOODBYE name table data so that we can regenerate the right bits when needed
 * when extracting, optionally make use of reduced feature bits than the archive contains
 * optionally import from/export to classic tar ball (and zip?)
@@ -34,10 +34,10 @@ LATER:
 * fuse: provide "mount.casync" compat symlink so that people can list casync mounts in /etc/fstab
 * encoder: change seeking to be more like decoder's seeking (i.e. delay returned events until the next ca_encoder_step() call)
 * rename offset accessor functions (drop the "archive")
-* skip seeding logic if we process catars
 * when extracting, check that index feature flags and archive feature flags match
 * send progress information via sd_notify(), so that people can wrap casync nicely in UIs
 * maybe turn "recursive" mode into a numeric value specifying how far to descend?
 * make "casync stat" work on a directory with a subpath
 * when issuing "casync digest" on an index file, read the digest directly from the index file cheaply
 * ensure that reflinks work fine if we sync raw files
+* speed up repeated image generation: maintain cache for directory trees that permits lookups by a path location as key, returning a chunk id and "newest covering mtime"
