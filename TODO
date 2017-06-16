@@ -1,6 +1,11 @@
 BEFORE FIRST BLOG STORY:
 * replace adler32 by something better (buzhash)
 * end the GOODBYE table in a marker, so that we can search backwards for it
+* ensure that reflinks work fine if we sync raw files
+
+TO MAKE IT USEFUL FOR BACKUPS:
+* encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
+* speed up repeated image generation: maintain persistent cache for directory trees that permits lookups by a path location as key, returning a chunk id and "newest covering mtime"
 
 LATER:
 * verify
@@ -8,7 +13,6 @@ LATER:
 * save/restore btrfs file/subvol flags
 * save/restore hardlinks?
 * check fs features when restoring
-* encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
 * exclude patterns
 * build seed while extracting
 * optionally make seeds persistent
@@ -39,5 +43,3 @@ LATER:
 * maybe turn "recursive" mode into a numeric value specifying how far to descend?
 * make "casync stat" work on a directory with a subpath
 * when issuing "casync digest" on an index file, read the digest directly from the index file cheaply
-* ensure that reflinks work fine if we sync raw files
-* speed up repeated image generation: maintain cache for directory trees that permits lookups by a path location as key, returning a chunk id and "newest covering mtime"
