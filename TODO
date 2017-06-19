@@ -1,6 +1,3 @@
-BEFORE FIRST BLOG STORY:
-* ensure that reflinks work fine if we sync raw files
-
 TO MAKE IT USEFUL FOR BACKUPS:
 * encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
 * speed up repeated image generation: maintain persistent cache for directory trees that permits lookups by a path location as key, returning a chunk id and "newest covering mtime"
