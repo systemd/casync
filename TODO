@@ -1,7 +1,5 @@
 BEFORE FIRST BLOG STORY:
-* end the GOODBYE table in a marker, so that we can search backwards for it, as well as an overall size, so that we know we are looking at the whole thing and not just something appended
 * ensure that reflinks work fine if we sync raw files
-* drop the overall digest from the index file, so that we can generate it based on cached data
 
 TO MAKE IT USEFUL FOR BACKUPS:
 * encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
