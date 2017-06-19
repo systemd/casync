@@ -236,6 +236,18 @@ static inline bool CA_DECODER_IS_SEEKING(CaDecoder *d) {
                       CA_DECODER_SEEKING_TO_GOODBYE_TAIL);
 }
 
+#define CA_DECODER_AT_ROOT(d) ((d)->node_idx == 0)
+
+static inline bool CA_DECODER_IS_NAKED(CaDecoder *d) {
+        assert(d);
+
+        /* Returns true if we are decoding a naked blob, i.e. a top-level payload, in contrast to a directory tree */
+
+        return d->n_nodes == 1 &&
+                !d->nodes[0].entry &&
+                (S_ISREG(d->nodes[0].mode) || S_ISBLK(d->nodes[0].mode));
+}
+
 static mode_t ca_decoder_node_mode(CaDecoderNode *n) {
         assert(n);
 
@@ -2078,7 +2090,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                 return -EBADMSG;
 
         /* The top-level node must be a directory */
-        if (d->node_idx == 0 && !S_ISDIR(mode))
+        if (CA_DECODER_AT_ROOT(d) && !S_ISDIR(mode))
                 return -EBADMSG;
 
         /* xattrs/ALCs are not defined for symlinks */
@@ -3694,8 +3706,8 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
         switch (d->state) {
 
         case CA_DECODER_INIT:
-                if (mode != (mode_t) -1 && (S_ISREG(mode) || S_ISBLK(mode))) {
-                        assert(d->node_idx == 0);
+                if (CA_DECODER_IS_NAKED(d)) {
+                        assert(CA_DECODER_AT_ROOT(d));
 
                         /* A regular file or block device and we are at the top level, process this as payload */
 
@@ -3790,15 +3802,17 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
 
                         /* There are still parent nodes around that wait for the GOODBYE object, and we got EOF inside this
                          * file? */
-                        if (d->node_idx > 0)
+                        if (!CA_DECODER_AT_ROOT(d))
                                 return -EPIPE;
 
                         /* If we don't know the length and get an EOF, we are happy and just consider this the end of the payload */
                         ca_decoder_enter_state(d, CA_DECODER_FINALIZE);
 
                         /* If this is a top-level regular file, then do not generate CA_DECODER_DONE_FILE, as there is no file to speak of realy */
-                        if (n == d->nodes)
+                        if (CA_DECODER_IS_NAKED(d)) {
+                                assert(n == d->nodes);
                                 return ca_decoder_step_node(d, n);
+                        }
 
                         return CA_DECODER_DONE_FILE;
                 }
@@ -3875,6 +3889,8 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
 
         case CA_DECODER_PREPARING_SEEK_TO_OFFSET:
 
+                assert(CA_DECODER_IS_NAKED(d));
+
                 if (mode == (mode_t) -1)
                         return -EUNATCH;
 
@@ -3886,6 +3902,8 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 return CA_DECODER_SEEK;
 
         case CA_DECODER_SEEKING_TO_OFFSET:
+
+                assert(CA_DECODER_IS_NAKED(d));
 
                 ca_decoder_enter_state(d, CA_DECODER_IN_PAYLOAD);
                 d->payload_offset = d->seek_offset;
@@ -4611,8 +4629,6 @@ int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret) {
 }
 
 int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset) {
-        mode_t mode;
-
         /* Seek to the specified offset in the archive. Only supported when we decode a naked file, i.e. not a
          * directory tree serialization */
 
@@ -4623,8 +4639,9 @@ int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset) {
 
         if (d->n_nodes <= 0)
                 return -EUNATCH;
-        if (d->node_idx != 0)
-                return -EINVAL;
+        if (!CA_DECODER_IS_NAKED(d))
+                return -EISDIR;
+
         if (d->nodes[0].end_offset == UINT64_MAX) /* The top node must have a size set to be considered seekable */
                 return -ESPIPE;
 
@@ -4636,12 +4653,6 @@ int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset) {
                 ca_decoder_enter_state(d, CA_DECODER_EOF);
                 return 0;
         }
-
-        mode = ca_decoder_node_mode(d->nodes);
-        if (mode == (mode_t) -1)
-                return -ENODATA;
-        if (!S_ISREG(mode) && !S_ISBLK(mode))
-                return -EISDIR;
 
         ca_decoder_reset_seek(d);
 

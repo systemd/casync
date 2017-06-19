@@ -173,6 +173,19 @@ struct CaEncoder {
         bool hardlink_digest_invalid:1;
 };
 
+#define CA_ENCODER_AT_ROOT(e) ((e)->node_idx == 0)
+
+static inline bool CA_ENCODER_IS_NAKED(CaEncoder *e) {
+        assert(e);
+
+        /* Returns true if we are encoding a naked blob, i.e. a top-level payload, in contrast to a directory tree */
+
+        return e &&
+                e->n_nodes == 1 &&
+                e->nodes[0].stat.st_mode != 0 &&
+                (S_ISREG(e->nodes[0].stat.st_mode) || S_ISBLK(e->nodes[0].stat.st_mode));
+}
+
 CaEncoder *ca_encoder_new(void) {
         CaEncoder *e;
 
@@ -1690,11 +1703,13 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
 
         case CA_ENCODER_INIT:
 
-                if (S_ISREG(n->stat.st_mode) || S_ISBLK(n->stat.st_mode))
+                if (CA_ENCODER_IS_NAKED(e)) {
+                        assert(CA_ENCODER_AT_ROOT(e));
+
                         /* If we are just initializing and looking at a regular file/block device, then our top-level
                          * node is serialized as its contents, hence continue in payload mode. */
                         ca_encoder_enter_state(e, CA_ENCODER_IN_PAYLOAD);
-                else
+                } else
                         /* Otherwise, if we are initializing and looking at anything else, then start with an ENTRY
                          * record. */
                         ca_encoder_enter_state(e, CA_ENCODER_ENTERED);
@@ -1769,8 +1784,10 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
 
                         /* If this is a blob archive (i.e. a top-level payload), then let's not generate the DONE_FILE
                          * event (because there is no entry) but let's shortcut to FINISHED. */
-                        if (e->node_idx == 0)
+                        if (CA_ENCODER_IS_NAKED(e)) {
+                                assert(CA_ENCODER_AT_ROOT(e));
                                 return ca_encoder_step(e);
+                        }
 
                         return CA_ENCODER_DONE_FILE;
                 }
@@ -3242,7 +3259,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                 ca_encoder_enter_state(e, CA_ENCODER_IN_PAYLOAD);
                 e->payload_offset = location->offset;
 
-                if (e->node_idx == 0)
+                if (CA_ENCODER_AT_ROOT(e))
                         e->archive_offset = location->offset;
                 else
                         e->archive_offset = UINT64_MAX;
