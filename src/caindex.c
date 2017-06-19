@@ -38,9 +38,6 @@ struct CaIndex {
         uint64_t item_position;
         uint64_t previous_chunk_offset;
 
-        CaChunkID digest;
-        bool digest_valid;
-
         uint64_t chunk_size_min;
         uint64_t chunk_size_max;
         uint64_t chunk_size_avg;
@@ -50,6 +47,12 @@ struct CaIndex {
         uint64_t file_size; /* The size of the index file */
         uint64_t blob_size; /* The size of the blob this index file describes */
 };
+
+static inline uint64_t CA_INDEX_METADATA_SIZE(CaIndex *i) {
+        assert(i);
+
+        return i->start_offset + sizeof(CaFormatTableTail);
+}
 
 static CaIndex* ca_index_new(void) {
         CaIndex *i;
@@ -458,13 +461,10 @@ int ca_index_write_chunk(CaIndex *i, const CaChunkID *id, uint64_t size) {
 }
 
 int ca_index_write_eof(CaIndex *i) {
-        struct {
-                CaFormatTableItem marker_item;
-                le64_t size;
-        } tail = {
-                .marker_item.offset = htole64(UINT64_MAX)
-        };
+        CaFormatTableTail tail = {};
         int r;
+
+        assert(sizeof(CaFormatTableTail) == sizeof(CaFormatTableItem));
 
         if (!i)
                 return -EINVAL;
@@ -477,12 +477,11 @@ int ca_index_write_eof(CaIndex *i) {
         if (r < 0)
                 return r;
 
-        write_le64(&tail.marker_item.offset, UINT64_MAX);
-        memcpy(&tail.marker_item.chunk, &i->digest, CA_CHUNK_ID_SIZE);
-        write_le64(&tail.size,
-                   offsetof(CaFormatTable, items) +
-                   (i->item_position * sizeof(CaFormatTableItem)) +
-                   sizeof(tail));
+        tail.index_offset = htole64(sizeof(CaFormatIndex));
+        tail.size = htole64(offsetof(CaFormatTable, items) +
+                            (i->item_position * sizeof(CaFormatTableItem)) +
+                            sizeof(tail));
+        tail.marker = htole64(CA_FORMAT_TABLE_TAIL_MARKER);
 
         r = loop_write(i->fd, &tail, sizeof(tail));
         if (r < 0)
@@ -496,9 +495,14 @@ int ca_index_write_eof(CaIndex *i) {
 }
 
 int ca_index_read_chunk(CaIndex *i, CaChunkID *ret_id, uint64_t *ret_offset_end, uint64_t *ret_size) {
-        CaFormatTableItem item;
+        union {
+                CaFormatTableItem item;
+                CaFormatTableTail tail;
+        } buffer;
         ssize_t n;
         int r;
+
+        assert(sizeof(CaFormatTableTail) == sizeof(CaFormatTableItem));
 
         if (!i)
                 return -EINVAL;
@@ -510,16 +514,16 @@ int ca_index_read_chunk(CaIndex *i, CaChunkID *ret_id, uint64_t *ret_offset_end,
         if (!IN_SET(i->mode, CA_INDEX_READ, CA_INDEX_INCREMENTAL_READ))
                 return -ENOTTY;
 
-        r = ca_index_enough_data(i, sizeof(item) + sizeof(le64_t) + 1);
+        r = ca_index_enough_data(i, sizeof(buffer)+1);
         if (r < 0)
                 return r;
         if (r == 0)
                 return -EAGAIN;
 
-        n = loop_read(i->fd, &item, sizeof(item));
+        n = loop_read(i->fd, &buffer, sizeof(buffer));
         if (n < 0)
                 return (int) n;
-        if (n != sizeof(item))
+        if (n != sizeof(buffer))
                 return -EPIPE;
 
         /* { */
@@ -527,26 +531,20 @@ int ca_index_read_chunk(CaIndex *i, CaChunkID *ret_id, uint64_t *ret_offset_end,
         /*         fprintf(stderr, "READING INDEX CHUNK: %s\n", ca_chunk_id_format((const CaChunkID*) item.chunk, ids)); */
         /* } */
 
-        if (le64toh(item.offset) == UINT64_MAX) {
-                struct {
-                        le64_t final_size;
-                        uint8_t space;
-                } tail;
+        /* Check if this is the end? */
+        if (buffer.tail.marker == htole64(CA_FORMAT_TABLE_TAIL_MARKER) &&
+            buffer.tail._zero_fill1 == 0 &&
+            buffer.tail._zero_fill2 == 0 &&
+            buffer.tail.index_offset == htole64(sizeof(CaFormatIndex)) &&
+            le64toh(buffer.tail.size) == (i->cooked_offset - i->start_offset + offsetof(CaFormatTable, items) + sizeof(CaFormatTableTail))) {
+                uint8_t final_byte;
 
                 /* We try to read one more byte than we expect. if we can read it there's trailing garbage. */
-                n = loop_read(i->fd, &tail, sizeof(tail));
+                n = read(i->fd, &final_byte, sizeof(final_byte));
                 if (n < 0)
-                        return (int) n;
-                if (n != sizeof(le64_t))
+                        return -errno;
+                if (n != 0)
                         return -EBADMSG;
-
-                i->cooked_offset += sizeof(item) + n;
-
-                if (le64toh(tail.final_size) != (i->cooked_offset - i->start_offset + offsetof(CaFormatTable, items)))
-                        return -EBADMSG;
-
-                memcpy(&i->digest, item.chunk, sizeof(CaChunkID));
-                i->digest_valid = true;
 
                 if (ret_id)
                         memset(ret_id, 0, sizeof(CaChunkID));
@@ -561,25 +559,26 @@ int ca_index_read_chunk(CaIndex *i, CaChunkID *ret_id, uint64_t *ret_offset_end,
         }
 
         if (i->previous_chunk_offset != UINT64_MAX &&
-            i->previous_chunk_offset >= le64toh(item.offset))
+            i->previous_chunk_offset >= le64toh(buffer.item.offset))
                 return -EBADMSG;
 
         if (i->previous_chunk_offset != UINT64_MAX &&
-            (le64toh(item.offset) - i->previous_chunk_offset) > i->chunk_size_max)
+            (le64toh(buffer.item.offset) - i->previous_chunk_offset) > i->chunk_size_max)
                 return -EBADMSG;
 
         if (ret_id)
-                memcpy(ret_id, item.chunk, sizeof(CaChunkID));
+                memcpy(ret_id, buffer.item.chunk, sizeof(CaChunkID));
 
         if (ret_offset_end)
-                *ret_offset_end = le64toh(item.offset);
+                *ret_offset_end = le64toh(buffer.item.offset);
 
         if (ret_size)
-                *ret_size = i->previous_chunk_offset == UINT64_MAX ? UINT64_MAX : (le64toh(item.offset) - i->previous_chunk_offset);
+                *ret_size = i->previous_chunk_offset == UINT64_MAX ? UINT64_MAX : (le64toh(buffer.item.offset) - i->previous_chunk_offset);
 
-        i->previous_chunk_offset = le64toh(item.offset);
+        i->previous_chunk_offset = le64toh(buffer.item.offset);
+
         i->item_position++;
-        i->cooked_offset += sizeof(item);
+        i->cooked_offset += sizeof(buffer);
 
         return 1;
 }
@@ -673,7 +672,7 @@ int ca_index_get_available_chunks(CaIndex *i, uint64_t *ret) {
         else
                 return -ENOTTY;
 
-        metadata_size = i->start_offset + sizeof(le64_t) + CA_CHUNK_ID_SIZE + sizeof(le64_t);
+        metadata_size = CA_INDEX_METADATA_SIZE(i);;
         if (available < metadata_size) {
 
                 if (i->mode == CA_INDEX_READ || i->wrote_eof)
@@ -787,34 +786,6 @@ int ca_index_incremental_read(CaIndex *i, ReallocBuffer *buffer) {
         return 1;
 }
 
-int ca_index_get_digest(CaIndex *i, CaChunkID *ret) {
-        if (!i)
-                return -EINVAL;
-        if (!ret)
-                return -EINVAL;
-
-        if (!i->digest_valid)
-                return -ENODATA;
-
-        *ret = i->digest;
-        return 0;
-}
-
-int ca_index_set_digest(CaIndex *i, const CaChunkID *id) {
-        if (!i)
-                return -EINVAL;
-        if (!id)
-                return -EINVAL;
-
-        if (i->digest_valid)
-                return -EBUSY;
-
-        i->digest = *id;
-        i->digest_valid = true;
-
-        return 0;
-}
-
 int ca_index_set_chunk_size_min(CaIndex *i, size_t cmin) {
         if (!i)
                 return -EINVAL;
@@ -893,12 +864,6 @@ int ca_index_get_chunk_size_max(CaIndex *i, size_t *ret) {
         return 0;
 }
 
-static inline uint64_t CA_INDEX_METADATA_SIZE(CaIndex *i) {
-        assert(i);
-
-        return i->start_offset + sizeof(le64_t) + CA_CHUNK_ID_SIZE + sizeof(le64_t);
-}
-
 int ca_index_get_index_size(CaIndex *i, uint64_t *ret) {
         uint64_t size, metadata_size;
         int r;
@@ -970,12 +935,8 @@ int ca_index_get_total_chunks(CaIndex *i, uint64_t *ret) {
 static int ca_index_read_tail(CaIndex *i) {
         struct {
                 CaFormatTableItem last_item;
-                struct {
-                        le64_t marker;
-                        uint8_t digest[CA_CHUNK_ID_SIZE];
-                        le64_t final_size;
-                } tail;
-        } buffer;
+                CaFormatTableTail tail;
+        } buffer = {};
         uint64_t size;
         ssize_t l;
         int r;
@@ -1005,15 +966,12 @@ static int ca_index_read_tail(CaIndex *i) {
                         return -EBADMSG;
         }
 
-        if (le64toh(buffer.tail.marker != UINT64_MAX))
+        if (le64toh(buffer.tail.marker) != CA_FORMAT_TABLE_TAIL_MARKER)
                 return -EBADMSG;
-        if (le64toh(buffer.tail.final_size) + sizeof(CaFormatIndex) != size)
+        if (le64toh(buffer.tail.index_offset) != sizeof(CaFormatIndex))
                 return -EBADMSG;
-        if (le64toh(buffer.last_item.offset) == 0)
+        if (le64toh(buffer.tail.size) + sizeof(CaFormatIndex) != size)
                 return -EBADMSG;
-
-        memcpy(&i->digest, buffer.tail.digest, sizeof(CaChunkID));
-        i->digest_valid = true;
 
         i->blob_size = le64toh(buffer.last_item.offset);
 

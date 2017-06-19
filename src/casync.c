@@ -1544,16 +1544,6 @@ static int ca_sync_write_final_chunk(CaSync *s) {
                 return r;
 
         if (s->index) {
-                CaChunkID digest;
-
-                r = ca_encoder_get_archive_digest(s->encoder, &digest);
-                if (r < 0)
-                        return r;
-
-                r = ca_index_set_digest(s->index, &digest);
-                if (r < 0)
-                        return r;
-
                 r = ca_index_write_eof(s->index);
                 if (r < 0)
                         return r;

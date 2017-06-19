@@ -36,7 +36,7 @@
  * FILENAME          -- name of the second directory entry (strictly ordered!)
  * <archive>         -- serialization of the second directory entry
  * …
- * GOODBYE           -- marker for the end of a list of directory entries
+ * GOODBYE           -- lookup table at the end of a list of directory entries
  *
  * And that's already it.
  *
@@ -61,9 +61,15 @@ enum {
         CA_FORMAT_FILENAME              = UINT64_C(0x6dbb6ebcb3161f0b),
         CA_FORMAT_GOODBYE               = UINT64_C(0xdfd35c5e8327c403),
 
+        /* The end marker used in the GOODBYE object */
+        CA_FORMAT_GOODBYE_TAIL_MARKER   = UINT64_C(0x57446fa533702943),
+
         /* The index file format */
-        CA_FORMAT_INDEX         = UINT64_C(0x96824d9c7b129ff9),
-        CA_FORMAT_TABLE         = UINT64_C(0xe75b9e112f17417d),
+        CA_FORMAT_INDEX                 = UINT64_C(0x96824d9c7b129ff9),
+        CA_FORMAT_TABLE                 = UINT64_C(0xe75b9e112f17417d),
+
+        /* The end marker used in the TABLE object */
+        CA_FORMAT_TABLE_TAIL_MARKER     = UINT64_C(0x4b4f050e5549ecd1),
 };
 
 /* Feature flags */
@@ -316,10 +322,16 @@ typedef struct CaFormatGoodbyeItem {
         le64_t hash;
 } CaFormatGoodbyeItem;
 
+typedef struct CaFormatGoodbyeTail {
+        le64_t entry_offset; /* The offset from the start of the GOODBYE object to the start of the matching ENTRY object */
+        le64_t size;         /* Size of GOODBYE object, a second time */
+        le64_t marker;       /* CA_FORMAT_GOODBYE_TAIL_MARKER */
+} CaFormatGoodbyeTail;
+
 typedef struct CaFormatGoodbye {
         CaFormatHeader header;
         CaFormatGoodbyeItem items[];
-        /* Followed by a final le64_t size; */
+        /* Followed by one CaFormatGoodbyeTail */
 } CaFormatGoodbye;
 
 #define CA_FORMAT_GOODBYE_HASH_KEY          \
@@ -345,12 +357,18 @@ typedef struct CaFormatTableItem {
         uint8_t chunk[CA_CHUNK_ID_SIZE];
 } CaFormatTableItem;
 
+typedef struct CaFormatTableTail {
+        le64_t _zero_fill1;  /* Some extra space, to make sure CaFormatTableItem and CaFormatTableTail have the same size */
+        le64_t _zero_fill2;
+        le64_t index_offset; /* the offset from the start of the TABLE object to the start of the matching INDEX object */
+        le64_t size;         /* the TABLE object size, a second time */
+        le64_t marker;       /* CA_FORMAT_TABLE_TAIL_MARKER */
+} CaFormatTableTail;
+
 typedef struct CaFormatTable {
         CaFormatHeader header;  /* size is set to UINT64_MAX, so that we can put this together incrementally */
         CaFormatTableItem items[];
-        /* Followed by UINT64_MAX, as end marker */
-        /* Followed by a digest of the whole blob */
-        /* Followed by a final le64_t size; */
+        /* Followed by one CaFormatTableTail */
 } CaFormatTable;
 
 #endif

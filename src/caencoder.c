@@ -110,6 +110,9 @@ typedef struct CaEncoderNode {
         void *fcaps;
         size_t fcaps_size;
 
+        /* The offset in the archive */
+        uint64_t entry_offset;
+
         /* If this is a directory: file name lookup data */
         CaEncoderNameTable *name_table;
         size_t n_name_table;
@@ -241,6 +244,8 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
         n->previous_name_table_offset = UINT64_MAX;
         n->name_table_incomplete = false;
 
+        n->entry_offset = UINT64_MAX;
+
         n->mount_id = -1;
 }
 
@@ -340,6 +345,7 @@ int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
                 .acl_default_other_permissions = UINT64_MAX,
                 .acl_default_mask_permissions = UINT64_MAX,
                 .previous_name_table_offset = UINT64_MAX,
+                .entry_offset = UINT64_MAX,
                 .mount_id = -1,
         };
 
@@ -1462,6 +1468,7 @@ static CaEncoderNode* ca_encoder_init_child(CaEncoder *e) {
                 .acl_default_group_obj_permissions = UINT64_MAX,
                 .acl_default_other_permissions = UINT64_MAX,
                 .acl_default_mask_permissions = UINT64_MAX,
+                .entry_offset = UINT64_MAX,
                 .mount_id = -1,
         };
 
@@ -2365,6 +2372,8 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
 
         /* fprintf(stderr, "entry at %" PRIu64 " (%s)\n", e->archive_offset, entry->name); */
 
+        n->entry_offset = e->archive_offset;
+
         return 1;
 }
 
@@ -2388,12 +2397,15 @@ static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
         const CaEncoderNameTable *table;
         CaEncoderNameTable *bst = NULL;
         CaFormatGoodbye *g;
+        CaFormatGoodbyeTail *tail;
         size_t size, i;
 
         assert(e);
         assert(n);
         assert(S_ISDIR(n->stat.st_mode));
         assert(e->state == CA_ENCODER_GOODBYE);
+
+        assert(sizeof(CaFormatGoodbyeTail) == sizeof(CaFormatGoodbyeItem));
 
         if (realloc_buffer_size(&e->buffer) > 0) /* Already generated */
                 return 1;
@@ -2403,9 +2415,13 @@ static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
         if (n->name_table_incomplete)
                 return -ENOLINK;
 
+        /* Similar, if we don't know the entry offset */
+        if (n->entry_offset == UINT64_MAX)
+                return -ENOLINK;
+
         size = offsetof(CaFormatGoodbye, items) +
                 sizeof(CaFormatGoodbyeItem) * n->n_name_table +
-                sizeof(le64_t);
+                sizeof(CaFormatGoodbyeTail);
 
         g = realloc_buffer_acquire(&e->buffer, size);
         if (!g)
@@ -2444,7 +2460,15 @@ static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
 
         free(bst);
 
-        memcpy(g->items + n->n_name_table, &g->header.size, sizeof(le64_t));
+        assert(n->entry_offset != UINT64_MAX);
+        assert(n->entry_offset < e->archive_offset);
+
+        /* Write the tail */
+        tail = (CaFormatGoodbyeTail*) (g->items + n->n_name_table);
+        write_le64(&tail->entry_offset, e->archive_offset - n->entry_offset);
+        write_le64(&tail->size, size);
+        write_le64(&tail->marker, CA_FORMAT_GOODBYE_TAIL_MARKER);
+
         return 1;
 }
 
