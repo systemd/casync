@@ -3795,6 +3795,11 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
 
                         /* If we don't know the length and get an EOF, we are happy and just consider this the end of the payload */
                         ca_decoder_enter_state(d, CA_DECODER_FINALIZE);
+
+                        /* If this is a top-level regular file, then do not generate CA_DECODER_DONE_FILE, as there is no file to speak of realy */
+                        if (n == d->nodes)
+                                return ca_decoder_step_node(d, n);
+
                         return CA_DECODER_DONE_FILE;
                 }
 
