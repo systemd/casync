@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <sys/stat.h>
 
-#include "cachunker.h"
+#include "cachunk.h"
 #include "caformat-util.h"
 #include "caformat.h"
 #include "caindex.h"
@@ -339,16 +339,16 @@ static int ca_index_read_head(CaIndex *i) {
         if (r == 0)
                 return -EINVAL;
 
-        if (le64toh(head.index.chunk_size_min) <= 0 ||
-            le64toh(head.index.chunk_size_min) > CA_CHUNK_SIZE_LIMIT)
+        if (le64toh(head.index.chunk_size_min) < CA_CHUNK_SIZE_LIMIT_MIN ||
+            le64toh(head.index.chunk_size_min) > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EBADMSG;
 
-        if (le64toh(head.index.chunk_size_avg) <= 0 ||
-            le64toh(head.index.chunk_size_avg) > CA_CHUNK_SIZE_LIMIT)
+        if (le64toh(head.index.chunk_size_avg) < CA_CHUNK_SIZE_LIMIT_MIN ||
+            le64toh(head.index.chunk_size_avg) > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EBADMSG;
 
-        if (le64toh(head.index.chunk_size_max) <= 0 ||
-            le64toh(head.index.chunk_size_max) > CA_CHUNK_SIZE_LIMIT)
+        if (le64toh(head.index.chunk_size_max) < CA_CHUNK_SIZE_LIMIT_MIN ||
+            le64toh(head.index.chunk_size_max) > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EBADMSG;
 
         if (!(le64toh(head.index.chunk_size_min) <= le64toh(head.index.chunk_size_avg) &&
@@ -818,9 +818,9 @@ int ca_index_set_digest(CaIndex *i, const CaChunkID *id) {
 int ca_index_set_chunk_size_min(CaIndex *i, size_t cmin) {
         if (!i)
                 return -EINVAL;
-        if (cmin < 1)
+        if (cmin < CA_CHUNK_SIZE_LIMIT_MIN)
                 return -EINVAL;
-        if (cmin > CA_CHUNK_SIZE_LIMIT)
+        if (cmin > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EINVAL;
         if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
                 return -EROFS;
@@ -832,9 +832,9 @@ int ca_index_set_chunk_size_min(CaIndex *i, size_t cmin) {
 int ca_index_set_chunk_size_avg(CaIndex *i, size_t cavg) {
         if (!i)
                 return -EINVAL;
-        if (cavg < 1)
+        if (cavg < CA_CHUNK_SIZE_LIMIT_MIN)
                 return -EINVAL;
-        if (cavg > CA_CHUNK_SIZE_LIMIT)
+        if (cavg > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EINVAL;
         if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
                 return -EROFS;
@@ -846,9 +846,9 @@ int ca_index_set_chunk_size_avg(CaIndex *i, size_t cavg) {
 int ca_index_set_chunk_size_max(CaIndex *i, size_t cmax) {
         if (!i)
                 return -EINVAL;
-        if (cmax < 1)
+        if (cmax < CA_CHUNK_SIZE_LIMIT_MIN)
                 return -EINVAL;
-        if (cmax > CA_CHUNK_SIZE_LIMIT)
+        if (cmax > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EINVAL;
         if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
                 return -EROFS;

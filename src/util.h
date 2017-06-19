@@ -651,4 +651,9 @@ char *truncate_nl(char *p);
                          strnlen(_sa->sun_path, sizeof(_sa->sun_path))); \
         })
 
+static inline uint32_t rol32(uint32_t x, size_t i) {
+        i %= 32;
+        return ((x) << (i)) | ((x) >> (32 - i));
+}
+
 #endif

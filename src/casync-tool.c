@@ -45,7 +45,9 @@ static bool arg_seed_output = true;
 static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
+static size_t arg_chunk_size_min = 0;
 static size_t arg_chunk_size_avg = 0;
+static size_t arg_chunk_size_max = 0;
 static uint64_t arg_rate_limit_bps = UINT64_MAX;
 static uint64_t arg_with = 0;
 static uint64_t arg_without = 0;
@@ -69,20 +71,28 @@ static void help(void) {
                "  -v --verbose               Show terse status information during runtime\n"
                "     --store=PATH            The primary chunk store to use\n"
                "     --extra-store=PATH      Additional chunk store to look for chunks in\n"
-               "     --chunk-size-avg=SIZE   The average number of bytes for a chunk file\n"
+               "     --chunk-size=[MIN:]AVG[:MAX]\n"
+               "                             The minimal/average/maximum number of bytes in a\n"
+               "                             chunk\n"
                "     --seed=PATH             Additional file or directory to use as seed\n"
-               "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote communication\n"
-               "     --exclude-nodump=no     Don't exclude files with chattr(1)'s +d 'nodump' flag when creating archive\n"
+               "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote\n"
+               "                             communication\n"
+               "     --exclude-nodump=no     Don't exclude files with chattr(1)'s +d 'nodump'\n"
+               "                             flag when creating archive\n"
                "     --exclude-submounts=yes Exclude submounts when creating archive\n"
                "     --reflink=no            Don't create reflinks from seeds when extracting\n"
                "     --hardlink=yes          Create hardlinks from seeds when extracting\n"
                "     --punch-holes=no        Don't create sparse files when extracting\n"
-               "     --delete=no             Don't delete existing files not listed in archive after extraction\n"
-               "     --undo-immutable=yes    When removing existing files, undo chattr(1)'s +i 'immutable' flag when extracting\n"
-               "     --seed-output=no        Don't implicitly add pre-existing output as seed when extracting\n"
+               "     --delete=no             Don't delete existing files not listed in archive\n"
+               "                             after extraction\n"
+               "     --undo-immutable=yes    When removing existing files, undo chattr(1)'s +i\n"
+               "                             'immutable' flag when extracting\n"
+               "     --seed-output=no        Don't implicitly add pre-existing output as seed\n"
+               "                             when extracting\n"
                "     --recursive=no          List non-recursively\n"
 #if HAVE_FUSE
-               "     --mkdir=no              Don't automatically create mount directory if it is missing\n"
+               "     --mkdir=no              Don't automatically create mount directory if it\n"
+               "                             is missing\n"
 #endif
                "     --uid-shift=yes|SHIFT   Shift UIDs/GIDs\n"
                "     --uid-range=RANGE       Restrict UIDs/GIDs to range\n\n"
@@ -98,8 +108,10 @@ static void help(void) {
                "     --with=fat              Store FAT information\n"
                "     --with=chattr           Store chattr(1) file attributes\n"
                "     --with=fat-attrs        Store FAT file attributes\n"
-               "     --with=privileged       Store file data that requires privileges to restore\n"
-               "     --with=fuse             Store file data that can exposed again via 'casync mount'\n"
+               "     --with=privileged       Store file data that requires privileges to\n"
+               "                             restore\n"
+               "     --with=fuse             Store file data that can exposed again via\n"
+               "                             'casync mount'\n"
                "     (and similar: --without=fat-attrs, --without=privileged, ...)\n\n"
                "Individual archive features:\n"
                "     --with=16bit-uids       Store reduced 16bit UID/GID information\n"
@@ -135,12 +147,101 @@ static void help(void) {
                program_invocation_short_name);
 }
 
+static int parse_chunk_sizes(const char *v, size_t *ret_min, size_t *ret_avg, size_t *ret_max) {
+        size_t a, b, c;
+        char *k;
+        int r;
+
+        assert(v);
+        assert(ret_min);
+        assert(ret_max);
+
+        if (streq(v, "auto")) {
+                *ret_min = 0;
+                *ret_avg = 0;
+                *ret_max = 0;
+
+                return 0;
+        }
+
+        k = strchr(v, ':');
+        if (k) {
+                char *j, *p;
+
+                j = strchr(k+1, ':');
+                if (!j) {
+                        fprintf(stderr, "--chunk-size= requires either a single average chunk size or a triplet of minimum, average and maximum chunk size.\n");
+                        return -EINVAL;
+                }
+
+                p = strndupa(v, k - v);
+                r = parse_size(p, &a);
+                if (r < 0) {
+                        fprintf(stderr, "Can't parse minimum chunk size: %s\n", v);
+                        return r;
+                }
+                if (a < CA_CHUNK_SIZE_LIMIT_MIN) {
+                        fprintf(stderr, "Minimum chunk size must be >= %zu.\n", CA_CHUNK_SIZE_LIMIT_MIN);
+                        return -ERANGE;
+                }
+
+                p = strndupa(k + 1, j - k - 1);
+                r = parse_size(p, &b);
+                if (r < 0) {
+                        fprintf(stderr, "Can't parse average chunk size: %s\n", v);
+                        return r;
+                }
+                if (b < a) {
+                        fprintf(stderr, "Average chunk size must be larger than minimum chunk size.\n");
+                        return -EINVAL;
+                }
+
+                r = parse_size(j + 1, &c);
+                if (r < 0) {
+                        fprintf(stderr, "Can't parse maximum chunk size: %s\n", v);
+                        return r;
+                }
+                if (c < b) {
+                        fprintf(stderr, "Average chunk size must be smaller than maximum chunk size.\n");
+                        return -EINVAL;
+                }
+                if (c > CA_CHUNK_SIZE_LIMIT_MAX) {
+                        fprintf(stderr, "Maximum chunk size must be <= %zu.\n", CA_CHUNK_SIZE_LIMIT_MAX);
+                        return -ERANGE;
+                }
+        } else {
+
+                r = parse_size(v, &b);
+                if (r < 0) {
+                        fprintf(stderr, "Can't parse average chunk size: %s\n", v);
+                        return r;
+                }
+                if (b < CA_CHUNK_SIZE_LIMIT_MIN) {
+                        fprintf(stderr, "Average chunk size must be >= %zu.\n", CA_CHUNK_SIZE_LIMIT_MIN);
+                        return -ERANGE;
+                }
+                if (b > CA_CHUNK_SIZE_LIMIT_MAX) {
+                        fprintf(stderr, "Average chunk size must be <= %zu.\n", CA_CHUNK_SIZE_LIMIT_MAX);
+                        return -ERANGE;
+                }
+
+                a = 0;
+                c = 0;
+        }
+
+        *ret_min = a;
+        *ret_avg = b;
+        *ret_max = c;
+
+        return 0;
+}
+
 static int parse_argv(int argc, char *argv[]) {
 
         enum {
                 ARG_STORE = 0x100,
                 ARG_EXTRA_STORE,
-                ARG_CHUNK_SIZE_AVG,
+                ARG_CHUNK_SIZE,
                 ARG_SEED,
                 ARG_RATE_LIMIT_BPS,
                 ARG_WITH,
@@ -165,7 +266,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "verbose",           no_argument,       NULL, 'v'                   },
                 { "store",             required_argument, NULL, ARG_STORE             },
                 { "extra-store",       required_argument, NULL, ARG_EXTRA_STORE       },
-                { "chunk-size-avg",    required_argument, NULL, ARG_CHUNK_SIZE_AVG    },
+                { "chunk-size",        required_argument, NULL, ARG_CHUNK_SIZE        },
                 { "seed",              required_argument, NULL, ARG_SEED              },
                 { "rate-limit-bps",    required_argument, NULL, ARG_RATE_LIMIT_BPS    },
                 { "with",              required_argument, NULL, ARG_WITH              },
@@ -226,16 +327,14 @@ static int parse_argv(int argc, char *argv[]) {
 
                         break;
 
-                case ARG_CHUNK_SIZE_AVG:
-                        r = parse_size(optarg, &arg_chunk_size_avg);
-                        if (r < 0) {
-                                fprintf(stderr, "Unable to parse size %s: %s\n", optarg, strerror(-r));
+                case ARG_CHUNK_SIZE:
+
+                        r = parse_chunk_sizes(optarg,
+                                              &arg_chunk_size_min,
+                                              &arg_chunk_size_avg,
+                                              &arg_chunk_size_max);
+                        if (r < 0)
                                 return r;
-                        }
-                        if (arg_chunk_size_avg == 0) {
-                                fprintf(stderr, "Chunk size cannot be zero.\n");
-                                return -EINVAL;
-                        }
 
                         break;
 
@@ -594,13 +693,28 @@ static int load_chunk_size(CaSync *s) {
         size_t cavg, cmin, cmax;
         int r;
 
-        if (arg_chunk_size_avg == 0)
-                return 0;
+        if (arg_chunk_size_avg != 0) {
+                r = ca_sync_set_chunk_size_avg(s, arg_chunk_size_avg);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set average chunk size to %zu: %s\n", arg_chunk_size_avg, strerror(-r));
+                        return r;
+                }
+        }
 
-        r = ca_sync_set_chunk_size_avg(s, arg_chunk_size_avg);
-        if (r < 0) {
-                fprintf(stderr, "Failed to set average chunk size to %zu: %s\n", arg_chunk_size_avg, strerror(-r));
-                return r;
+        if (arg_chunk_size_min != 0) {
+                r = ca_sync_set_chunk_size_min(s, arg_chunk_size_min);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set minimum chunk size to %zu: %s\n", arg_chunk_size_min, strerror(-r));
+                        return r;
+                }
+        }
+
+        if (arg_chunk_size_max != 0) {
+                r = ca_sync_set_chunk_size_max(s, arg_chunk_size_max);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to set minimum chunk size to %zu: %s\n", arg_chunk_size_min, strerror(-r));
+                        return r;
+                }
         }
 
         if (!arg_verbose)

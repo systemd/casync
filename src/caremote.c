@@ -5,7 +5,6 @@
 #include <sys/stat.h>
 
 #include "cachunk.h"
-#include "cachunker.h"
 #include "caprotocol-util.h"
 #include "caprotocol.h"
 #include "caremote.h"
@@ -1990,9 +1989,9 @@ static int ca_remote_validate_chunk(
                 return -EINVAL;
         if (!p)
                 return -EINVAL;
-        if (l == 0)
+        if (l < CA_CHUNK_SIZE_LIMIT_MIN)
                 return -EINVAL;
-        if (l > CA_CHUNK_SIZE_LIMIT)
+        if (l > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EINVAL;
 
         if (compression == CA_CHUNK_COMPRESSED) {
@@ -2147,9 +2146,9 @@ int ca_remote_put_chunk(
                 return -EINVAL;
         if (!data)
                 return -EINVAL;
-        if (size == 0)
+        if (size < CA_CHUNK_SIZE_LIMIT_MIN)
                 return -EINVAL;
-        if (size > CA_CHUNK_SIZE_LIMIT)
+        if (size > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EINVAL;
         if (!IN_SET(compression, CA_CHUNK_COMPRESSED, CA_CHUNK_UNCOMPRESSED))
                 return -EINVAL;

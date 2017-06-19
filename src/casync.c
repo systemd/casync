@@ -114,6 +114,10 @@ typedef struct CaSync {
 
         uid_t uid_shift;
         uid_t uid_range; /* uid_range == 0 means "full range" */
+
+        size_t chunk_size_min;
+        size_t chunk_size_avg;
+        size_t chunk_size_max;
 } CaSync;
 
 static CaSync *ca_sync_new(void) {
@@ -162,11 +166,46 @@ CaSync *ca_sync_new_decode(void) {
         return s;
 }
 
-int ca_sync_set_chunk_size_avg(CaSync *s, size_t avg) {
+int ca_sync_set_chunk_size_min(CaSync *s, size_t v) {
+        int r;
+
         if (!s)
                 return -EINVAL;
 
-        return ca_chunker_set_avg_size(&s->chunker, avg);
+        r = ca_chunker_set_size(&s->chunker, v, s->chunk_size_avg, s->chunk_size_max);
+        if (r < 0)
+                return r;
+
+        s->chunk_size_min = v;
+        return 0;
+}
+
+int ca_sync_set_chunk_size_avg(CaSync *s, size_t v) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+
+        r = ca_chunker_set_size(&s->chunker, s->chunk_size_min, v, s->chunk_size_max);
+        if (r < 0)
+                return r;
+
+        s->chunk_size_avg = v;
+        return 0;
+}
+
+int ca_sync_set_chunk_size_max(CaSync *s, size_t v) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+
+        r = ca_chunker_set_size(&s->chunker, s->chunk_size_min, s->chunk_size_avg, v);
+        if (r < 0)
+                return r;
+
+        s->chunk_size_max = v;
+        return 0;
 }
 
 int ca_sync_get_chunk_size_avg(CaSync *s, size_t *ret) {

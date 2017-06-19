@@ -4,6 +4,10 @@
 #include "cachunkid.h"
 #include "realloc-buffer.h"
 
+/* The hardcoded, maximum chunk size, after which we refuse operation */
+#define CA_CHUNK_SIZE_LIMIT_MAX ((size_t) (128U*1024U*1024U))
+#define CA_CHUNK_SIZE_LIMIT_MIN ((size_t) 1)
+
 typedef enum CaChunkCompression {
         CA_CHUNK_UNCOMPRESSED,
         CA_CHUNK_COMPRESSED,

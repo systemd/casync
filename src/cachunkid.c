@@ -1,7 +1,7 @@
 #include <assert.h>
 #include <errno.h>
 
-#include "cachunker.h"
+#include "cachunk.h"
 #include "cachunkid.h"
 #include "gcrypt-util.h"
 
@@ -68,9 +68,9 @@ int ca_chunk_id_make(gcry_md_hd_t *digest, const void *p, size_t l, CaChunkID *r
                 return -EINVAL;
         if (!p)
                 return -EINVAL;
-        if (l == 0)
+        if (l < CA_CHUNK_SIZE_LIMIT_MIN)
                 return -EINVAL;
-        if (l > CA_CHUNK_SIZE_LIMIT)
+        if (l > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;

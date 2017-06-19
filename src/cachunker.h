@@ -5,14 +5,21 @@
 #include <sys/types.h>
 #include <stdbool.h>
 
+/* The default average chunk size */
+#define CA_CHUNK_SIZE_AVG_DEFAULT ((size_t) (64U*1024U))
+
 /* Our checksum window size */
 #define CA_CHUNKER_WINDOW_SIZE 48
 
-/* The hardcoded, maximum chunk size, after which we refuse operation */
-#define CA_CHUNK_SIZE_LIMIT (128U*1024U*1024U)
+/* The chunk cut discriminator. In order to get an average chunk size of avg, we cut whenever for a hash value "h" at
+ * byte "i" given the descriminator "d(avg)": h(i) mod d(avg) == d(avg) - 1. Note that the discriminator
+ * calculated like this only yields correct results as long as the minimal chunk size is picked as avg/4, and the
+ * maximum chunk size as avg*4. If they are picked differently the result might be skewed into either direction. */
+#define CA_CHUNKER_DISCRIMINATOR_FROM_AVG(avg) ((size_t) (avg / (-1.42888852e-7 * avg + 1.33237515)))
 
 typedef struct CaChunker {
-        uint16_t a, b;
+        uint32_t h;
+
         size_t window_size;
         size_t chunk_size;
 
@@ -20,24 +27,29 @@ typedef struct CaChunker {
         size_t chunk_size_max;
         size_t chunk_size_avg;
 
+        size_t discriminator;
+
         uint8_t window[CA_CHUNKER_WINDOW_SIZE];
 } CaChunker;
 
-/* The default initializer for the chunker. We pick an average chunk size equivalent to 16K */
-#define CA_CHUNKER_INIT { .a = 1, .chunk_size_min = 3840, .chunk_size_avg = 16381, .chunk_size_max = 28928 }
+/* The default initializer for the chunker. We pick an average chunk size equivalent to 64K */
+#define CA_CHUNKER_INIT                                                                        \
+        {                                                                                      \
+                .chunk_size_min = CA_CHUNK_SIZE_AVG_DEFAULT/4,                                 \
+                .chunk_size_avg = CA_CHUNK_SIZE_AVG_DEFAULT,                                   \
+                .chunk_size_max = CA_CHUNK_SIZE_AVG_DEFAULT*4,                                 \
+                .discriminator = CA_CHUNKER_DISCRIMINATOR_FROM_AVG(CA_CHUNK_SIZE_AVG_DEFAULT), \
+        }
 
-/* Set the maximum size as passed as parameter and derive the minimum and average size from that.
- * This can only be invoked until the chunker is started. */
-int ca_chunker_set_avg_size(CaChunker *c, size_t max_size);
+/* Set the min/avg/max chunk size. Each parameter may be 0, in which case a default is used. */
+int ca_chunker_set_size(CaChunker *c, size_t min_size, size_t avg_size, size_t max_size);
 
 /* Scans the specified data for a chunk border. Returns (size_t) -1 if none was found (and the function should be
  * called with more data later on), or another value indicating the position of a border. */
 size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n);
 
-/* Low-level Adler-32 functions. Only exported for testing purposes. */
+/* Low-level buzhash functions. Only exported for testing purposes. */
 uint32_t ca_chunker_start(CaChunker *c, const void *p, size_t n);
 uint32_t ca_chunker_roll(CaChunker *c, uint8_t pop_byte, uint8_t push_byte);
-
-bool ca_size_is_prime(size_t n);
 
 #endif

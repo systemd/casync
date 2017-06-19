@@ -108,6 +108,9 @@ else
 endif
 conf.set10('HAVE_FUSE', get_option('fuse'))
 
+threads = dependency('threads')
+math = cc.find_library('m')
+
 config_h = configure_file(
         output : 'config.h',
         configuration : conf)
@@ -128,7 +131,8 @@ executable(
                 liblzma,
                 libgcrypt,
                 libacl,
-                libfuse],
+                libfuse,
+                math],
         install : true)
 
 executable(
@@ -138,7 +142,8 @@ executable(
         dependencies : [
                 liblzma,
                 libgcrypt,
-                libcurl],
+                libcurl,
+                math],
         install : true,
         install_dir : protocoldir)
 
@@ -203,6 +208,7 @@ test('test-fuse.sh', test_fuse,
 test_sources = '''
         test-cachunk
         test-cachunker
+        test-cachunker-histogram
         test-caencoder
         test-camakebst
         test-caorigin
@@ -225,7 +231,9 @@ foreach test_name : test_sources + non_test_sources
                 dependencies : [
                         liblzma,
                         libgcrypt,
-                        libacl])
+                        libacl,
+                        threads,
+                        math])
 
         if test_sources.contains(test_name)
                 test(test_name, exe)

@@ -109,7 +109,9 @@ int ca_sync_has_local(CaSync *s, const CaChunkID *chunk_id);
 
 int ca_sync_make_chunk_id(CaSync *s, const void *p, size_t l, CaChunkID *ret);
 
-int ca_sync_set_chunk_size_avg(CaSync *s, size_t avg);
+int ca_sync_set_chunk_size_min(CaSync *s, size_t v);
+int ca_sync_set_chunk_size_avg(CaSync *s, size_t v);
+int ca_sync_set_chunk_size_max(CaSync *s, size_t v);
 
 int ca_sync_get_chunk_size_avg(CaSync *s, size_t *ret);
 int ca_sync_get_chunk_size_min(CaSync *s, size_t *ret);

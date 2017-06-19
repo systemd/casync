@@ -1,6 +1,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include "cachunk.h"
 #include "cachunker.h"
 #include "caencoder.h"
 #include "cafileroot.h"
@@ -746,9 +747,9 @@ int ca_seed_set_feature_flags(CaSeed *s, uint64_t flags) {
 int ca_seed_set_chunk_size_min(CaSeed *s, size_t cmin) {
         if (!s)
                 return -EINVAL;
-        if (cmin < 1)
+        if (cmin < CA_CHUNK_SIZE_LIMIT_MIN)
                 return -EINVAL;
-        if (cmin > CA_CHUNK_SIZE_LIMIT)
+        if (cmin > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EINVAL;
 
         s->chunker.chunk_size_min = cmin;
@@ -758,9 +759,9 @@ int ca_seed_set_chunk_size_min(CaSeed *s, size_t cmin) {
 int ca_seed_set_chunk_size_avg(CaSeed *s, size_t cavg) {
         if (!s)
                 return -EINVAL;
-        if (cavg < 1)
+        if (cavg < CA_CHUNK_SIZE_LIMIT_MIN)
                 return -EINVAL;
-        if (cavg > CA_CHUNK_SIZE_LIMIT)
+        if (cavg > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EINVAL;
 
         s->chunker.chunk_size_avg = cavg;
@@ -770,9 +771,9 @@ int ca_seed_set_chunk_size_avg(CaSeed *s, size_t cavg) {
 int ca_seed_set_chunk_size_max(CaSeed *s, size_t cmax) {
         if (!s)
                 return -EINVAL;
-        if (cmax < 1)
+        if (cmax < CA_CHUNK_SIZE_LIMIT_MIN)
                 return -EINVAL;
-        if (cmax > CA_CHUNK_SIZE_LIMIT)
+        if (cmax > CA_CHUNK_SIZE_LIMIT_MAX)
                 return -EINVAL;
 
         s->chunker.chunk_size_max = cmax;

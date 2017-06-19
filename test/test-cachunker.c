@@ -5,29 +5,6 @@
 #include "cachunker.h"
 #include "util.h"
 
-static void test_fixed(void) {
-        /* Compare with Python:
-
-        import zlib
-        print zlib.adler32("")
-        print zlib.adler32("a")
-        print zlib.adler32("foo")
-        print zlib.adler32("this is a longer sentence")
-        */
-
-        CaChunker x = CA_CHUNKER_INIT;
-        assert_se(ca_chunker_start(&x, "", 0) == 1);
-
-        x = (CaChunker) CA_CHUNKER_INIT;
-        assert_se(ca_chunker_start(&x, "a", 1) == 6422626);
-
-        x = (CaChunker) CA_CHUNKER_INIT;
-        assert_se(ca_chunker_start(&x, "foo", 3) == 42074437);
-
-        x = (CaChunker) CA_CHUNKER_INIT;
-        assert_se(ca_chunker_start(&x, "this is a longer sentence", 25) == 1988299090);
-}
-
 static void test_rolling(void) {
 
         static const char buffer[] =
@@ -110,54 +87,64 @@ finish:
         (void) close(fd);
 }
 
-static void test_prime(void) {
+static int test_set_size(void) {
+        struct CaChunker x = CA_CHUNKER_INIT, y = CA_CHUNKER_INIT;
 
-        static const size_t first_primes[] = {
-                  2,   3,   5,   7,  11,
-                 13,  17,  19,  23,  29,
-                 31,  37,  41,  43,  47,
-                 53,  59,  61,  67,  71,
-                 73,  79,  83,  89,  97,
-                101, 103, 107, 109, 113,
-                127, 131, 137, 139, 149,
-                151, 157, 163, 167, 173,
-                179, 181, 191, 193, 197,
-                199, 211, 223, 227, 229,
-                233, 239, 241, 251, 257,
-                263, 269, 271, 277, 281,
-                283, 293, 307, 311, 313,
-                317, 331, 337, 347, 349,
-                353, 359, 367, 373, 379,
-                383, 389, 397, 401, 409,
-                419, 421, 431, 433, 439,
-                443, 449, 457, 461, 463,
-                467, 479, 487, 491, 499,
-                503, 509, 521, 523, 541,
-        };
+        ca_chunker_set_size(&y, 1024, 0, 0);
+        assert_se(y.chunk_size_min == 1024);
+        assert_se(y.chunk_size_avg == 4*1024);
+        assert_se(y.chunk_size_max == 16*1024);
 
-        size_t i, j = 0;
+        y = x;
+        ca_chunker_set_size(&y, 0, 0, 16*1024);
+        assert_se(y.chunk_size_min == 1024);
+        assert_se(y.chunk_size_avg == 4*1024);
+        assert_se(y.chunk_size_max == 16*1024);
 
-        for (i = 1; i <= first_primes[ELEMENTSOF(first_primes)-1]; i++) {
-                bool prime;
+        y = x;
+        ca_chunker_set_size(&y, 0, 4*1024, 0);
+        assert_se(y.chunk_size_min == 1024);
+        assert_se(y.chunk_size_avg == 4*1024);
+        assert_se(y.chunk_size_max == 16*1024);
 
-                prime = ca_size_is_prime(i);
+        y = x;
+        ca_chunker_set_size(&y, 0, 4*1024, 16*1024);
+        assert_se(y.chunk_size_min == 1024);
+        assert_se(y.chunk_size_avg == 4*1024);
+        assert_se(y.chunk_size_max == 16*1024);
 
-                if (i < first_primes[j])
-                        assert_se(!prime);
-                else if (i == first_primes[j]) {
-                        assert_se(prime);
-                        j++;
-                } else
-                        assert(false);
-        }
+        y = x;
+        ca_chunker_set_size(&y, 1024, 4*1024, 16*1024);
+        assert_se(y.chunk_size_min == 1024);
+        assert_se(y.chunk_size_avg == 4*1024);
+        assert_se(y.chunk_size_max == 16*1024);
+
+        y = x;
+        ca_chunker_set_size(&y, 1024, 4*1024, 0);
+        assert_se(y.chunk_size_min == 1024);
+        assert_se(y.chunk_size_avg == 4*1024);
+        assert_se(y.chunk_size_max == 16*1024);
+
+        y = x;
+        ca_chunker_set_size(&y, 1024, 0, 16*1024);
+        assert_se(y.chunk_size_min == 1024);
+        assert_se(y.chunk_size_avg == 4*1024);
+        assert_se(y.chunk_size_max == 16*1024);
+
+        y = x;
+        ca_chunker_set_size(&y, 128*1024, 0, 512*1024);
+        assert_se(y.chunk_size_min == 128*1024);
+        assert_se(y.chunk_size_avg == 256*1024);
+        assert_se(y.chunk_size_max == 512*1024);
+
+        return 0;
 }
 
 int main(int argc, char *argv[]) {
 
-        test_fixed();
         test_rolling();
         test_chunk();
-        test_prime();
+        test_set_size();
 
         return 0;
 }
