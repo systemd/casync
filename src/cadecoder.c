@@ -3274,15 +3274,23 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         if (dir_fd < 0 && child->fd < 0)
                 return 0; /* Nothing to do if no fds are opened */
 
-        /* If this is a top-level blob, then don't do anything */
         mode = ca_decoder_node_mode(child);
         if (mode == (mode_t) -1)
                 return -EUNATCH;
-        if ((S_ISREG(mode) || S_ISBLK(mode)) && !n)
+
+        /* If this is a regular file, try to reflink everything. Note we do this both for naked files (unlike the rest
+         * of the bits here) as well as for files in directory trees. */
+        if (S_ISREG(mode)) {
+                r = ca_decoder_node_reflink(d, child);
+                if (r < 0)
+                        return r;
+        }
+
+        /* If this is a naked file, then exit early, as we don't need to adjust metadata */
+        if (CA_DECODER_IS_NAKED(d))
                 return 0;
 
         assert(child->entry);
-
         name = child->temporary_name ?: child->name;
 
         if (child->fd >= 0)
@@ -3335,12 +3343,6 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 if (memcmp(child->symlink_target, buf, l) != 0)
                         return -EEXIST;
-        }
-
-        if (S_ISREG(st.st_mode)) {
-                r = ca_decoder_node_reflink(d, child);
-                if (r < 0)
-                        return r;
         }
 
         if (S_ISDIR(st.st_mode)) {
