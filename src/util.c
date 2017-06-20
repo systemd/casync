@@ -672,10 +672,10 @@ char* ls_format_mode(mode_t m, char ret[LS_FORMAT_MODE_MAX]) {
         return ret;
 }
 
-char *ls_format_chattr(unsigned flags, char ret[LS_FORMAT_CHATTR_MAX]) {
+char *ls_format_chattr(int flags, char ret[LS_FORMAT_CHATTR_MAX]) {
 
         static const struct {
-                unsigned flag;
+                int flag;
                 char code;
         } table[] = {
                 { FS_SYNC_FL,        'S' },
@@ -692,7 +692,7 @@ char *ls_format_chattr(unsigned flags, char ret[LS_FORMAT_CHATTR_MAX]) {
 
         size_t i;
 
-        if (flags == (unsigned) -1)
+        if (flags == -1)
                 return NULL;
 
         assert(ELEMENTSOF(table) == LS_FORMAT_CHATTR_MAX-1);

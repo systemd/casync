@@ -46,6 +46,15 @@
                 UNIQ_T(A,aq) < UNIQ_T(B,bq) ? UNIQ_T(A,aq) : UNIQ_T(B,bq); \
         })
 
+
+/* "linux/fs.h" contains wrong definitions of FS_IOC_[GS]ETFLAGS.
+ * This problem has been known for at least 14 years. To avoid a spurious
+ * warning from valgrind, let's override the kernel definitions. */
+#undef FS_IOC_GETFLAGS
+#undef FS_IOC_SETFLAGS
+#define FS_IOC_GETFLAGS                 _IOR('f', 1, int)
+#define FS_IOC_SETFLAGS                 _IOW('f', 2, int)
+
 static inline uint64_t timespec_to_nsec(struct timespec t) {
 
         if (t.tv_sec == (time_t) -1 &&
@@ -285,7 +294,7 @@ char *strjoin_real(const char *x, ...) _sentinel_;
 char* ls_format_mode(mode_t m, char ret[LS_FORMAT_MODE_MAX]);
 
 #define LS_FORMAT_CHATTR_MAX 11
-char *ls_format_chattr(unsigned flags, char ret[LS_FORMAT_CHATTR_MAX]);
+char *ls_format_chattr(int flags, char ret[LS_FORMAT_CHATTR_MAX]);
 
 #define LS_FORMAT_FAT_ATTRS_MAX 4
 char *ls_format_fat_attrs(unsigned flags, char ret[LS_FORMAT_FAT_ATTRS_MAX]);

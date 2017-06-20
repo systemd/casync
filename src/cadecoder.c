@@ -3642,7 +3642,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         }
 
         if ((d->feature_flags & CA_FORMAT_WITH_CHATTR) != 0 && child->fd >= 0) {
-                unsigned new_attr, old_attr;
+                int new_attr, old_attr;
 
                 new_attr = ca_feature_flags_to_chattr(read_le64(&child->entry->flags) & d->feature_flags);
 
@@ -4471,7 +4471,7 @@ int ca_decoder_current_rdev(CaDecoder *d, dev_t *ret) {
         return 0;
 }
 
-int ca_decoder_current_chattr(CaDecoder *d, unsigned *ret) {
+int ca_decoder_current_chattr(CaDecoder *d, int *ret) {
         CaDecoderNode *n;
         mode_t mode;
 

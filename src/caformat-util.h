@@ -14,7 +14,7 @@ int ca_feature_flags_normalize(uint64_t flags, uint64_t *ret);
 int ca_feature_flags_time_granularity_nsec(uint64_t flags, uint64_t *ret);
 
 uint64_t ca_feature_flags_from_chattr(unsigned flags);
-unsigned ca_feature_flags_to_chattr(uint64_t flags);
+int ca_feature_flags_to_chattr(uint64_t flags);
 
 uint64_t ca_feature_flags_from_fat_attrs(uint32_t flags);
 uint32_t ca_feature_flags_to_fat_attrs(uint64_t flags);

@@ -2850,7 +2850,7 @@ int ca_encoder_current_rdev(CaEncoder *e, dev_t *ret) {
         return 0;
 }
 
-int ca_encoder_current_chattr(CaEncoder *e, unsigned *ret) {
+int ca_encoder_current_chattr(CaEncoder *e, int *ret) {
         CaEncoderNode *n;
 
         if (!e)
