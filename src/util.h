@@ -476,6 +476,8 @@ static inline bool strv_isempty(char **l) {
 #      endif
 #    elif defined __i386__
 #      define __NR_renameat2 353
+#    elif defined __powerpc64__
+#      define __NR_renameat2 357
 #    else
 #      warning "__NR_renameat2 unknown for your architecture"
 #    endif
