@@ -1,7 +1,5 @@
 # casync — Content Addressable Data Synchronizer
 
-*WORK IN PROGRESS*
-
 What is this?
 
 1. A combination of the rsync algorithm and content-addressable storage
@@ -12,32 +10,60 @@ What is this?
 
 4. An efficient backup system
 
+See the [Announcement Blog
+Story](casync-a-tool-for-distributing-file-system-images.html) for a more
+comprehensive introduction.
+
 The longer explanation goes something like this:
 
-Encoding: Let's take a large linear data stream, split it into variable-sized
-chunks (the size being a function of the chunk contents), and store these
-chunks in individual, compressed files, named after a strong hash value of
-their contents. Let's call this directory a "chunk store". Then, generate an
-"chunk index" file that lists these chunk hash values plust their respective
-chunk size.
+Encoding: Let's take a large linear data stream, split it into
+variable-sized chunks (the size of each being a function of the
+chunk's contents), and store these chunks in individual, compressed
+files in some directory, each file named after a strong hash value of
+its contents, so that the hash value may be used to as key for
+retrieving the full chunk data. Let's call this directory a "chunk
+store". At the same time, generate a "chunk index" file that lists
+these chunk hash values plus their respective chunk sizes in a simple
+linear array. The chunking algorithm is supposed to create variable,
+but similarly sized chunks from the data stream, and do so in a way
+that the same data results in the same chunks even if placed at
+varying offsets. For more information [see this blog
+story](https://moinakg.wordpress.com/2013/06/22/high-performance-content-defined-chunking/).
 
-Decoding: Let's take the "chunk index" file, and reassemble the large linear
-data stream by concatenating the uncompressed chunks from the "chunk store".
+Decoding: Let's take the chunk index file, and reassemble the large
+linear data stream by concatenating the uncompressed chunks retrieved
+from the chunk store, keyed by the listed chunk hash values.
 
-As an extra twist, we introduce a well-defined, reproducible, random-access
-serialization format for directory trees (i.e. a more modern "tar"), to permit
-efficient, stable storage of complete directory trees in the system.
+As an extra twist, we introduce a well-defined, reproducible,
+random-access serialization format for directory trees (think: a more
+modern `tar`), to permit efficient, stable storage of complete directory
+trees in the system, simply by serializing them and then passing them
+into the encoding step explained above.
 
-Why bother with all of this? Streams with similar contents will result in
-mostly the same chunk files in the chunk store. This means, it is very
-efficient to store many related versions of a data stream in the same chunk
-store, thus minimizing disk usage. Moreover, when transferring linear data
-streams chunks already existing on the receiving side can be made use of, thus
-minimizing network traffic.
+Finally, let's put all this on the network: for each image you want to
+deliver, generate a chunk index file and place it on an HTTP
+server. Do the same with the chunk store, and share it between the
+various index files you intend to deliver.
 
-The "chunking" algorithm is based on a the Adler32 rolling hash function
-(similar to how the rsync algorithm does it). Otherwise, SHA256 is used as
-strong hash function to generate digests of the chunks.
+Why bother with all of this? Streams with similar contents will result
+in mostly the same chunk files in the chunk store. This means it is
+very efficient to store many related versions of a data stream in the
+same chunk store, thus minimizing disk usage. Moreover, when
+transferring linear data streams chunks already known on the receiving
+side can be made use of, thus minimizing network traffic.
+
+Why is this different from `rsync` or OSTree, or similar tools? Well,
+one major difference between `casync` and those tools is that we
+remove file boundaries before chunking things up. This means that
+small files are lumped together with their siblings and large files
+are chopped into pieces, which permits us to recognize similarities in
+files and directories beyond file boundaries, and makes sure our chunk
+sizes are pretty evenly distributed, without the file boundaries
+affecting them.
+
+The "chunking" algorithm is based on a the buzhash rolling hash
+function. SHA256 is used as strong hash function to generate digests
+of the chunks. xz is used to compress the individual chunks.
 
 Is this new? Conceptually, not too much. This uses well-known concepts,
 implemented in a variety of other projects, and puts them together in a
@@ -48,6 +74,7 @@ but there are other systems that use similar algorithms, in particular:
 - CAFS (https://github.com/indyjo/cafs)
 - dedupfs (https://github.com/xolox/dedupfs)
 - LBFS (https://pdos.csail.mit.edu/archive/lbfs/)
+- restic (https://restic.github.io/)
 - Tahoe-LAFS (https://tahoe-lafs.org/trac/tahoe-lafs)
 - tarsnap (https://www.tarsnap.com/)
 - Venti (https://en.wikipedia.org/wiki/Venti)
