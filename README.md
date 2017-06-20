@@ -11,10 +11,9 @@ What is this?
 4. An efficient backup system
 
 See the [Announcement Blog
-Story](casync-a-tool-for-distributing-file-system-images.html) for a more
-comprehensive introduction.
-
-The longer explanation goes something like this:
+Story](casync-a-tool-for-distributing-file-system-images.html) for a
+comprehensive introduction. The medium length explanation goes something like
+this:
 
 Encoding: Let's take a large linear data stream, split it into
 variable-sized chunks (the size of each being a function of the
