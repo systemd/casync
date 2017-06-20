@@ -69,6 +69,7 @@ implemented in a variety of other projects, and puts them together in a
 moderately new, nice way. That's all. The primary influences are rsync and git,
 but there are other systems that use similar algorithms, in particular:
 
+- BorgBackup (http://www.borgbackup.org/)
 - bup (https://bup.github.io/)
 - CAFS (https://github.com/indyjo/cafs)
 - dedupfs (https://github.com/xolox/dedupfs)
