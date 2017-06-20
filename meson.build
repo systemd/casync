@@ -239,3 +239,22 @@ foreach test_name : test_sources + non_test_sources
                 test(test_name, exe)
         endif
 endforeach
+
+############################################################
+
+git = find_program('git', required : false)
+etags = find_program('etags', required : false)
+
+if git.found() and etags.found()
+        all_files = run_command(
+                git,
+                ['--git-dir=@0@/.git'.format(meson.source_root()),
+                 'ls-files',
+                 ':/*.[ch]'])
+        all_files = files(all_files.stdout().split())
+
+        run_target(
+                'TAGS',
+                input : all_files,
+                command : [etags, '-o', '@0@/TAGS'.format(meson.source_root())] + all_files)
+endif
