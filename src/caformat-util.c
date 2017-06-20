@@ -283,10 +283,9 @@ unsigned ca_feature_flags_to_chattr(uint64_t flags) {
         unsigned f = 0;
         size_t i;
 
-        for (i = 0; i < ELEMENTSOF(chattr_map); i++) {
+        for (i = 0; i < ELEMENTSOF(chattr_map); i++)
                 if (flags & chattr_map[i].feature_flag)
                         f |= chattr_map[i].chattr_flag;
-        }
 
         return f;
 }
@@ -315,10 +314,9 @@ uint32_t ca_feature_flags_to_fat_attrs(uint64_t flags) {
         uint32_t f = 0;
         size_t i;
 
-        for (i = 0; i < ELEMENTSOF(fat_attrs_map); i++) {
+        for (i = 0; i < ELEMENTSOF(fat_attrs_map); i++)
                 if (flags & fat_attrs_map[i].feature_flag)
                         f |= fat_attrs_map[i].fat_flag;
-        }
 
         return f;
 }
