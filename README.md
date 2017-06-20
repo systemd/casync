@@ -153,7 +153,7 @@ but there are other systems that use similar algorithms, in particular:
 # casync mount --seed=/home/lennart http://www.foobar.com/lennart.caidx /home/lennart2
 ```
 
-## Maintainance
+## Maintenance
 
 ```
 # casync gc /var/lib/backup.castr /home/lennart.caidx /home/foobar.caidx ... (NOT IMPLEMENTED YET)
