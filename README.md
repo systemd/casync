@@ -11,7 +11,7 @@ What is this?
 4. An efficient backup system
 
 See the [Announcement Blog
-Story](casync-a-tool-for-distributing-file-system-images.html) for a
+Story](http://0pointer.net/blog/casync-a-tool-for-distributing-file-system-images.html) for a
 comprehensive introduction. The medium length explanation goes something like
 this:
 
