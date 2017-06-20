@@ -3645,15 +3645,18 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 int new_attr, old_attr;
 
                 new_attr = ca_feature_flags_to_chattr(read_le64(&child->entry->flags) & d->feature_flags);
+                assert((new_attr & ~FS_FL_USER_MODIFIABLE) == 0);
 
                 if (ioctl(child->fd, FS_IOC_GETFLAGS, &old_attr) < 0) {
 
                         if (new_attr != 0 || !IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP))
                                 return -errno;
 
-                } else if (old_attr != new_attr) {
+                } else if ((old_attr & FS_FL_USER_MODIFIABLE) != new_attr) {
+                        int final_attr;
 
-                        if (ioctl(child->fd, FS_IOC_SETFLAGS, &new_attr) < 0)
+                        final_attr = (old_attr & !FS_FL_USER_MODIFIABLE) | new_attr;
+                        if (ioctl(child->fd, FS_IOC_SETFLAGS, &final_attr) < 0)
                                 return -errno;
                 }
         }
