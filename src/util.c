@@ -395,9 +395,9 @@ char octchar(int x) {
 }
 
 char hexchar(int x) {
-        static const char table[16] = "0123456789abcdef";
+        static const char table[17] = "0123456789abcdef";
 
-        return table[x & 15];
+        return table[x & 16];
 }
 
 int unhexchar(char c) {
