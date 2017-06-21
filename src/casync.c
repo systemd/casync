@@ -2943,7 +2943,7 @@ int ca_sync_current_rdev(CaSync *s, dev_t *ret) {
         return -ENOTTY;
 }
 
-int ca_sync_current_chattr(CaSync *s, unsigned *ret) {
+int ca_sync_current_chattr(CaSync *s, int *ret) {
         CaSeed *seed;
 
         if (!s)

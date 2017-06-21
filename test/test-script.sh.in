@@ -13,10 +13,10 @@ SCRATCH_DIR=/var/tmp/test-casync.$RANDOM
 mkdir -p $SCRATCH_DIR/src
 
 if [ `id -u` == 0 ] ; then
-    cp -a @top_srcdir@ $SCRATCH_DIR/src
+    cp -a @top_srcdir@/test-files $SCRATCH_DIR/src/
 else
     # If we lack privileges we use rsync rather than cp to copy, as it will just skip over device nodes
-    rsync -a @top_srcdir@ $SCRATCH_DIR/src
+    rsync -a @top_srcdir@/test-files $SCRATCH_DIR/src/
 fi
 
 cd $SCRATCH_DIR/src
@@ -101,17 +101,17 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.extract-caidx2.digest
 @top_builddir@/casync $PARAMS make $SCRATCH_DIR/seek.catar
 @top_builddir@/casync $PARAMS make $SCRATCH_DIR/seek.caidx
 
-@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/seek.catar $SCRATCH_DIR/extract-seek-catar casync/test-files
-@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/seek.caidx $SCRATCH_DIR/extract-seek-caidx casync/test-files
+@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/seek.catar $SCRATCH_DIR/extract-seek-catar test-files
+@top_builddir@/casync $PARAMS extract $SCRATCH_DIR/seek.caidx $SCRATCH_DIR/extract-seek-caidx test-files
 
-@top_builddir@/casync $PARAMS mtree casync/test-files > $SCRATCH_DIR/original-seek.mtree
-@top_builddir@/casync $PARAMS digest casync/test-files > $SCRATCH_DIR/original-seek.digest
+@top_builddir@/casync $PARAMS mtree test-files > $SCRATCH_DIR/original-seek.mtree
+@top_builddir@/casync $PARAMS digest test-files > $SCRATCH_DIR/original-seek.digest
 @top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/extract-seek-catar/test-files > $SCRATCH_DIR/extract-seek-catar.mtree
 @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-seek-catar/test-files > $SCRATCH_DIR/extract-seek-catar.digest
 @top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/extract-seek-caidx/test-files > $SCRATCH_DIR/extract-seek-caidx.mtree
 @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract-seek-caidx/test-files > $SCRATCH_DIR/extract-seek-caidx.digest
-@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/seek.catar casync/test-files > $SCRATCH_DIR/extract-seek-catar-direct.digest
-@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/seek.caidx casync/test-files > $SCRATCH_DIR/extract-seek-caidx-direct.digest
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/seek.catar test-files > $SCRATCH_DIR/extract-seek-catar-direct.digest
+@top_builddir@/casync $PARAMS digest $SCRATCH_DIR/seek.caidx test-files > $SCRATCH_DIR/extract-seek-caidx-direct.digest
 
 diff -q $SCRATCH_DIR/original-seek.digest $SCRATCH_DIR/extract-seek-catar.digest
 diff -q $SCRATCH_DIR/original-seek.digest $SCRATCH_DIR/extract-seek-caidx.digest

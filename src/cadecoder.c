@@ -3642,18 +3642,21 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         }
 
         if ((d->feature_flags & CA_FORMAT_WITH_CHATTR) != 0 && child->fd >= 0) {
-                unsigned new_attr, old_attr;
+                int new_attr, old_attr;
 
                 new_attr = ca_feature_flags_to_chattr(read_le64(&child->entry->flags) & d->feature_flags);
+                assert((new_attr & ~FS_FL_USER_MODIFIABLE) == 0);
 
                 if (ioctl(child->fd, FS_IOC_GETFLAGS, &old_attr) < 0) {
 
                         if (new_attr != 0 || !IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP))
                                 return -errno;
 
-                } else if (old_attr != new_attr) {
+                } else if ((old_attr & FS_FL_USER_MODIFIABLE) != new_attr) {
+                        int final_attr;
 
-                        if (ioctl(child->fd, FS_IOC_SETFLAGS, &new_attr) < 0)
+                        final_attr = (old_attr & !FS_FL_USER_MODIFIABLE) | new_attr;
+                        if (ioctl(child->fd, FS_IOC_SETFLAGS, &final_attr) < 0)
                                 return -errno;
                 }
         }
@@ -4471,7 +4474,7 @@ int ca_decoder_current_rdev(CaDecoder *d, dev_t *ret) {
         return 0;
 }
 
-int ca_decoder_current_chattr(CaDecoder *d, unsigned *ret) {
+int ca_decoder_current_chattr(CaDecoder *d, int *ret) {
         CaDecoderNode *n;
         mode_t mode;
 

@@ -2058,7 +2058,7 @@ static int verb_list(int argc, char *argv[]) {
                                 uid_t uid = UID_INVALID;
                                 gid_t gid = GID_INVALID;
                                 dev_t rdev = (dev_t) -1;
-                                unsigned flags = (unsigned) -1;
+                                int flags = -1;
                                 uint32_t fat_attrs = (uint32_t) -1;
                                 char *escaped = NULL;
                                 const char *xname;
@@ -2093,7 +2093,7 @@ static int verb_list(int argc, char *argv[]) {
 
                                 escaped = mfree(escaped);
 
-                                if (flags != (unsigned) -1)
+                                if (flags != -1)
                                         printf("FileAttr: %s\n", strna(ls_format_chattr(flags, ls_flags)));
 
                                 if (fat_attrs != (uint32_t) -1)
