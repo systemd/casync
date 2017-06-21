@@ -594,16 +594,14 @@ static inline const char *yes_no(bool b) {
 #endif
 
 #ifndef FICLONERANGE
-#define FICLONERANGE _IOW(0x94, 13, struct file_clone_range)
-#endif
-
-#if !HAVE_STRUCT_FILE_CLONE_RANGE
 struct file_clone_range {
-        __s64 src_fd;
-        __u64 src_offset;
-        __u64 src_length;
-        __u64 dest_offset;
+        int64_t src_fd;
+        uint64_t src_offset;
+        uint64_t src_length;
+        uint64_t dest_offset;
 };
+
+#define FICLONERANGE _IOW(0x94, 13, struct file_clone_range)
 #endif
 
 #define PTR_TO_INT(p) ((int) ((intptr_t) (p)))

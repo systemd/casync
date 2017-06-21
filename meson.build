@@ -81,9 +81,6 @@ else
         conf.set10('HAVE_GETRANDOM', have)
 endif
 
-conf.set10('HAVE_STRUCT_FILE_CLONE_RANGE',
-           cc.has_header_symbol('linux/fs.h', 'struct file_clone_range'))
-
 ############################################################
 
 prefixdir = get_option('prefix')
