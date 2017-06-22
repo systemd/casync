@@ -164,7 +164,7 @@ but there are other systems that use similar algorithms, in particular:
 
 casync uses the [Meson](http://mesonbuild.com/) build system. To build casync,
 install Meson (at least 0.40), as well as the necessary build dependencies
-(gcc, liblzma, libcurl, and optionally libfuse). Then run:
+(gcc, liblzma, libcurl, libacl, and optionally libfuse). Then run:
 
 ```
 # meson build && ninja -C build && sudo ninja -C build install
