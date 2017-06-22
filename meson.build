@@ -53,7 +53,11 @@ c_args = '''
         --param=ssp-buffer-size=4
 '''.split()
 
-add_project_arguments(c_args, language : 'c')
+foreach arg : c_args
+        if cc.has_argument(arg)
+                add_project_arguments(arg, language : 'c')
+        endif
+endforeach
 
 conf = configuration_data()
 conf.set('_GNU_SOURCE', true)
