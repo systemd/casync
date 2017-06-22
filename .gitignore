@@ -1,4 +1,6 @@
 *.cache
+*.cache-pre-dev
+*.cache-pre-inst
 *.plist
 *.pyc
 *.stamp

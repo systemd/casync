@@ -1,0 +1,7 @@
+#!/bin/sh -ex
+
+export LC_CTYPE=C.UTF-8
+meson build
+ninja -C build all
+ninja -C build test
+ninja -C build install

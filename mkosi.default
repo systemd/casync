@@ -1,0 +1,25 @@
+[Distribution]
+Distribution=fedora
+Release=26
+
+[Output]
+Format=raw_gpt
+Bootable=yes
+
+[Partitions]
+RootSize=2G
+
+[Packages]
+BuildPackages=
+        diffutils
+        fuse-devel
+        gcc
+        libacl-devel
+        libcurl-devel
+        libgcrypt-devel
+        meson
+        pkgconfig
+        rsync
+        xz-devel
+Packages=
+        fuse
