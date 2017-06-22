@@ -237,7 +237,8 @@ foreach test_name : test_sources + non_test_sources
                         math])
 
         if test_sources.contains(test_name)
-                test(test_name, exe)
+                test(test_name, exe,
+                     timeout : 2 * 60)
         endif
 endforeach
 
