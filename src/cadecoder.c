@@ -1579,7 +1579,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         sz = realloc_buffer_size(&d->buffer);
         for (;;) {
                 const CaFormatHeader *h;
-                uint64_t t, l;
+                uint64_t t, l, flags;
 
                 if (sz < sizeof(CaFormatHeader)) /* Not read enough yet */
                         return CA_DECODER_REQUEST;
@@ -1618,7 +1618,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
 
                         /* Is this file too new for us? */
-                        if ((entry->feature_flags & ~CA_FORMAT_FEATURE_FLAGS_MAX) != 0)
+                        flags = read_le64(&entry->feature_flags);
+                        if ((flags & ~CA_FORMAT_FEATURE_FLAGS_MAX) != 0)
                                 return -EPROTONOSUPPORT;
 
                         offset += l;
