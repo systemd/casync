@@ -238,7 +238,7 @@ static int ca_index_write_head(CaIndex *i) {
                 CaFormatIndex index;
                 CaFormatHeader table;
         } head = {
-                .index.header.size = sizeof(CaFormatIndex),
+                .index.header.size = htole64(sizeof(CaFormatIndex)),
                 .index.header.type = htole64(CA_FORMAT_INDEX),
                 .table.size = htole64(UINT64_MAX),
                 .table.type = htole64(CA_FORMAT_TABLE),
