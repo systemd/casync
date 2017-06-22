@@ -90,7 +90,7 @@ endif
 prefixdir = get_option('prefix')
 datadir = join_paths(prefixdir, get_option('datadir'))
 docdir = join_paths(datadir, 'doc/casync')
-protocoldir = join_paths(prefixdir, 'lib/casync/protocols')
+protocoldir = join_paths(prefixdir, get_option('libexecdir'), 'casync/protocols')
 conf.set_quoted('CASYNC_PROTOCOL_PATH', protocoldir)
 
 liblzma = dependency('liblzma',
