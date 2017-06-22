@@ -663,4 +663,8 @@ static inline uint32_t rol32(uint32_t x, size_t i) {
 #define FS_PROJINHERIT_FL 0x20000000
 #endif
 
+#ifndef RENAME_EXCHANGE
+#define RENAME_EXCHANGE (1 << 1)
+#endif
+
 #endif
