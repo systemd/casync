@@ -13,9 +13,12 @@ int main(int argc, char *argv[]) {
         char t[CA_CHUNK_ID_FORMAT_MAX];
         uint64_t flags;
 
-        assert_se(asprintf(&teststore, "/var/tmp/teststore.%" PRIx64, random_u64()) >= 0);
-        assert_se(asprintf(&testindex, "/var/tmp/testindex.%" PRIx64, random_u64()) >= 0);
-        assert_se(asprintf(&testtree, "/var/tmp/testtree.%" PRIx64, random_u64()) >= 0);
+        r = asprintf(&teststore, "/var/tmp/teststore.%" PRIx64, random_u64());
+        assert_se(r >= 0);
+        asprintf(&testindex, "/var/tmp/testindex.%" PRIx64, random_u64());
+        assert_se(r >= 0);
+        r = asprintf(&testtree, "/var/tmp/testtree.%" PRIx64, random_u64());
+        assert_se(r >= 0);
 
         assert_se(s = ca_sync_new_encode());
 
