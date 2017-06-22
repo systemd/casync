@@ -627,9 +627,16 @@ static int ca_chunk_file_rename(int chunk_fd, const char *prefix, const CaChunkI
         ca_format_chunk_path(prefix, chunkid, old_suffix, old_path);
         ca_format_chunk_path(prefix, chunkid, new_suffix, new_path);
 
-        if (renameat2(chunk_fd, old_path, chunk_fd, new_path, RENAME_NOREPLACE) < 0)
-        /* if (renameat(chunk_fd, old_path, chunk_fd, new_path) < 0) */
-                return -errno;
+        if (renameat2(chunk_fd, old_path, chunk_fd, new_path, RENAME_NOREPLACE) < 0) {
+
+                /* Fallback to linkat() + unlinkat() if RENAME_NOREPLACE isn't available, so that we don't override
+                 * existing files and create needless churn */
+
+                if (linkat(chunk_fd, old_path, chunk_fd, new_path, 0) < 0)
+                        return -errno;
+
+                (void) unlinkat(chunk_fd, old_path, 0);
+        }
 
         return 0;
 }
