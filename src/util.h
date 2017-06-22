@@ -16,6 +16,7 @@
 
 #include <linux/magic.h>
 #include <linux/types.h>
+#include <linux/fs.h>
 
 #define new(t, n) ((t*) malloc((n) * sizeof(t)))
 #define new0(t, n) ((t*) calloc((n), sizeof(t)))
@@ -657,5 +658,9 @@ static inline uint32_t rol32(uint32_t x, size_t i) {
         i %= 32;
         return ((x) << (i)) | ((x) >> (32 - i));
 }
+
+#ifndef FS_PROJINHERIT_FL
+#define FS_PROJINHERIT_FL 0x20000000
+#endif
 
 #endif
