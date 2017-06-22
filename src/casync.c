@@ -3026,30 +3026,28 @@ static int ca_sync_add_pollfd(CaRemote *rr, struct pollfd *pollfd) {
 
 int ca_sync_poll(CaSync *s, uint64_t timeout_nsec, const sigset_t *ss) {
         struct pollfd *pollfd;
-        size_t i, n = 0;
+        size_t i, n = 0, n_pollfd;
         int r;
 
         if (!s)
                 return -EINVAL;
 
-        if (!s->remote_archive &&
-            !s->remote_index &&
-            !s->remote_wstore &&
-            s->n_remote_rstores == 0)
+        n_pollfd = (!!s->remote_archive
+                    + !!s->remote_index
+                    + !!s->remote_wstore
+                    + s->n_remote_rstores) * 2;
+
+        if (n_pollfd == 0)
                 return -EUNATCH;
 
-        pollfd = newa(struct pollfd,
-                      !!s->remote_archive +
-                      !!s->remote_index +
-                      !!s->remote_wstore +
-                      s->n_remote_rstores);
+        pollfd = newa(struct pollfd, n_pollfd);
 
         r = ca_sync_add_pollfd(s->remote_archive, pollfd);
         if (r < 0)
                 return r;
         n += r;
 
-        r = ca_sync_add_pollfd(s->remote_index, pollfd);
+        r = ca_sync_add_pollfd(s->remote_index, pollfd + n);
         if (r < 0)
                 return r;
         n += r;
@@ -3066,6 +3064,7 @@ int ca_sync_poll(CaSync *s, uint64_t timeout_nsec, const sigset_t *ss) {
 
                 n += r;
         }
+        assert_se(n == n_pollfd);
 
         if (timeout_nsec != UINT64_MAX) {
                 struct timespec ts;
