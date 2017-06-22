@@ -99,7 +99,7 @@ int ca_store_get(
                 const CaChunkID *chunk_id,
                 CaChunkCompression desired_compression,
                 const void **ret,
-                size_t *ret_size,
+                uint64_t *ret_size,
                 CaChunkCompression *ret_effective_compression) {
 
         int r;
@@ -140,7 +140,7 @@ int ca_store_put(
                 const CaChunkID *chunk_id,
                 CaChunkCompression effective_compression,
                 const void *data,
-                size_t size) {
+                uint64_t size) {
 
         if (!store)
                 return -EINVAL;

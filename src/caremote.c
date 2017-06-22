@@ -2021,7 +2021,7 @@ int ca_remote_request(
                 bool high_priority,
                 CaChunkCompression desired_compression,
                 const void **ret,
-                size_t *ret_size,
+                uint64_t *ret_size,
                 CaChunkCompression *ret_effective_compression) {
 
         CaChunkCompression compression;
@@ -2134,7 +2134,7 @@ int ca_remote_put_chunk(
                 const CaChunkID *chunk_id,
                 CaChunkCompression compression,
                 const void *data,
-                size_t size) {
+                uint64_t size) {
 
         CaProtocolChunk *chunk;
         uint64_t msz;

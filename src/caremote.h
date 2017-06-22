@@ -59,14 +59,14 @@ int ca_remote_step(CaRemote *rr);
 int ca_remote_poll(CaRemote *rr, uint64_t timeout_nsec, const sigset_t *ss);
 
 /* When we are in "pull" mode, interfaces for retrieving chunks, or enqueing requests for them */
-int ca_remote_request(CaRemote *rr, const CaChunkID *chunk_id, bool priority, CaChunkCompression desired_compression, const void **ret, size_t *ret_size, CaChunkCompression *ret_effective_compression);
+int ca_remote_request(CaRemote *rr, const CaChunkID *chunk_id, bool priority, CaChunkCompression desired_compression, const void **ret, uint64_t *ret_size, CaChunkCompression *ret_effective_compression);
 int ca_remote_request_async(CaRemote *rr, const CaChunkID *chunk_id, bool priority);
 int ca_remote_next_chunk(CaRemote *rr, CaChunkCompression desired_compression, CaChunkID *ret_id, const void **ret_data, size_t *ret_size, CaChunkCompression *ret_compression);
 
 /* When we are in "push" mode, interfaces for processing requests and pushing chunks */
 int ca_remote_next_request(CaRemote *rr, CaChunkID *ret);
 int ca_remote_can_put_chunk(CaRemote *rr);
-int ca_remote_put_chunk(CaRemote *rr, const CaChunkID *chunk_id, CaChunkCompression compression, const void *data, size_t size);
+int ca_remote_put_chunk(CaRemote *rr, const CaChunkID *chunk_id, CaChunkCompression compression, const void *data, uint64_t size);
 int ca_remote_put_missing(CaRemote *rr, const CaChunkID *chunk_id);
 
 /* pull mode: Read index data */

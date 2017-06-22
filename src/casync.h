@@ -29,7 +29,7 @@ CaSync *ca_sync_new_encode(void);
 CaSync *ca_sync_new_decode(void);
 CaSync *ca_sync_unref(CaSync *sync);
 
-int ca_sync_set_rate_limit_bps(CaSync *s, size_t rate_limit_bps);
+int ca_sync_set_rate_limit_bps(CaSync *s, uint64_t rate_limit_bps);
 
 int ca_sync_set_feature_flags(CaSync *s, uint64_t flags);
 int ca_sync_get_feature_flags(CaSync *s, uint64_t *ret);
@@ -103,19 +103,19 @@ int ca_sync_current_xattr(CaSync *sync, CaIterate where, const char **ret_name, 
 int ca_sync_get_archive_size(CaSync *s, uint64_t *ret);
 
 /* Low level chunk access */
-int ca_sync_get_local(CaSync *s, const CaChunkID *chunk_id, CaChunkCompression desired_compression, const void **ret, size_t *ret_size, CaChunkCompression *ret_effective_compression, CaOrigin **ret_origin);
-int ca_sync_get(CaSync *s, const CaChunkID *chunk_id, CaChunkCompression desired_compression, const void **ret, size_t *ret_size, CaChunkCompression *ret_effective_compression, CaOrigin **ret_origin);
+int ca_sync_get_local(CaSync *s, const CaChunkID *chunk_id, CaChunkCompression desired_compression, const void **ret, uint64_t *ret_size, CaChunkCompression *ret_effective_compression, CaOrigin **ret_origin);
+int ca_sync_get(CaSync *s, const CaChunkID *chunk_id, CaChunkCompression desired_compression, const void **ret, uint64_t *ret_size, CaChunkCompression *ret_effective_compression, CaOrigin **ret_origin);
 int ca_sync_has_local(CaSync *s, const CaChunkID *chunk_id);
 
 int ca_sync_make_chunk_id(CaSync *s, const void *p, size_t l, CaChunkID *ret);
 
-int ca_sync_set_chunk_size_min(CaSync *s, size_t v);
-int ca_sync_set_chunk_size_avg(CaSync *s, size_t v);
-int ca_sync_set_chunk_size_max(CaSync *s, size_t v);
+int ca_sync_set_chunk_size_min(CaSync *s, uint64_t v);
+int ca_sync_set_chunk_size_avg(CaSync *s, uint64_t v);
+int ca_sync_set_chunk_size_max(CaSync *s, uint64_t v);
 
-int ca_sync_get_chunk_size_avg(CaSync *s, size_t *ret);
-int ca_sync_get_chunk_size_min(CaSync *s, size_t *ret);
-int ca_sync_get_chunk_size_max(CaSync *s, size_t *ret);
+int ca_sync_get_chunk_size_avg(CaSync *s, uint64_t *ret);
+int ca_sync_get_chunk_size_min(CaSync *s, uint64_t *ret);
+int ca_sync_get_chunk_size_max(CaSync *s, uint64_t *ret);
 
 int ca_sync_current_archive_chunks(CaSync *s, uint64_t *ret);
 int ca_sync_current_archive_reused_chunks(CaSync *s, uint64_t *ret);

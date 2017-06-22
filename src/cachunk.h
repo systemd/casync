@@ -30,7 +30,7 @@ int ca_chunk_file_open(int cache_fd, const char *prefix, const CaChunkID *chunki
 
 int ca_chunk_file_test(int cache_fd, const char *prefix, const CaChunkID *chunkid);
 int ca_chunk_file_load(int cache_fd, const char *prefix, const CaChunkID *chunkid, CaChunkCompression desired_compression, ReallocBuffer *buffer, CaChunkCompression *ret_effective_compression);
-int ca_chunk_file_save(int cache_fd, const char *prefix, const CaChunkID *chunkid, CaChunkCompression effective_compression, CaChunkCompression desired_compression, const void *p, size_t l);
+int ca_chunk_file_save(int cache_fd, const char *prefix, const CaChunkID *chunkid, CaChunkCompression effective_compression, CaChunkCompression desired_compression, const void *p, uint64_t l);
 int ca_chunk_file_mark_missing(int cache_fd, const char *prefix, const CaChunkID *chunkid);
 int ca_chunk_file_remove(int chunk_fd, const char *prefix, const CaChunkID *chunkid);
 
