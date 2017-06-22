@@ -8,7 +8,7 @@
 
 int main(int argc, char *argv[]) {
         ReallocBuffer buffer = {};
-        size_t frame_size = 0, skip_size = 0;
+        uint64_t frame_size = 0, skip_size = 0;
         int fd = -1, r;
 
         if (argc != 2) {
@@ -26,7 +26,7 @@ int main(int argc, char *argv[]) {
 
         for (;;) {
                 CaFormatHeader *h;
-                size_t sz;
+                uint64_t sz;
 
                 sz = realloc_buffer_size(&buffer);
 

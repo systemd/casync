@@ -18,7 +18,7 @@ int main(int argc, char*argv[]) {
 
         for (;;) {
                 CaChunkID id;
-                size_t size;
+                uint64_t size;
                 char ids[CA_CHUNK_ID_FORMAT_MAX];
 
                 r = ca_index_read_chunk(index, &id, NULL, &size);

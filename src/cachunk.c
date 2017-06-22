@@ -704,7 +704,7 @@ int ca_chunk_file_save(
                 CaChunkCompression effective_compression,
                 CaChunkCompression desired_compression,
                 const void *p,
-                size_t l) {
+                uint64_t l) {
 
         char *suffix;
         int fd, r;

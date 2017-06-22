@@ -148,7 +148,7 @@ static void help(void) {
 }
 
 static int parse_chunk_sizes(const char *v, size_t *ret_min, size_t *ret_avg, size_t *ret_max) {
-        size_t a, b, c;
+        uint64_t a, b, c;
         char *k;
         int r;
 
@@ -690,7 +690,7 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
 }
 
 static int load_chunk_size(CaSync *s) {
-        size_t cavg, cmin, cmax;
+        uint64_t cavg, cmin, cmax;
         int r;
 
         if (arg_chunk_size_avg != 0) {
@@ -738,7 +738,7 @@ static int load_chunk_size(CaSync *s) {
                 return r;
         }
 
-        fprintf(stderr, "Selected chunk sizes: min=%zu..avg=%zu..max=%zu\n", cmin, cavg, cmax);
+        fprintf(stderr, "Selected chunk sizes: min=%"PRIu64"..avg=%"PRIu64"..max=%"PRIu64"\n", cmin, cavg, cmax);
         return 1;
 }
 
@@ -3380,7 +3380,7 @@ static int verb_pull(int argc, char *argv[]) {
                         bool found = false;
                         const void *p;
                         CaChunkID id;
-                        size_t l;
+                        uint64_t l;
 
                         r = ca_remote_can_put_chunk(rr);
                         if (r < 0) {

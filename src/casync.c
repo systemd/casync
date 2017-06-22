@@ -48,7 +48,7 @@ typedef struct CaSync {
         CaRemote *remote_archive;
 
         CaChunkID next_chunk;
-        size_t next_chunk_size;
+        uint64_t next_chunk_size;
         bool next_chunk_valid;
 
         CaStore *wstore;
@@ -115,9 +115,9 @@ typedef struct CaSync {
         uid_t uid_shift;
         uid_t uid_range; /* uid_range == 0 means "full range" */
 
-        size_t chunk_size_min;
-        size_t chunk_size_avg;
-        size_t chunk_size_max;
+        uint64_t chunk_size_min;
+        uint64_t chunk_size_avg;
+        uint64_t chunk_size_max;
 } CaSync;
 
 static CaSync *ca_sync_new(void) {
@@ -166,7 +166,7 @@ CaSync *ca_sync_new_decode(void) {
         return s;
 }
 
-int ca_sync_set_chunk_size_min(CaSync *s, size_t v) {
+int ca_sync_set_chunk_size_min(CaSync *s, uint64_t v) {
         int r;
 
         if (!s)
@@ -180,7 +180,7 @@ int ca_sync_set_chunk_size_min(CaSync *s, size_t v) {
         return 0;
 }
 
-int ca_sync_set_chunk_size_avg(CaSync *s, size_t v) {
+int ca_sync_set_chunk_size_avg(CaSync *s, uint64_t v) {
         int r;
 
         if (!s)
@@ -194,7 +194,7 @@ int ca_sync_set_chunk_size_avg(CaSync *s, size_t v) {
         return 0;
 }
 
-int ca_sync_set_chunk_size_max(CaSync *s, size_t v) {
+int ca_sync_set_chunk_size_max(CaSync *s, uint64_t v) {
         int r;
 
         if (!s)
@@ -208,7 +208,7 @@ int ca_sync_set_chunk_size_max(CaSync *s, size_t v) {
         return 0;
 }
 
-int ca_sync_get_chunk_size_avg(CaSync *s, size_t *ret) {
+int ca_sync_get_chunk_size_avg(CaSync *s, uint64_t *ret) {
         if (!s)
                 return -EINVAL;
         if (!ret)
@@ -218,7 +218,7 @@ int ca_sync_get_chunk_size_avg(CaSync *s, size_t *ret) {
         return 0;
 }
 
-int ca_sync_get_chunk_size_min(CaSync *s, size_t *ret) {
+int ca_sync_get_chunk_size_min(CaSync *s, uint64_t *ret) {
         if (!s)
                 return -EINVAL;
         if (!ret)
@@ -228,7 +228,7 @@ int ca_sync_get_chunk_size_min(CaSync *s, size_t *ret) {
         return 0;
 }
 
-int ca_sync_get_chunk_size_max(CaSync *s, size_t *ret) {
+int ca_sync_get_chunk_size_max(CaSync *s, uint64_t *ret) {
         if (!s)
                 return -EINVAL;
         if (!ret)
@@ -459,7 +459,7 @@ CaSync *ca_sync_unref(CaSync *s) {
         return NULL;
 }
 
-int ca_sync_set_rate_limit_bps(CaSync *s, size_t rate_limit_bps) {
+int ca_sync_set_rate_limit_bps(CaSync *s, uint64_t rate_limit_bps) {
         if (!s)
                 return -EINVAL;
 
@@ -2247,7 +2247,7 @@ static int ca_sync_remote_push_index(CaSync *s) {
 static int ca_sync_remote_push_chunk(CaSync *s) {
         const void *p;
         CaChunkID id;
-        size_t l;
+        uint64_t l;
         int r;
 
         assert(s);
@@ -2497,7 +2497,7 @@ int ca_sync_get_local(
                 const CaChunkID *chunk_id,
                 CaChunkCompression desired_compression,
                 const void **ret,
-                size_t *ret_size,
+                uint64_t *ret_size,
                 CaChunkCompression *ret_effective_compression,
                 CaOrigin **ret_origin) {
 
@@ -2599,7 +2599,7 @@ int ca_sync_get(CaSync *s,
                 const CaChunkID *chunk_id,
                 CaChunkCompression desired_compression,
                 const void **ret,
-                size_t *ret_size,
+                uint64_t *ret_size,
                 CaChunkCompression *ret_effective_compression,
                 CaOrigin **ret_origin) {
 
