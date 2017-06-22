@@ -29,15 +29,17 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/extract.digest
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/extract2.digest
 
 if [ `id -u` == 0 ] ; then
-    modprobe nbd
+    modprobe nbd ||:
 
-    MKDEV_PID=`@top_builddir@/notify-wait @top_builddir@/casync $PARAMS mkdev $SCRATCH_DIR/test.caibx $SCRATCH_DIR/test-node`
+    if test -e /dev/nbd0 ; then
+        MKDEV_PID=`@top_builddir@/notify-wait @top_builddir@/casync $PARAMS mkdev $SCRATCH_DIR/test.caibx $SCRATCH_DIR/test-node`
 
-    dd if=$SCRATCH_DIR/test-node bs=102400 count=80 | sha256sum | cut -c -64 > $SCRATCH_DIR/mkdev.digest
+        dd if=$SCRATCH_DIR/test-node bs=102400 count=80 | sha256sum | cut -c -64 > $SCRATCH_DIR/mkdev.digest
 
-    diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/mkdev.digest
+        diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/mkdev.digest
 
-    kill $MKDEV_PID
+        kill $MKDEV_PID
+    fi
 fi
 
 rm -rf $SCRATCH_DIR
