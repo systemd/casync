@@ -104,12 +104,13 @@ static inline void* mfree(void* p) {
         return NULL;
 }
 
-#define assert_se(x)                                                 \
-        do {                                                         \
-                if (!(x)) {                                          \
-                        fputs("Assertion failed: " #x "\n", stderr); \
-                        abort();                                     \
-                }                                                    \
+#define assert_se(x)                                                      \
+        do {                                                              \
+                if (!(x)) {                                               \
+                        fprintf(stderr, "%s:%d (%s): assertion failed:" #x "\n", \
+                                __FILE__, __LINE__, __PRETTY_FUNCTION__); \
+                        abort();                                          \
+                }                                                         \
         } while(false)
 
 static inline int safe_close(int fd) {
