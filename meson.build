@@ -154,10 +154,15 @@ meson.add_install_script('sh', '-c',
 meson.add_install_script('sh', '-c',
                          'ln -svf casync-http $DESTDIR@0@'.format(
                                  join_paths(protocoldir, 'casync-ftp')))
+meson.add_install_script('sh', '-c',
+                         'ln -svf casync-http $DESTDIR@0@'.format(
+                                 join_paths(protocoldir, 'casync-sftp')))
 meson.add_postconf_script('sh', '-c',
                          'ln -svf casync-http $MESON_BUILD_ROOT/casync-https')
 meson.add_postconf_script('sh', '-c',
                          'ln -svf casync-http $MESON_BUILD_ROOT/casync-ftp')
+meson.add_postconf_script('sh', '-c',
+                         'ln -svf casync-http $MESON_BUILD_ROOT/casync-sftp')
 
 ############################################################
 

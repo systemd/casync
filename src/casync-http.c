@@ -13,6 +13,7 @@ static enum {
         ARG_PROTOCOL_HTTP,
         ARG_PROTOCOL_FTP,
         ARG_PROTOCOL_HTTPS,
+        ARG_PROTOCOL_SFTP,
         _ARG_PROTOCOL_INVALID = -1,
 } arg_protocol = _ARG_PROTOCOL_INVALID;
 
@@ -311,9 +312,21 @@ static int acquire_file(CaRemote *rr,
                 char *m;
 
                 if (arg_verbose)
-                        fprintf(stderr, "FTP server failure %li while requesting %s.n", protocol_status, url);
+                        fprintf(stderr, "FTP server failure %li while requesting %s.\n", protocol_status, url);
 
                 if (asprintf(&m, "FTP request on %s failed with status %li", url, protocol_status) < 0)
+                        return log_oom();
+
+                (void) ca_remote_abort(rr, EBADR, m);
+                free(m);
+                return 0;
+        } else if (arg_protocol == ARG_PROTOCOL_SFTP && (protocol_status != 0)) {
+                char *m;
+
+                if (arg_verbose)
+                        fprintf(stderr, "SFTP server failure %li while requesting %s.\n", protocol_status, url);
+
+                if (asprintf(&m, "SFTP request on %s failed with status %li", url, protocol_status) < 0)
                         return log_oom();
 
                 (void) ca_remote_abort(rr, EBADR, m);
@@ -391,8 +404,9 @@ static int run(int argc, char *argv[]) {
                 goto finish;
         }
 
-        if (curl_easy_setopt(curl, CURLOPT_PROTOCOLS, arg_protocol == ARG_PROTOCOL_FTP ? CURLPROTO_FTP : CURLPROTO_HTTP|CURLPROTO_HTTPS) != CURLE_OK) {
-                fprintf(stderr, "Failed to limit protocols to HTTP/HTTPS/FTP.\n");
+        if (curl_easy_setopt(curl, CURLOPT_PROTOCOLS, arg_protocol == ARG_PROTOCOL_FTP ? CURLPROTO_FTP : 
+				                      arg_protocol == ARG_PROTOCOL_SFTP? CURLPROTO_SFTP: CURLPROTO_HTTP|CURLPROTO_HTTPS) != CURLE_OK) {
+                fprintf(stderr, "Failed to limit protocols to HTTP/HTTPS/FTP/SFTP.\n");
                 r = -EIO;
                 goto finish;
         }
@@ -530,7 +544,8 @@ static int run(int argc, char *argv[]) {
                         goto finish;
 
                 if ((IN_SET(arg_protocol, ARG_PROTOCOL_HTTP, ARG_PROTOCOL_HTTPS) && protocol_status == 200) ||
-                    (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status >= 200 && protocol_status <= 299))) {
+                    (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status >= 200 && protocol_status <= 299))||
+                    (arg_protocol == ARG_PROTOCOL_SFTP && (protocol_status == 0))) {
 
                         r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
                         if (r < 0) {
@@ -540,7 +555,7 @@ static int run(int argc, char *argv[]) {
 
                 } else {
                         if (arg_verbose)
-                                fprintf(stderr, "HTTP/FTP server failure %li while requesting %s.\n", protocol_status, url_buffer);
+                                fprintf(stderr, "HTTP/FTP/SFTP server failure %li while requesting %s.\n", protocol_status, url_buffer);
 
                         r = ca_remote_put_missing(rr, &id);
                         if (r < 0) {
@@ -597,6 +612,8 @@ static int parse_argv(int argc, char *argv[]) {
                 arg_protocol = ARG_PROTOCOL_HTTPS;
         else if (strstr(argv[0], "http"))
                 arg_protocol = ARG_PROTOCOL_HTTP;
+        else if (strstr(argv[0], "sftp"))
+                arg_protocol = ARG_PROTOCOL_SFTP;
         else if (strstr(argv[0], "ftp"))
                 arg_protocol = ARG_PROTOCOL_FTP;
         else {
