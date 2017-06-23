@@ -411,6 +411,12 @@ static int run(int argc, char *argv[]) {
                 goto finish;
         }
 
+	if(arg_protocol == ARG_PROTOCOL_SFTP) {
+		/* activate the ssh agent. For this to work you need
+		   to have ssh-agent running (type set | grep SSH_AGENT to check) */
+		curl_easy_setopt(curl, CURLOPT_SSH_AUTH_TYPES, CURLSSH_AUTH_AGENT);
+	}
+
         if (arg_rate_limit_bps > 0) {
                 if (curl_easy_setopt(curl, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
                         fprintf(stderr, "Failed to set CURL send speed limit.\n");
