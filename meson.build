@@ -250,9 +250,7 @@ endforeach
 ############################################################
 
 git = find_program('git', required : false)
-etags = find_program('etags', required : false)
-
-if git.found() and etags.found()
+if git.found()
         all_files = run_command(
                 git,
                 ['--git-dir=@0@/.git'.format(meson.source_root()),
@@ -260,8 +258,6 @@ if git.found() and etags.found()
                  ':/*.[ch]'])
         all_files = files(all_files.stdout().split())
 
-        run_target(
-                'TAGS',
-                input : all_files,
-                command : [etags, '-o', '@0@/TAGS'.format(meson.source_root())] + all_files)
+        run_target('tags', command : ['env', 'etags', '-o', '@0@/@1@'.format(meson.source_root(), 'tags')] + all_files)
+        run_target('ctags', command : ['env', 'ctags', '-o', '@0@/@1@'.format(meson.source_root(), 'tags')] + all_files)
 endif
