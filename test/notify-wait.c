@@ -74,12 +74,7 @@ int main(int argc, char *argv[]) {
         assert_se(sa.un.sun_family == AF_UNIX);
         assert_se(sa.un.sun_path[0] == 0);
 
-        e = new(char, salen - offsetof(struct sockaddr_un, sun_path) + 1);
-        if (!e) {
-                r = log_oom();
-                goto finish;
-        }
-
+        e = newa(char, salen - offsetof(struct sockaddr_un, sun_path) + 1);
         e[0] = '@';
         memcpy(e + 1, sa.un.sun_path + 1, salen - offsetof(struct sockaddr_un, sun_path) - 1);
         e[salen - offsetof(struct sockaddr_un, sun_path)] = 0;
