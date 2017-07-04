@@ -404,18 +404,19 @@ static int run(int argc, char *argv[]) {
                 goto finish;
         }
 
-        if (curl_easy_setopt(curl, CURLOPT_PROTOCOLS, arg_protocol == ARG_PROTOCOL_FTP ? CURLPROTO_FTP : 
-				                      arg_protocol == ARG_PROTOCOL_SFTP? CURLPROTO_SFTP: CURLPROTO_HTTP|CURLPROTO_HTTPS) != CURLE_OK) {
+        if (curl_easy_setopt(curl, CURLOPT_PROTOCOLS, arg_protocol == ARG_PROTOCOL_FTP ? CURLPROTO_FTP :
+                                                      arg_protocol == ARG_PROTOCOL_SFTP? CURLPROTO_SFTP: CURLPROTO_HTTP|CURLPROTO_HTTPS) != CURLE_OK) {
                 fprintf(stderr, "Failed to limit protocols to HTTP/HTTPS/FTP/SFTP.\n");
                 r = -EIO;
                 goto finish;
         }
 
-	if(arg_protocol == ARG_PROTOCOL_SFTP) {
-		/* activate the ssh agent. For this to work you need
-		   to have ssh-agent running (type set | grep SSH_AGENT to check) */
-		curl_easy_setopt(curl, CURLOPT_SSH_AUTH_TYPES, CURLSSH_AUTH_AGENT);
-	}
+        if (arg_protocol == ARG_PROTOCOL_SFTP) {
+                /* activate the ssh agent. For this to work you need
+                   to have ssh-agent running (type set | grep SSH_AGENT to check) */
+                if (curl_easy_setopt(curl, CURLOPT_SSH_AUTH_TYPES, CURLSSH_AUTH_AGENT) != CURLE_OK)
+                        fprintf(stderr, "Failed to turn on ssh agent support, ignoring.\n");
+        }
 
         if (arg_rate_limit_bps > 0) {
                 if (curl_easy_setopt(curl, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
