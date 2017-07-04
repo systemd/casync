@@ -224,10 +224,10 @@ int ca_block_device_step(CaBlockDevice *d) {
         if (be32toh(d->last_request.len) == 0)
                 return -EBADMSG;
 
-        fprintf(stderr, "Got request for +%" PRIu64 " (%" PRIu32 ") fsize=%" PRIu64 "\n",
-                be64toh(d->last_request.from),
-                be32toh(d->last_request.len),
-                d->size);
+        /* fprintf(stderr, "Got request for +%" PRIu64 " (%" PRIu32 ") fsize=%" PRIu64 "\n", */
+        /*         be64toh(d->last_request.from), */
+        /*         be32toh(d->last_request.len), */
+        /*         d->size); */
 
         return CA_BLOCK_DEVICE_REQUEST;
 }
