@@ -85,8 +85,6 @@ bool ca_is_ssh_path(const char *s) {
                 if (s[n + 1 + k] != ':')
                         return false;
 
-                n += 1 + k;
-
         } else if (s[n] != ':')
                 return false;
 
