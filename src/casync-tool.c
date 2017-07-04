@@ -2998,8 +2998,6 @@ static int verb_mkdev(int argc, char *argv[]) {
                 goto finish;
         }
 
-        printf("Attached: %s\n", path);
-
         if (make_symlink) {
                 if (symlink(path, name) < 0) {
                         r = -errno;
@@ -3009,6 +3007,8 @@ static int verb_mkdev(int argc, char *argv[]) {
 
                 rm_symlink = true;
         }
+
+        printf("Attached: %s\n", name ?: path);
 
         (void) send_notify("READY=1");
 
