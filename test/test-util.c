@@ -11,9 +11,13 @@
 int main(int argc, char *argv[]) {
         uint8_t buffer[PART1 + PART2 + PART3 + PART4 + PART5];
         uint8_t buffer2[sizeof(buffer)];
-        char fn[] = "/tmp/zeroXXXXXX";
+        char *fn;
         int fd, p[2];
         uint64_t n_punched;
+        const char *d;
+
+        assert_se(tmp_dir(&d) >= 0);
+        fn = strjoina(d, "/zeroXXXXXX");
 
         memzero(buffer, PART1);
         dev_urandom(buffer + PART1, PART2);

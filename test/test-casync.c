@@ -6,6 +6,7 @@
 #include "util.h"
 
 int main(int argc, char *argv[]) {
+        const char *d;
         char *teststore, *testindex, *testtree;
         CaSync *s;
         int r, base_fd;
@@ -13,11 +14,13 @@ int main(int argc, char *argv[]) {
         char t[CA_CHUNK_ID_FORMAT_MAX];
         uint64_t flags;
 
-        r = asprintf(&teststore, "/var/tmp/teststore.%" PRIx64, random_u64());
+        assert(var_tmp_dir(&d) >= 0);
+
+        r = asprintf(&teststore, "%s/teststore.%" PRIx64, d, random_u64());
         assert_se(r >= 0);
-        asprintf(&testindex, "/var/tmp/testindex.%" PRIx64, random_u64());
+        asprintf(&testindex, "%s/testindex.%" PRIx64, d, random_u64());
         assert_se(r >= 0);
-        r = asprintf(&testtree, "/var/tmp/testtree.%" PRIx64, random_u64());
+        r = asprintf(&testtree, "%s/testtree.%" PRIx64, d, random_u64());
         assert_se(r >= 0);
 
         assert_se(s = ca_sync_new_encode());

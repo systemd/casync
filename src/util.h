@@ -674,4 +674,15 @@ int rename_noreplace(int olddirfd, const char *oldpath, int newdirfd, const char
 
 char* path_startswith(const char *path, const char *prefix);
 
+static inline bool path_is_absolute(const char *p) {
+        return p && p[0] == '/';
+}
+
+int var_tmp_dir(const char **ret);
+int tmp_dir(const char **ret);
+
+bool path_is_safe(const char *p);
+
+int is_dir(const char* path, bool follow);
+
 #endif

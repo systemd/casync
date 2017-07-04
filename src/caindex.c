@@ -213,7 +213,13 @@ static int ca_index_open_fd(CaIndex *i) {
                                 if (r < 0)
                                         return r;
                         } else {
-                                if (asprintf(&i->temporary_path, "/var/tmp/%" PRIx64 ".caidx", random_u64()) < 0)
+                                const char *d;
+
+                                r = var_tmp_dir(&d);
+                                if (r < 0)
+                                        return r;
+
+                                if (asprintf(&i->temporary_path, "%s/%" PRIx64 ".caidx", d, random_u64()) < 0)
                                         return -ENOMEM;
                         }
                 }

@@ -5,7 +5,7 @@ PARAMS=-v
 CASYNC_PROTOCOL_PATH=@top_builddir@
 export CASYNC_PROTOCOL_PATH
 
-SCRATCH_DIR=/var/tmp/test-casync.$RANDOM
+SCRATCH_DIR=${TMPDIR:-/var/tmp}/test-casync.$RANDOM
 mkdir -p $SCRATCH_DIR
 
 dd if=/dev/urandom of=$SCRATCH_DIR/blob bs=102400 count=80

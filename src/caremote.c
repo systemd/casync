@@ -650,13 +650,21 @@ int ca_remote_set_archive_fd(CaRemote *rr, int fd) {
 }
 
 static int ca_remote_init_cache(CaRemote *rr) {
+        int r;
+
         assert(rr);
 
         if (rr->cache_fd >= 0)
                 return 0;
 
         if (!rr->cache_path) {
-                if (asprintf(&rr->cache_path, "/var/tmp/%" PRIx64 ".carem", random_u64()) < 0)
+                const char *d;
+
+                r = var_tmp_dir(&d);
+                if (r < 0)
+                        return r;
+
+                if (asprintf(&rr->cache_path, "%s/%" PRIx64 ".carem", d, random_u64()) < 0)
                         return -ENOMEM;
 
                 rr->remove_cache = true;

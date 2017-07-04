@@ -5,7 +5,7 @@ PARAMS="--with=fuse"
 CASYNC_PROTOCOL_PATH=@top_builddir@
 export CASYNC_PROTOCOL_PATH
 
-SCRATCH_DIR=/var/tmp/test-casync.$RANDOM
+SCRATCH_DIR=${TMPDIR:-/var/tmp}/test-casync.$RANDOM
 mkdir -p $SCRATCH_DIR/src
 
 if [ `id -u` == 0 ] ; then

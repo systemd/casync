@@ -221,9 +221,13 @@ finish:
 }
 
 int main(int argc, char *argv[]) {
-        char t[] = "/var/tmp/castream-test.XXXXXX";
         int fd = -1, dfd = -1, r;
         bool do_unlink = false;
+        const char *d;
+        char *t;
+
+        assert(var_tmp_dir(&d) >= 0);
+        t = strjoina(d, "/castream-test.XXXXXX");
 
         dfd = open(argc > 1 ? argv[1] : ".", O_CLOEXEC|O_RDONLY|O_NOCTTY);
         if (dfd < 0) {

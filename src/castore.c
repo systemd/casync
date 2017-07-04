@@ -15,7 +15,7 @@
 
 struct CaStore {
         char *root;
-        bool destroy;
+        bool is_cache;
         ReallocBuffer buffer;
 
         CaChunkCompression compression;
@@ -39,14 +39,9 @@ CaStore *ca_store_new_cache(void) {
         if (!s)
                 return NULL;
 
-        s->destroy = true;
-
-        if (asprintf(&s->root, "/var/tmp/%" PRIx64 ".castr/", random_u64()) < 0) {
-                free(s);
-                return NULL;
-        }
-
+        s->is_cache = true;
         s->compression = CA_CHUNK_AS_IS;
+
         return s;
 }
 
@@ -54,7 +49,7 @@ CaStore* ca_store_unref(CaStore *store) {
         if (!store)
                 return NULL;
 
-        if (store->destroy && store->root)
+        if (store->is_cache && store->root)
                 (void) rm_rf(store->root, REMOVE_ROOT|REMOVE_PHYSICAL);
 
         free(store->root);
@@ -111,7 +106,7 @@ int ca_store_get(
         if (!ret_size)
                 return -EINVAL;
         if (!store->root)
-                return -EUNATCH;
+                return store->is_cache ? -ENOENT : -EUNATCH;
 
         realloc_buffer_empty(&store->buffer);
 
@@ -130,7 +125,7 @@ int ca_store_has(CaStore *store, const CaChunkID *chunk_id) {
         if (!store)
                 return -EINVAL;
         if (!store->root)
-                return -EUNATCH;
+                return store->is_cache ? -ENOENT : -EUNATCH;
 
         return ca_chunk_file_test(AT_FDCWD, store->root, chunk_id);
 }
@@ -142,10 +137,24 @@ int ca_store_put(
                 const void *data,
                 uint64_t size) {
 
+        int r;
+
         if (!store)
                 return -EINVAL;
-        if (!store->root)
-                return -EUNATCH;
+
+        if (!store->root) {
+                const char *d;
+
+                if (!store->is_cache)
+                        return -EUNATCH;
+
+                r = var_tmp_dir(&d);
+                if (r < 0)
+                        return r;
+
+                if (asprintf(&store->root, "%s/%" PRIx64 ".castr/", d, random_u64()) < 0)
+                        return -ENOMEM;
+        }
 
         if (mkdir(store->root, 0777) < 0 && errno != EEXIST)
                 return -errno;

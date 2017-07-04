@@ -7,8 +7,12 @@
 static void test_chunk_file(void) {
         uint8_t buffer[BUFFER_SIZE*4];
         ReallocBuffer rb = {}, rb2 = {};
-        char path[] = "/var/tmp/chunk-test.XXXXXX";
+        const char *d;
+        char *path;
         int fd, r;
+
+        assert(var_tmp_dir(&d) >= 0);
+        path = strjoina(d, "/chunk-test.XXXXXX");
 
         assert_se(dev_urandom(buffer, sizeof(buffer)) >= 0);
 
