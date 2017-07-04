@@ -22,8 +22,7 @@ static size_t find_bst(const int b[], size_t n, int x) {
 
 static void test_makebst_size(size_t n) {
         size_t i;
-
-        int a[n], b[n];
+        int a[MAX(1U, n)], b[MAX(1U, n)];
 
         for (i = 0; i < n; i++) {
                 a[i] = (int) i;
