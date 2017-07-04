@@ -5,8 +5,9 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/sysmacros.h>
+#include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <time.h>
 
 #include "cachunk.h"
@@ -2903,16 +2904,27 @@ static int verb_mkdev(int argc, char *argv[]) {
         if (name) {
                 r = ca_block_device_test_nbd(name);
                 if (r < 0) {
-                        fprintf(stderr, "Failed to test whether %s is an nbd device: %m\n", strerror(-r));
+                        fprintf(stderr, "Failed to test whether %s is an nbd device: %s\n", name, strerror(-r));
                         goto finish;
                 } else if (r > 0) {
                         r = ca_block_device_set_path(nbd, name);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to set device path to %s: %m\n", strerror(-r));
+                                fprintf(stderr, "Failed to set device path to %s: %s\n", name, strerror(-r));
                                 goto finish;
                         }
-                } else
-                        make_symlink = true;
+                } else {
+                        const char *k;
+
+                        k = path_startswith(name, "/dev");
+                        if (k) {
+                                r = ca_block_device_set_friendly_name(nbd, k);
+                                if (r < 0) {
+                                        fprintf(stderr, "Failed to set friendly name to %s: %s\n", k, strerror(-r));
+                                        goto finish;
+                                }
+                        } else
+                                make_symlink = true;
+                }
         }
 
         /* First loop: process as enough so that we can figure out the size of the blob */
@@ -3784,6 +3796,78 @@ finish:
         return r;
 }
 
+static int verb_udev(int argc, char *argv[]) {
+        const char *e;
+        char pretty[FILENAME_MAX+1];
+        const char *p;
+        int fd, r;
+        ssize_t n;
+
+        if (argc != 2) {
+                fprintf(stderr, "Expected one argument.\n");
+                return -EINVAL;
+        }
+
+        e = path_startswith(argv[1], "/dev");
+        if (!e || !filename_is_valid(e)) {
+                fprintf(stderr, "Argument is not a valid device node path: %s.\n", argv[2]);
+                return -EINVAL;
+        }
+
+        p = strjoina("/run/casync/", e);
+        fd = open(p, O_RDONLY|O_CLOEXEC|O_NOCTTY);
+        if (fd < 0) {
+                if (errno == ENOENT)
+                        return 0;
+
+                r = -errno;
+                fprintf(stderr, "Failed to open %s: %s\n", p, strerror(-r));
+                return r;
+        }
+
+        if (flock(fd, LOCK_SH|LOCK_NB) < 0) {
+
+                if (errno != EWOULDBLOCK) {
+                        r = -errno;
+                        fprintf(stderr, "Failed to check if %s is locked: %s\n", p, strerror(-r));
+                        return r;
+                }
+
+                /* If we got EWOULDBLOCK, everything is good, there's a casync locking this */
+
+        } else {
+                /* Uh? We managed to lock this file? in that case casync behind it died, let's ignore this, and quit immediately. */
+                safe_close(fd);
+                return 0;
+        }
+
+        n = read(fd, pretty, sizeof(pretty));
+        safe_close(fd);
+
+        if (n < 0) {
+                r = -errno;
+                fprintf(stderr, "Failed to read from %s: %s\n", p, strerror(-r));
+                return r;
+        }
+        if ((size_t) n >= sizeof(pretty)) {
+                fprintf(stderr, "Stored name read from %s too long.\n", p);
+                return -EINVAL;
+        }
+        if ((size_t) n <= 0 || pretty[n-1] != '\n') {
+                fprintf(stderr, "Stored name not newline terminated.\n");
+                return -EINVAL;
+        }
+
+        pretty[n-1] = 0;
+        if (!filename_is_valid(pretty)) {
+                fprintf(stderr, "Stored name is invalid: %s\n", pretty);
+                return -EINVAL;
+        }
+
+        printf("CASYNC_NAME=%s\n", pretty);
+        return 0;
+}
+
 static int dispatch_verb(int argc, char *argv[]) {
         int r;
 
@@ -3811,6 +3895,8 @@ static int dispatch_verb(int argc, char *argv[]) {
                 r = verb_pull(argc, argv);
         else if (streq(argv[0], "push")) /* Same here. */
                 r = verb_push(argc, argv);
+        else if (streq(argv[0], "udev")) /* "Secret" verb, only to be called by the udev nbd rules */
+                r = verb_udev(argc, argv);
         else {
                 fprintf(stderr, "Unknown verb '%s'. (Invoke '%s --help' for a list of available verbs.)\n", argv[0], program_invocation_short_name);
                 r = -EINVAL;

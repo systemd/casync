@@ -88,6 +88,7 @@ endif
 ############################################################
 
 prefixdir = get_option('prefix')
+bindir = join_paths(prefixdir, get_option('bindir'))
 datadir = join_paths(prefixdir, get_option('datadir'))
 docdir = join_paths(datadir, 'doc/casync')
 protocoldir = join_paths(prefixdir, 'lib/casync/protocols')
@@ -121,6 +122,9 @@ subdir('src')
 subdir('test')
 
 includes = include_directories('src')
+
+udevlibexecdir = join_paths(prefixdir, 'lib/udev')
+udevrulesdir = join_paths(udevlibexecdir, 'rules.d')
 
 ############################################################
 
@@ -184,6 +188,7 @@ run_target(
 substs = configuration_data()
 substs.set_quoted('top_builddir', meson.build_root())
 substs.set_quoted('top_srcdir', meson.source_root())
+substs.set('bindir_unquoted', bindir)
 
 test_script_sh = configure_file(
         output : 'test-script.sh',
@@ -208,6 +213,13 @@ test_fuse_sh = configure_file(
 test_fuse = find_program(test_fuse_sh)
 test('test-fuse.sh', test_fuse,
      timeout : 30 * 60)
+
+udev_rule = configure_file(
+          output : '75-casync.rules',
+          input : 'src/75-casync.rules.in',
+          configuration : substs)
+
+install_data(udev_rule, install_dir : udevrulesdir)
 
 ############################################################
 

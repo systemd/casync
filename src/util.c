@@ -1217,3 +1217,70 @@ char *truncate_nl(char *p) {
 
         return p;
 }
+
+int rename_noreplace(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
+        int r;
+
+        if (renameat2(olddirfd, oldpath, newdirfd, newpath, RENAME_NOREPLACE) >= 0)
+                return 0;
+
+        /* renameat2() exists since Linux 3.15, btrfs added support for it later.  If it is not implemented, fallback
+         * to another method. */
+        if (!IN_SET(errno, EINVAL, ENOSYS, EOPNOTSUPP))
+                return -errno;
+
+        /* Let's try linkat(). This will of course failure for non-files, but that's fine. */
+        if (linkat(olddirfd, oldpath, newdirfd, newpath, 0) < 0)
+                return -errno;
+
+        if (unlinkat(olddirfd, oldpath, 0) < 0) {
+                r = -errno;
+                (void) unlinkat(newdirfd, newpath, 0);
+                return r;
+        }
+
+        return 0;
+}
+
+char* path_startswith(const char *path, const char *prefix) {
+        assert(path);
+        assert(prefix);
+
+        /* Returns a pointer to the start of the first component after the parts matched by
+         * the prefix, iff
+         * - both paths are absolute or both paths are relative,
+         * and
+         * - each component in prefix in turn matches a component in path at the same position.
+         * An empty string will be returned when the prefix and path are equivalent.
+         *
+         * Returns NULL otherwise.
+         */
+
+        if ((path[0] == '/') != (prefix[0] == '/'))
+                return NULL;
+
+        for (;;) {
+                size_t a, b;
+
+                path += strspn(path, "/");
+                prefix += strspn(prefix, "/");
+
+                if (*prefix == 0)
+                        return (char*) path;
+
+                if (*path == 0)
+                        return NULL;
+
+                a = strcspn(path, "/");
+                b = strcspn(prefix, "/");
+
+                if (a != b)
+                        return NULL;
+
+                if (memcmp(path, prefix, a) != 0)
+                        return NULL;
+
+                path += a;
+                prefix += b;
+        }
+}

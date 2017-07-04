@@ -1,12 +1,16 @@
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <linux/nbd.h>
+#include <stddef.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/poll.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include "canbd.h"
 #include "util.h"
@@ -24,6 +28,10 @@ struct CaBlockDevice {
         struct nbd_request last_request;
 
         uint64_t size;
+
+        int friendly_name_fd;
+        char *friendly_name;
+        char *friendly_name_path;
 };
 
 CaBlockDevice *ca_block_device_new(void) {
@@ -33,7 +41,7 @@ CaBlockDevice *ca_block_device_new(void) {
         if (!d)
                 return NULL;
 
-        d->device_fd = d->socket_fd[0] = d->socket_fd[1] = -1;
+        d->device_fd = d->socket_fd[0] = d->socket_fd[1] = d->friendly_name_fd = -1;
         return d;
 }
 
@@ -58,6 +66,15 @@ CaBlockDevice *ca_block_device_unref(CaBlockDevice *d) {
 
         free(d->device_path);
 
+        safe_close(d->friendly_name_fd);
+        free(d->friendly_name);
+
+        if (d->friendly_name_path) {
+                (void) unlink(d->friendly_name_path);
+                free(d->friendly_name_path);
+                (void) rmdir("/run/casync");
+        }
+
         return mfree(d);
 }
 
@@ -74,6 +91,177 @@ int ca_block_device_set_size(CaBlockDevice *d, uint64_t size) {
 
         d->size = size;
         return 0;
+}
+
+int ca_block_device_set_friendly_name(CaBlockDevice *d, const char *name) {
+        char *m;
+
+        if (!d)
+                return -EINVAL;
+        if (isempty(name))
+                return -EINVAL;
+        if (!filename_is_valid(name))
+                return -EINVAL;
+        if (strlen(name) > sizeof(struct sockaddr_un) - offsetof(struct sockaddr_un, sun_path))
+                return -EINVAL;
+
+        if (d->friendly_name_fd >= 0)
+                return -EBUSY;
+
+        m = strdup(name);
+        if (!m)
+                return -ENOMEM;
+
+        free(d->friendly_name);
+        d->friendly_name = m;
+
+        return 0;
+}
+
+static int ca_block_device_establish_friendly_name(CaBlockDevice *d) {
+
+        int existing_fd = -1, r;
+        char *t = NULL, nl = '\n';
+        const char *e;
+        unsigned i;
+        ssize_t n;
+        size_t l;
+
+        if (!d)
+                return -EINVAL;
+
+        if (d->friendly_name_fd >= 0)
+                return -EBUSY;
+        if (!d->device_path)
+                return -EUNATCH;
+        if (!d->friendly_name)
+                return 0;
+
+        if (mkdir("/run/casync", 0755) < 0 && errno != EEXIST)
+                return -errno;
+
+        e = path_startswith(d->device_path, "/dev");
+        if (!e) {
+                r = -EINVAL;
+                goto fail;
+        }
+        if (!filename_is_valid(e)) {
+                r = -EINVAL;
+                goto fail;
+        }
+
+        free(d->friendly_name_path);
+        d->friendly_name_path = strjoin("/run/casync/", e);
+
+        if (asprintf(&t, "/run/casync/.#%s.%" PRIx64 ".tmp", e, random_u64()) < 0) {
+                r = -ENOMEM;
+                goto fail;
+        }
+
+        d->friendly_name_fd = open(t, O_CREAT|O_EXCL|O_RDWR|O_CLOEXEC, 0644);
+        if (d->friendly_name_fd < 0) {
+                r = -errno;
+                goto fail;
+        }
+
+        /* We use a BSD file lock here in a slightly creative way: the owning casync instance always owns a LOCK_EX
+         * (exclusive) lock on it. When it dies this lock is released. Other instances or the udev rule tool may
+         * attempt to take a LOCK_SH (shared) lock on it. If that succeeds, then the owning instance must be dead, and
+         * the file invalid. If it fails with EWOULDBLOCK however, then the exclusive lock is still in place, and thus
+         * the owning casync instance still running. */
+
+        if (flock(d->friendly_name_fd, LOCK_EX) < 0) {
+                r = -errno;
+                goto fail;
+        }
+
+        l = strlen(d->friendly_name);
+        n = writev(d->friendly_name_fd, (struct iovec[]) {
+                        { .iov_base = d->friendly_name, .iov_len = l },
+                        { .iov_base = &nl, .iov_len = 1 }}, 2);
+        if (n < 0) {
+                r = -errno;
+                goto fail;
+        }
+        if ((size_t) n != l + 1U) {
+                r = -EIO;
+                goto fail;
+        }
+
+        for (i = 0; i < 10; i++) {
+                struct stat st;
+
+                r = rename_noreplace(AT_FDCWD, t, AT_FDCWD, d->friendly_name_path);
+                if (r >= 0) {
+                        t = mfree(t);
+                        break;
+                }
+                if (r != -EEXIST)
+                        goto fail;
+
+                existing_fd = open(d->friendly_name_path, O_RDONLY|O_CLOEXEC|O_NOCTTY);
+                if (existing_fd < 0) {
+                        if (errno == ENOENT)
+                                continue;
+
+                        r = -errno;
+                        goto fail;
+                }
+
+                if (flock(existing_fd, LOCK_SH|LOCK_NB) < 0) {
+
+                        if (errno == EWOULDBLOCK) {
+
+                                /* The file is locked exclusively? If so, strange, some other casync instance still owns this device... */
+                                r = -EBUSY;
+                                goto fail;
+                        }
+
+                        r = -errno;
+                        goto fail;
+                }
+
+                /* We got the lock? This means the file isn't used anymore */
+
+                if (fstat(existing_fd, &st) < 0) {
+                        r = -errno;
+                        goto fail;
+                }
+
+                if (!S_ISREG(st.st_mode)) {
+                        r = -EINVAL;
+                        goto fail;
+                }
+
+                if (st.st_nlink > 0) {
+                        /* we own it, and it's not deleted already? then remove it, it's out of date */
+                        if (unlink(d->friendly_name_path) < 0) {
+                                r = -errno;
+                                goto fail;
+                        }
+                }
+
+                existing_fd = safe_close(existing_fd);
+        }
+
+        return 0;
+
+fail:
+        if (t) {
+                if (d->friendly_name_fd >= 0)
+                        (void) unlink(t);
+
+                free(t);
+        }
+
+        if (existing_fd >= 0)
+                safe_close(existing_fd);
+
+        d->friendly_name_path = mfree(d->friendly_name_path);
+
+        (void) rmdir("/run/casync");
+
+        return r;
 }
 
 int ca_block_device_open(CaBlockDevice *d) {
@@ -146,6 +334,10 @@ int ca_block_device_open(CaBlockDevice *d) {
                         i++;
                 }
         }
+
+        r = ca_block_device_establish_friendly_name(d);
+        if (r < 0)
+                goto fail;
 
         if (ioctl(d->device_fd, NBD_SET_BLKSIZE, (unsigned long) 512) < 0) {
                 r = -errno;

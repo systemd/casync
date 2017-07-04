@@ -670,4 +670,8 @@ static inline uint32_t rol32(uint32_t x, size_t i) {
 #define RENAME_EXCHANGE (1 << 1)
 #endif
 
+int rename_noreplace(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
+
+char* path_startswith(const char *path, const char *prefix);
+
 #endif

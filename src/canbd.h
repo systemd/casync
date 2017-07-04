@@ -31,6 +31,8 @@ int ca_block_device_poll(CaBlockDevice *d, uint64_t nsec, const sigset_t *ss);
 int ca_block_device_set_path(CaBlockDevice *d, const char *node);
 int ca_block_device_get_path(CaBlockDevice *d, const char **ret);
 
+int ca_block_device_set_friendly_name(CaBlockDevice *d, const char *name);
+
 int ca_block_device_test_nbd(const char *name);
 
 #endif
