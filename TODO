@@ -27,7 +27,6 @@ LATER:
 * when extracting, optionally make use of reduced feature bits than the archive contains
 * optionally import from/export to classic tar ball (and zip?)
 * optionally interpret aufs/union mount whiteout files?
-* mkdev: generate named device node symlinks cleanly via udev rule
 * fuse: expose acls and fcaps
 * fuse: possibly translate user names on access
 * fuse: provide "mount.casync" compat symlink so that people can list casync mounts in /etc/fstab
