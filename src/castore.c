@@ -15,7 +15,8 @@
 
 struct CaStore {
         char *root;
-        bool is_cache;
+        bool is_cache:1;
+        bool mkdir_done:1;
         ReallocBuffer buffer;
 
         CaChunkCompression compression;
@@ -156,8 +157,12 @@ int ca_store_put(
                         return -ENOMEM;
         }
 
-        if (mkdir(store->root, 0777) < 0 && errno != EEXIST)
-                return -errno;
+        if (!store->mkdir_done) {
+                if (mkdir(store->root, 0777) < 0 && errno != EEXIST)
+                        return -errno;
+
+                store->mkdir_done = true;
+        }
 
         return ca_chunk_file_save(AT_FDCWD, store->root, chunk_id, effective_compression, store->compression, data, size);
 }
