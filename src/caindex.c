@@ -1011,6 +1011,8 @@ int ca_index_seek(CaIndex *i, uint64_t offset, uint64_t *ret_skip) {
                 return -ENXIO;
 
         r = ca_index_get_total_chunks(i, &n_chunks);
+        if (r < 0)
+                return r;
         if (n_chunks == 0)
                 return -ENXIO;
 
