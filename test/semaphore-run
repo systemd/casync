@@ -11,7 +11,7 @@ set -eu
     sudo dpkg --add-architecture i386
     sudo apt-get update
 
-    sudo apt-get install -y $DEVPKGS rsync python3 meson
+    sudo apt-get install -y $DEVPKGS rsync python3 meson python-sphinx
 )
 
 echo

@@ -2,3 +2,5 @@
 
 option('fuse', type : 'boolean', value : true,
        description : 'build the fuse backend (requires fuse-devel)')
+option('man', type : 'boolean', value : true,
+       description : 'build and install man pages (requires spinx-build')

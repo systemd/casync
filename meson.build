@@ -128,6 +128,8 @@ includes = include_directories('src')
 udevlibexecdir = join_paths(prefixdir, 'lib/udev')
 udevrulesdir = join_paths(udevlibexecdir, 'rules.d')
 
+subdir('doc')
+
 ############################################################
 
 executable(
