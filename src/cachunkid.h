@@ -25,11 +25,17 @@ static inline bool ca_chunk_id_equal(const CaChunkID *a, const CaChunkID *b) {
         if (a == b)
                 return true;
 
+        if (!a || !b)
+                return false;
+
         return memcmp(a, b, sizeof(CaChunkID)) == 0;
 }
 
 static inline bool ca_chunk_id_is_null(const CaChunkID *a) {
         size_t i;
+
+        if (!a)
+                return true;
 
         for (i = 0; i < CA_CHUNK_ID_SIZE / sizeof(uint64_t); i++)
                 if (a->u64[0] != 0)
