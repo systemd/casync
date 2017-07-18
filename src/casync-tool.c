@@ -141,6 +141,8 @@ static void help(void) {
                "     --with=flag-sync        Store synchronous file flag\n"
                "     --with=flag-nocomp      Store disable compression file flag\n"
                "     --with=flag-projinherit Store project quota inheritance flag\n"
+               "     --with=subvolume        Store btrfs subvolume information\n"
+               "     --with=subvolume-ro     Store btrfs subvolume read-only property\n"
                "     --with=xattrs           Store extended file attributes\n"
                "     --with=acl              Store file access control lists\n"
                "     --with=fcaps            Store file capabilities\n"

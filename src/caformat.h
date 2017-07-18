@@ -106,8 +106,8 @@ enum {
         CA_FORMAT_WITH_FLAG_PROJINHERIT  = 0x2000000,
 
         /* btrfs magic */
-        /* CA_FORMAT_WITH_FLAG_SUBVOLUME    = 0x4000000, */
-        /* CA_FORMAT_WITH_FLAG_SUBVOLUME_RO = 0x8000000, */
+        CA_FORMAT_WITH_SUBVOLUME         = 0x4000000,
+        CA_FORMAT_WITH_SUBVOLUME_RO      = 0x8000000,
 
         /* Extended Attribute metadata */
         CA_FORMAT_WITH_XATTRS            = 0x10000000,
@@ -139,8 +139,8 @@ enum {
                 CA_FORMAT_WITH_FLAG_SYNC|
                 CA_FORMAT_WITH_FLAG_NOCOMP|
                 CA_FORMAT_WITH_FLAG_PROJINHERIT|
-                /* CA_FORMAT_WITH_FLAG_SUBVOLUME| */
-                /* CA_FORMAT_WITH_FLAG_SUBVOLUME_RO| */
+                CA_FORMAT_WITH_SUBVOLUME|
+                CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_XATTRS|
                 CA_FORMAT_WITH_ACL|
                 /* CA_FORMAT_WITH_SELINUX */
@@ -187,6 +187,8 @@ enum {
                 CA_FORMAT_WITH_FLAG_SYSTEM|
                 CA_FORMAT_WITH_FLAG_APPEND|
                 CA_FORMAT_WITH_FLAG_IMMUTABLE|
+                CA_FORMAT_WITH_SUBVOLUME|
+                CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_ACL|
                 CA_FORMAT_WITH_FCAPS,
 

@@ -17,6 +17,7 @@
 #include <linux/magic.h>
 #include <linux/types.h>
 #include <linux/fs.h>
+#include <linux/btrfs.h>
 
 #define new(t, n) ((t*) malloc((n) * sizeof(t)))
 #define new0(t, n) ((t*) calloc((n), sizeof(t)))
@@ -684,5 +685,13 @@ int tmp_dir(const char **ret);
 bool path_is_safe(const char *p);
 
 int is_dir(const char* path, bool follow);
+
+#ifndef BTRFS_IOC_SUBVOL_GETFLAGS
+#define BTRFS_IOC_SUBVOL_GETFLAGS _IOR(BTRFS_IOCTL_MAGIC, 25, __u64)
+#endif
+
+#ifndef BTRFS_IOC_SUBVOL_SETFLAGS
+#define BTRFS_IOC_SUBVOL_SETFLAGS _IOW(BTRFS_IOCTL_MAGIC, 26, __u64)
+#endif
 
 #endif

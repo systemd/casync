@@ -667,7 +667,7 @@ static bool validate_filename(const char *name, size_t n) {
         return true;
 }
 
-static bool validate_mode(CaDecoder *d, uint64_t m) {
+static bool validate_mode(CaDecoder *d, uint64_t m, uint64_t flags) {
         assert(d);
 
         if ((m & ~(S_IFMT | UINT64_C(07777))) != 0)
@@ -704,6 +704,9 @@ static bool validate_mode(CaDecoder *d, uint64_t m) {
                 return false;
         }
 
+        if (!S_ISDIR(m) && (flags & CA_FORMAT_WITH_SUBVOLUME))
+                return false;
+
         if (S_ISLNK(m))
                 return (m & 07777) == 0777;
 
@@ -738,7 +741,7 @@ static bool validate_uid_gid(CaDecoder *d, uint64_t u) {
 static bool validate_entry_flags(CaDecoder *d, uint64_t f) {
         assert(d);
 
-        return (f & ~(d->feature_flags & (CA_FORMAT_WITH_FAT_ATTRS|CA_FORMAT_WITH_CHATTR))) == 0;
+        return (f & ~(d->feature_flags & (CA_FORMAT_WITH_FAT_ATTRS|CA_FORMAT_WITH_CHATTR|CA_FORMAT_WITH_SUBVOLUME|CA_FORMAT_WITH_SUBVOLUME_RO))) == 0;
 }
 
 static bool validate_major(uint64_t m) {
@@ -865,7 +868,7 @@ static const CaFormatEntry* validate_format_entry(CaDecoder *d, const void *p) {
 
         if (!validate_feature_flags(d, read_le64(&e->feature_flags)))
                 return NULL;
-        if (!validate_mode(d, read_le64(&e->mode)))
+        if (!validate_mode(d, read_le64(&e->mode), read_le64(&e->flags)))
                 return NULL;
         if (!validate_entry_flags(d, read_le64(&e->flags)))
                 return NULL;
@@ -2509,6 +2512,33 @@ static int ca_decoder_node_get_fd(CaDecoder *d, CaDecoderNode *n) {
         return -1;
 }
 
+static int mkdir_or_mksubvol(int dir_fd, CaDecoderNode *n, const char *name) {
+        int r;
+
+        assert(dir_fd >= 0);
+        assert(n);
+        assert(name);
+
+        if (read_le64(&n->entry->flags) & CA_FORMAT_WITH_SUBVOLUME) {
+                struct btrfs_ioctl_vol_args args = {};
+                mode_t saved;
+                size_t l;
+
+                l = strlen(name);
+                if (l > sizeof(args.name))
+                        return -EINVAL;
+
+                memcpy(args.name, name, l);
+
+                saved = umask(0077);
+                r = ioctl(dir_fd, BTRFS_IOC_SUBVOL_CREATE, &args) < 0 ? -errno : 0;
+                umask(saved);
+        } else
+                r = mkdirat(dir_fd, name, 0700) < 0 ? -errno : 0;
+
+        return r;
+}
+
 static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNode *child) {
         mode_t mode;
         int dir_fd, r;
@@ -2536,11 +2566,10 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
         switch (mode & S_IFMT) {
 
         case S_IFDIR:
-                if (mkdirat(dir_fd, child->name, 0700) < 0) {
 
-                        if (errno != EEXIST)
-                                return -errno;
-                }
+                r = mkdir_or_mksubvol(dir_fd, child, child->name);
+                if (r < 0 && r != -EEXIST)
+                        return r;
 
                 child->fd = openat(dir_fd, child->name, O_CLOEXEC|O_NOCTTY|O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
                 if (child->fd < 0) {
@@ -2553,8 +2582,9 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
                         if (r < 0)
                                 return r;
 
-                        if (mkdirat(dir_fd, child->temporary_name, 0700) < 0)
-                                return -errno;
+                        r = mkdir_or_mksubvol(dir_fd, child, child->temporary_name);
+                        if (r < 0)
+                                return r;
 
                         child->fd = openat(dir_fd, child->temporary_name, O_CLOEXEC|O_NOCTTY|O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
                         if (child->fd < 0) {
@@ -3686,6 +3716,32 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 } else {
                         if (new_attr != 0)
                                 return -EOPNOTSUPP;
+                }
+        }
+
+        if (d->feature_flags & CA_FORMAT_WITH_SUBVOLUME) {
+                bool is_subvol;
+
+                is_subvol = magic == BTRFS_SUPER_MAGIC && st.st_ino == 256;
+
+                if (!!(read_le64(&child->entry->flags) & CA_FORMAT_WITH_SUBVOLUME) != is_subvol)
+                        return -EEXIST;
+
+                if ((d->feature_flags & CA_FORMAT_WITH_SUBVOLUME_RO) && is_subvol && child->fd >= 0) {
+                        uint64_t bflags, nflags;
+
+                        if (ioctl(child->fd, BTRFS_IOC_SUBVOL_GETFLAGS, &bflags) < 0)
+                                return -errno;
+
+                        if (read_le64(&child->entry->flags) & CA_FORMAT_WITH_SUBVOLUME_RO)
+                                nflags = bflags | BTRFS_SUBVOL_RDONLY;
+                        else
+                                nflags = bflags & ~BTRFS_SUBVOL_RDONLY;
+
+                        if (nflags != bflags) {
+                                if (ioctl(child->fd, BTRFS_IOC_SUBVOL_SETFLAGS, &nflags) < 0)
+                                        return -errno;
+                        }
                 }
         }
 

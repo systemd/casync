@@ -110,6 +110,11 @@ typedef struct CaEncoderNode {
         void *fcaps;
         size_t fcaps_size;
 
+        /* btrfs subvolume flags */
+        bool is_subvolume:1;
+        bool is_subvolume_ro:1;
+        bool subvolume_valid:1;
+
         /* The offset in the archive */
         uint64_t entry_offset;
 
@@ -594,6 +599,43 @@ static int ca_encoder_node_read_fat_attrs(
                 n->fat_attrs = 0;
 
         n->fat_attrs_valid = true;
+
+        return 0;
+}
+
+static int ca_encoder_node_read_btrfs(
+                CaEncoder *e,
+                CaEncoderNode *n) {
+
+        assert(e);
+        assert(n);
+
+        if (!S_ISDIR(n->stat.st_mode))
+                return 0;
+        if (n->fd < 0)
+                return -EBADFD;
+        if ((e->feature_flags & CA_FORMAT_WITH_SUBVOLUME) == 0)
+                return 0;
+        if (n->subvolume_valid)
+                return 0;
+
+        if (n->magic == BTRFS_SUPER_MAGIC &&
+            n->stat.st_ino == 256) {
+
+                uint64_t bflags;
+
+                if (ioctl(n->fd, BTRFS_IOC_SUBVOL_GETFLAGS, &bflags) < 0)
+                        return -errno;
+
+                n->is_subvolume = true;
+                n->is_subvolume_ro = !!(bflags & BTRFS_SUBVOL_RDONLY);
+
+        } else {
+                n->is_subvolume = false;
+                n->is_subvolume_ro = false;
+        }
+
+        n->subvolume_valid = true;
 
         return 0;
 }
@@ -2154,6 +2196,10 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         if (r < 0)
                 return r;
 
+        r = ca_encoder_node_read_btrfs(e, n);
+        if (r < 0)
+                return r;
+
         r = ca_encoder_node_read_xattrs(e, n);
         if (r < 0)
                 return r;
@@ -2218,6 +2264,15 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                         assert(n->fat_attrs_valid);
                         flags |= ca_feature_flags_from_fat_attrs(n->fat_attrs) & e->feature_flags;
                 }
+        }
+
+        if (S_ISDIR(n->stat.st_mode) && (e->feature_flags & CA_FORMAT_WITH_SUBVOLUME)) {
+
+                assert(n->subvolume_valid);
+
+                flags |=
+                        ((n->is_subvolume ? CA_FORMAT_WITH_SUBVOLUME : 0) |
+                         (n->is_subvolume_ro ? CA_FORMAT_WITH_SUBVOLUME_RO : 0)) & e->feature_flags;
         }
 
         r = ca_encoder_node_shall_enumerate(e, n);

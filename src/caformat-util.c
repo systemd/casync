@@ -96,6 +96,8 @@ static const struct {
         { "flag-sync",        CA_FORMAT_WITH_FLAG_SYNC        },
         { "flag-nocomp",      CA_FORMAT_WITH_FLAG_NOCOMP      },
         { "flag-projinherit", CA_FORMAT_WITH_FLAG_PROJINHERIT },
+        { "flag-subvolume",   CA_FORMAT_WITH_SUBVOLUME        },
+        { "flag-subvolume-ro",CA_FORMAT_WITH_SUBVOLUME_RO     },
         { "xattrs",           CA_FORMAT_WITH_XATTRS           },
         { "acl",              CA_FORMAT_WITH_ACL              },
         { "fcaps",            CA_FORMAT_WITH_FCAPS            },
@@ -183,6 +185,9 @@ int ca_feature_flags_normalize(uint64_t flags, uint64_t *ret) {
         if (flags & CA_FORMAT_EXCLUDE_NODUMP)
                 flags &= ~CA_FORMAT_WITH_FLAG_NODUMP;
 
+        if (flags & CA_FORMAT_WITH_SUBVOLUME_RO)
+                flags |= CA_FORMAT_WITH_SUBVOLUME;
+
         *ret = flags;
         return 0;
 }
@@ -224,6 +229,10 @@ int ca_feature_flags_are_normalized(uint64_t flags) {
 
         if ((flags & CA_FORMAT_EXCLUDE_NODUMP) &&
             (flags & CA_FORMAT_WITH_FLAG_NODUMP))
+                return false;
+
+        if ((flags & CA_FORMAT_WITH_SUBVOLUME_RO) &&
+            !(flags & CA_FORMAT_WITH_SUBVOLUME))
                 return false;
 
         return true;
@@ -413,6 +422,8 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FLAG_NOCOMP|
                         CA_FORMAT_WITH_XATTRS|
                         CA_FORMAT_WITH_ACL|
+                        CA_FORMAT_WITH_SUBVOLUME|
+                        CA_FORMAT_WITH_SUBVOLUME_RO|
                         CA_FORMAT_WITH_FCAPS;
 
         case TMPFS_MAGIC:
