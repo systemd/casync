@@ -4,45 +4,72 @@ DEVPKGS="pkg-config liblzma-dev libcurl4-openssl-dev libssl-dev libacl1-dev libf
 echo
 echo "============= Installing amd64 build dependencies =============="
 set -eu
-sudo apt-get install -y software-properties-common
-sudo add-apt-repository -y ppa:pitti/systemd-semaphore
-sudo dpkg --add-architecture i386
-sudo apt-get update
+(
+    set -x
+    sudo apt-get install -y software-properties-common
+    sudo add-apt-repository -y ppa:pitti/systemd-semaphore
+    sudo dpkg --add-architecture i386
+    sudo apt-get update
 
-sudo apt-get install -y $DEVPKGS rsync python3 meson
+    sudo apt-get install -y $DEVPKGS rsync python3 meson python-sphinx
+)
 
 echo
 echo "============= Building amd64 =============="
-meson build
-ninja -C build
+(
+    set -x
+    meson build
+    ninja -C build
+)
 
 echo
 echo "============= Running amd64 tests as user =============="
-ninja -C build test
+(
+    set -x
+    ninja -C build test
+)
 
 echo
 echo "============= Running amd64 tests as root =============="
-sudo ninja -C build test
+(
+    set -x
+    sudo ninja -C build test
+)
 
 echo
 echo "============= Installing i386 build dependencies =============="
 # help apt to figure out replacing GI dependencies (we don't need them
 # anyway, but a lot of stuff is pre-installed in semaphore)
-sudo apt-get purge --auto-remove -y python3-gi gir1.2-glib-2.0
+(
+    set -x
+    sudo apt-get purge --auto-remove -y python3-gi gir1.2-glib-2.0
+)
 
 # library -dev packages are not co-installable for multiple architectures,
 # so this can't go into the setup step
-sudo apt-get install -y --no-install-recommends gcc-multilib $(echo "$DEVPKGS " | sed 's/\b /:i386 /g')
+(
+    set -x
+    sudo apt-get install -y --no-install-recommends gcc-multilib $(echo "$DEVPKGS " | sed 's/\b /:i386 /g')
+)
 
 echo
 echo "============= Building i386 =============="
-CFLAGS=-m32 LDFLAGS=-m32 meson build-i386
-ninja -C build-i386
+(
+    set -x
+    CFLAGS=-m32 LDFLAGS=-m32 meson build-i386
+    ninja -C build-i386
+)
 
 echo
 echo "============= Running i386 tests as user =============="
-linux32 ninja -C build-i386 test
+(
+    set -x
+    linux32 ninja -C build-i386 test
+)
 
 echo
 echo "============= Running i386 tests as root =============="
-sudo linux32 ninja -C build-i386 test
+(
+    set -x
+    sudo linux32 ninja -C build-i386 test
+)
