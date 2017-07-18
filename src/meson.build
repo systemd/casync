@@ -8,6 +8,8 @@ libshared_sources = files('''
         cacommon.h
         cadecoder.c
         cadecoder.h
+        cadigest.c
+        cadigest.h
         caencoder.c
         caencoder.h
         cafileroot.c
@@ -41,8 +43,8 @@ libshared_sources = files('''
         def.h
         fssize.c
         fssize.h
-        gcrypt-util.c
-        gcrypt-util.h
+        notify.c
+        notify.h
         parse-util.c
         parse-util.h
         realloc-buffer.c
@@ -55,8 +57,6 @@ libshared_sources = files('''
         siphash24.h
         util.c
         util.h
-        notify.c
-        notify.h
 '''.split())
 
 libshared = static_library(

@@ -98,9 +98,11 @@ liblzma = dependency('liblzma',
                      version : '>= 5.1.0')
 libcurl = dependency('libcurl',
                      version : '>= 7.32.0')
+openssl = dependency('openssl',
+                     version : '>= 1.0')
 
-libgcrypt = cc.find_library('gcrypt')
 libacl = cc.find_library('acl')
+
 
 if get_option('fuse')
         libfuse = dependency('fuse',
@@ -134,7 +136,7 @@ executable(
         link_with : libshared,
         dependencies : [
                 liblzma,
-                libgcrypt,
+                openssl,
                 libacl,
                 libfuse,
                 math],
@@ -146,7 +148,7 @@ executable(
         link_with : libshared,
         dependencies : [
                 liblzma,
-                libgcrypt,
+                openssl,
                 libcurl,
                 math],
         install : true,
@@ -227,6 +229,7 @@ test_sources = '''
         test-cachunk
         test-cachunker
         test-cachunker-histogram
+        test-cadigest
         test-caencoder
         test-camakebst
         test-caorigin
@@ -248,7 +251,7 @@ foreach test_name : test_sources + non_test_sources
                 include_directories : includes,
                 dependencies : [
                         liblzma,
-                        libgcrypt,
+                        openssl,
                         libacl,
                         threads,
                         math])

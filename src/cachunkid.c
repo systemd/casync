@@ -3,7 +3,6 @@
 
 #include "cachunk.h"
 #include "cachunkid.h"
-#include "gcrypt-util.h"
 
 static char encode_char(uint8_t x) {
         x &= 0xF;
@@ -61,9 +60,7 @@ char* ca_chunk_id_format(const CaChunkID *id, char v[CA_CHUNK_ID_FORMAT_MAX]) {
         return v;
 }
 
-int ca_chunk_id_make(gcry_md_hd_t *digest, const void *p, size_t l, CaChunkID *ret) {
-        const void *q;
-
+int ca_chunk_id_make(CaDigest *digest, const void *p, size_t l, CaChunkID *ret) {
         if (!digest)
                 return -EINVAL;
         if (!p)
@@ -75,23 +72,12 @@ int ca_chunk_id_make(gcry_md_hd_t *digest, const void *p, size_t l, CaChunkID *r
         if (!ret)
                 return -EINVAL;
 
-        if (*digest)
-                gcry_md_reset(*digest);
-        else {
-                initialize_libgcrypt();
+        if (ca_digest_get_size(digest) != sizeof(CaChunkID))
+                return -EINVAL;
 
-                assert(gcry_md_get_algo_dlen(GCRY_MD_SHA256) == sizeof(CaChunkID));
+        ca_digest_reset(digest);
+        ca_digest_write(digest, p, l);
 
-                if (gcry_md_open(digest, GCRY_MD_SHA256, 0) != 0)
-                        return -EIO;
-        }
-
-        gcry_md_write(*digest, p, l);
-
-        q = gcry_md_read(*digest, GCRY_MD_SHA256);
-        if (!q)
-                return -EIO;
-
-        memcpy(ret, q, sizeof(CaChunkID));
+        memcpy(ret, ca_digest_read(digest), sizeof(CaChunkID));
         return 0;
 }

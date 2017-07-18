@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <sys/poll.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
@@ -79,7 +80,7 @@ struct CaRemote {
 
         size_t frame_size;
 
-        gcry_md_hd_t validate_digest;
+        CaDigest* validate_digest;
 };
 
 CaRemote* ca_remote_new(void) {
@@ -102,6 +103,9 @@ CaRemote* ca_remote_new(void) {
         rr->remote_feature_flags = UINT64_MAX;
 
         rr->rate_limit_bps = UINT64_MAX;
+
+        if (ca_digest_new(CA_DIGEST_SHA256, &rr->validate_digest) < 0)
+                return mfree(rr);
 
         return rr;
 }
@@ -209,7 +213,7 @@ CaRemote* ca_remote_unref(CaRemote *rr) {
                 (void) wait_for_terminate(rr->pid, NULL);
         }
 
-        gcry_md_close(rr->validate_digest);
+        ca_digest_free(rr->validate_digest);
 
         return mfree(rr);
 }
@@ -2013,7 +2017,7 @@ static int ca_remote_validate_chunk(
                 l = realloc_buffer_size(&rr->validate_buffer);
         }
 
-        r = ca_chunk_id_make(&rr->validate_digest, p, l, &actual);
+        r = ca_chunk_id_make(rr->validate_digest, p, l, &actual);
         if (r < 0)
                 return r;
 

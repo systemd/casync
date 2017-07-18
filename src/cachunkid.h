@@ -5,7 +5,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include <sys/types.h>
-#include <gcrypt.h>
+
+#include "cadigest.h"
 
 #define CA_CHUNK_ID_SIZE 32
 #define CA_CHUNK_ID_FORMAT_MAX (CA_CHUNK_ID_SIZE*2+1)
@@ -37,6 +38,6 @@ static inline bool ca_chunk_id_is_null(const CaChunkID *a) {
         return true;
 }
 
-int ca_chunk_id_make(gcry_md_hd_t *digest, const void *p, size_t l, CaChunkID *ret);
+int ca_chunk_id_make(CaDigest *digest, const void *p, size_t l, CaChunkID *ret);
 
 #endif

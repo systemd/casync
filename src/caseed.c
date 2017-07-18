@@ -29,7 +29,7 @@ struct CaSeed {
         char *cache_path;
 
         CaChunker chunker;
-        gcry_md_hd_t chunk_digest;
+        CaDigest *chunk_digest;
 
         bool ready:1;
         bool remove_cache:1;
@@ -59,6 +59,9 @@ CaSeed *ca_seed_new(void) {
         s->chunker = (CaChunker) CA_CHUNKER_INIT;
 
         assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_EXCLUDE_NODUMP, &s->feature_flags) >= 0);
+
+        if (ca_digest_new(CA_DIGEST_SHA256, &s->chunk_digest) < 0)
+                return mfree(s);
 
         return s;
 }
@@ -93,16 +96,14 @@ CaSeed *ca_seed_unref(CaSeed *s) {
         safe_close(s->cache_fd);
         free(s->cache_path);
 
-        gcry_md_close(s->chunk_digest);
+        ca_digest_free(s->chunk_digest);
 
         realloc_buffer_free(&s->buffer);
         ca_location_unref(s->buffer_location);
 
         ca_file_root_unref(s->root);
 
-        free(s);
-
-        return NULL;
+        return mfree(s);
 }
 
 int ca_seed_set_base_fd(CaSeed *s, int fd) {
@@ -239,7 +240,7 @@ static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void
         if (!t)
                 return -ENOMEM;
 
-        r = ca_chunk_id_make(&s->chunk_digest, data, l, &id);
+        r = ca_chunk_id_make(s->chunk_digest, data, l, &id);
         if (r < 0)
                 return r;
 
@@ -594,7 +595,7 @@ int ca_seed_get(CaSeed *s,
                         if (n >= size) {
                                 CaChunkID test_id;
 
-                                r = ca_chunk_id_make(&s->chunk_digest, p, size, &test_id);
+                                r = ca_chunk_id_make(s->chunk_digest, p, size, &test_id);
                                 if (r < 0)
                                         goto finish;
 
