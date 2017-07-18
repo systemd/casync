@@ -12,6 +12,7 @@ Synopsis
 | **casync** [*OPTIONS*...] mtree [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
 | **casync** [*OPTIONS*...] stat [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 | **casync** [*OPTIONS*...] digest [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*]
+| **casync** [*OPTIONS*...] mount [*ARCHIVE* | *ARCHIVE_INDEX*] *PATH*
 | **casync** [*OPTIONS*...] mkdev [*BLOB* | *BLOB_INDEX*] [*NODE*]
 
 Description
@@ -19,12 +20,119 @@ Description
 
 Content-Addressable Data Synchronization Tool
 
+Commands
+--------
+
+| **casync** **make** [*ARCHIVE* | *ARCHIVE_INDEX*] [*DIRECTORY*]
+| **casync** **make** [*ARCHIVE* | *ARCHIVE_INDEX* | *BLOB_INDEX*] *FILE* | *DEVICE*
+
+This will create either a .catar archive or an .caidx index for for the given
+*DIRECTORY*, or a .caibx index for the given *FILE* or block *DEVICE*. The type
+of output is decided based on the extension. *DIRECTORY* is optional, and
+the current directory will be used if not specified.
+
+When an .caidx file is created, a .castr storage directory will be created too
+(see ``--store=`` option).
+
+|
+| **casync** extract [*ARCHIVE* | *ARCHIVE_INDEX*] [*DIRECTORY*]
+| **casync** extract *BLOB_INDEX* *FILE* | *DEVICE*
+
+This will extract the contents of a .catar archive or .caidx index
+into the specified *DIRECTORY*, or the contents specified by *BLOB_INDEX*
+to the specified *FILE* or block *DEVICE*. *DIRECTORY* may be omitted,
+and the current directory will be used by default.
+
+|
+| **casync** list [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
+
+This will list all the files and directories in the specified .catar
+archive or .caidx index, or the directory. The argument is optional,
+and the current directory will be used by default.
+
+The output includes the permission mask and file names::
+
+  $ casync list /usr/share/doc/casync
+  drwxr-xr-x
+  -rw-r--r-- README.md
+  -rw-r--r-- TODO
+
+|
+| **casync** mtree [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
+
+This is similar to **list**, but includes information about each entry
+in a key=value format::
+
+  $ casync mtree /usr/share/doc/casync
+  . type=dir mode=0755 uid=0 gid=0 time=1500343585.721189650
+  README.md type=file mode=0644 size=7286 uid=0 gid=0 time=1498175562.000000000 sha256digest=af75eacac1f00abf6adaa7510a2c7fe00a4636daf9ea910d69d96f0a4ae85df4
+  TODO type=file mode=0644 size=2395 uid=0 gid=0 time=1498175562.000000000 sha256digest=316f11a03c08ec39f0328ab1f7446bd048507d3fbeafffe7c32fad4942244b7d
+
+What information is included is influenced by the ``--with-*`` and
+``--without-*`` options.
+
+|
+| **casync** stat [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
+
+This will show detailed information about a file or directory *PATH*, as found
+in either *ARCHIVE* or *ARCHIVE_INDEX* or underneath *DIRECTORY*. Both arguments
+are optional. The first defaults to the current directory, and the second
+the top-level path (``.``).
+
+Example output::
+
+  $ casync stat .
+      File: .
+      Mode: drwxrwxr-x
+  FileAttr: ----------
+   FATAttr: ---
+    Offset: 0
+      Time: 2017-07-17 22:53:30.723304050
+      User: zbyszek (1000)
+     Group: zbyszek (1000)
+
+|
+| **casync** digest [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*]
+
+This will compute and print the SHA256 checksum of the argument.
+The argument is optional and defaults to the current directory::
+
+  $ casync digest
+  d1698b0c4c27163284abea5d1e369b92e89dd07cb74378638849800e0406baf7
+
+  $ casync digest .
+  d1698b0c4c27163284abea5d1e369b92e89dd07cb74378638849800e0406baf7
+
+|
+| **casync** mount [*ARCHIVE* | *ARCHIVE_INDEX*] *PATH*
+
+This will mount the specified .catar archive or .caidx index at the
+specified *PATH*, using the fuse protocol.
+
+|
+| **casync** mkdev [*BLOB* | *BLOB_INDEX*] [*NODE*]
+
+This will create a block device *NODE* with the contents specified
+by the .caibx *BLOB_INDEX* or just the file or block device *BLOB*,
+using the nbd protocol.
+
+Example::
+
+  $ sudo casync -v mkdev README.md
+  Attached: /dev/nbd0
+
+  (in another terminal)
+  $ sudo head -n1 /dev/nbd0
+  # casync — Content Addressable Data Synchronizer
+
+When ``casync mkdev`` is killed, the device is destroyed.
+
 Options
 -------
 
 General options:
 
---help, -h                      Show this help
+--help, -h                      Show terse help output
 --verbose, -v                   Show terse status information during runtime
 --store=PATH                    The primary chunk store to use
 --extra-store=PATH              Additional chunk store to look for chunks in
