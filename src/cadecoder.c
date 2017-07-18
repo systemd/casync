@@ -3643,20 +3643,20 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         }
 
         if ((d->feature_flags & CA_FORMAT_WITH_CHATTR) != 0 && child->fd >= 0) {
-                unsigned new_attr, old_attr;
+                unsigned max_attr, new_attr, old_attr;
 
-                new_attr = ca_feature_flags_to_chattr(read_le64(&child->entry->flags) & d->feature_flags);
-                assert((new_attr & ~FS_FL_USER_MODIFIABLE) == 0);
+                max_attr = ca_feature_flags_to_chattr(d->feature_flags);
+                new_attr = ca_feature_flags_to_chattr(read_le64(&child->entry->flags));
 
                 if (ioctl(child->fd, FS_IOC_GETFLAGS, &old_attr) < 0) {
 
                         if (new_attr != 0 || !IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP))
                                 return -errno;
 
-                } else if ((old_attr & FS_FL_USER_MODIFIABLE) != new_attr) {
+                } else if ((old_attr & max_attr) != new_attr) {
                         unsigned final_attr;
 
-                        final_attr = (old_attr & ~FS_FL_USER_MODIFIABLE) | new_attr;
+                        final_attr = (old_attr & ~max_attr) | new_attr;
                         if (ioctl(child->fd, FS_IOC_SETFLAGS, &final_attr) < 0)
                                 return -errno;
                 }
@@ -3665,19 +3665,22 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         if ((d->feature_flags & CA_FORMAT_WITH_FAT_ATTRS) != 0 && child->fd >= 0) {
                 uint32_t new_attr;
 
-                new_attr = ca_feature_flags_to_fat_attrs(read_le64(&child->entry->flags) & d->feature_flags);
+                new_attr = ca_feature_flags_to_fat_attrs(read_le64(&child->entry->flags));
 
                 if (magic == MSDOS_SUPER_MAGIC) {
-                        uint32_t old_attr;
+                        uint32_t max_attr, old_attr;
+
+                        max_attr = ca_feature_flags_to_fat_attrs(d->feature_flags);
 
                         if (ioctl(child->fd, FAT_IOCTL_GET_ATTRIBUTES, &old_attr) < 0)
                                 return -errno;
 
-                        if ((old_attr & (ATTR_HIDDEN|ATTR_SYS|ATTR_ARCH)) != (new_attr & (ATTR_HIDDEN|ATTR_SYS|ATTR_ARCH))) {
+                        if ((old_attr & max_attr) != new_attr) {
+                                uint32_t final_attr;
 
-                                new_attr |= old_attr & ~(ATTR_HIDDEN|ATTR_SYS|ATTR_ARCH);
+                                final_attr = (old_attr & ~max_attr) | new_attr;
 
-                                if (ioctl(child->fd, FAT_IOCTL_SET_ATTRIBUTES, &new_attr) < 0)
+                                if (ioctl(child->fd, FAT_IOCTL_SET_ATTRIBUTES, &final_attr) < 0)
                                         return -errno;
                         }
                 } else {
