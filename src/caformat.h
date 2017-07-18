@@ -2,9 +2,10 @@
 #define foocaformathfoo
 
 #include <inttypes.h>
+#include <stddef.h>
 
-#include "util.h"
 #include "cachunkid.h"
+#include "util.h"
 
 /* The format is like this: every archive begins items in the following order:
  *

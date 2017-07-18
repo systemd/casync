@@ -1,5 +1,4 @@
 #include <fcntl.h>
-#include <gcrypt.h>
 #include <sys/poll.h>
 #include <sys/stat.h>
 
@@ -82,7 +81,7 @@ typedef struct CaSync {
         ReallocBuffer archive_buffer;
         ReallocBuffer compress_buffer;
 
-        gcry_md_hd_t chunk_digest;
+        CaDigest *chunk_digest;
 
         bool archive_eof;
         bool remote_index_eof;
@@ -138,6 +137,9 @@ static CaSync *ca_sync_new(void) {
         s->reflink = true;
         s->delete = true;
         s->payload = true;
+
+        if (ca_digest_new(CA_DIGEST_SHA256, &s->chunk_digest) < 0)
+                return mfree(s);
 
         return s;
 }
@@ -453,10 +455,9 @@ CaSync *ca_sync_unref(CaSync *s) {
 
         ca_file_root_unref(s->archive_root);
 
-        gcry_md_close(s->chunk_digest);
-        free(s);
+        ca_digest_free(s->chunk_digest);
 
-        return NULL;
+        return mfree(s);
 }
 
 int ca_sync_set_rate_limit_bps(CaSync *s, uint64_t rate_limit_bps) {
@@ -2689,7 +2690,7 @@ int ca_sync_make_chunk_id(CaSync *s, const void *p, size_t l, CaChunkID *ret) {
         if (!ret)
                 return -EINVAL;
 
-        return ca_chunk_id_make(&s->chunk_digest, p, l, ret);
+        return ca_chunk_id_make(s->chunk_digest, p, l, ret);
 }
 
 int ca_sync_get_archive_digest(CaSync *s, CaChunkID *ret) {

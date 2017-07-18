@@ -1,5 +1,5 @@
 #!/bin/sh
-DEVPKGS="pkg-config liblzma-dev libcurl4-gnutls-dev libgcrypt-dev libacl1-dev libfuse-dev "
+DEVPKGS="pkg-config liblzma-dev libcurl4-openssl-dev libssl-dev libacl1-dev libfuse-dev"
 
 echo
 echo "============= Installing amd64 build dependencies =============="
@@ -32,7 +32,7 @@ sudo apt-get purge --auto-remove -y python3-gi gir1.2-glib-2.0
 
 # library -dev packages are not co-installable for multiple architectures,
 # so this can't go into the setup step
-sudo apt-get install -y --no-install-recommends gcc-multilib $(echo "$DEVPKGS" | sed 's/\b /:i386 /g')
+sudo apt-get install -y --no-install-recommends gcc-multilib $(echo "$DEVPKGS " | sed 's/\b /:i386 /g')
 
 echo
 echo "============= Building i386 =============="

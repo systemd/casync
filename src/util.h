@@ -48,6 +48,16 @@
                 UNIQ_T(A,aq) < UNIQ_T(B,bq) ? UNIQ_T(A,aq) : UNIQ_T(B,bq); \
         })
 
+#define CONST_MAX(_A, _B) \
+        __extension__ (__builtin_choose_expr(                           \
+                __builtin_constant_p(_A) &&                             \
+                __builtin_constant_p(_B) &&                             \
+                __builtin_types_compatible_p(typeof(_A), typeof(_B)),   \
+                ((_A) > (_B)) ? (_A) : (_B),                            \
+                (void)0))
+
+
+
 static inline uint64_t timespec_to_nsec(struct timespec t) {
 
         if (t.tv_sec == (time_t) -1 &&
@@ -113,6 +123,13 @@ static inline void* mfree(void* p) {
                         abort();                                          \
                 }                                                         \
         } while(false)
+
+#define assert_not_reached(x) \
+        do {                  \
+                fprintf(stderr, "%s:%d (%s): unreachable code reached:" x "\n", \
+                        __FILE__, __LINE__, __PRETTY_FUNCTION__);       \
+                abort();                                                \
+        } while(false)                                                  \
 
 static inline int safe_close(int fd) {
         if (fd >= 0) {
@@ -693,5 +710,7 @@ int is_dir(const char* path, bool follow);
 #ifndef BTRFS_IOC_SUBVOL_SETFLAGS
 #define BTRFS_IOC_SUBVOL_SETFLAGS _IOW(BTRFS_IOCTL_MAGIC, 26, __u64)
 #endif
+
+#define NSEC_PER_SEC (UINT64_C(1000000000))
 
 #endif

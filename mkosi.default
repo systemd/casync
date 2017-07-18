@@ -16,7 +16,7 @@ BuildPackages=
         gcc
         libacl-devel
         libcurl-devel
-        libgcrypt-devel
+        openssl-devel
         meson
         pkgconfig
         rsync

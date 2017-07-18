@@ -1,5 +1,6 @@
 #include <curl/curl.h>
 #include <getopt.h>
+#include <stddef.h>
 
 #include "caprotocol.h"
 #include "caremote.h"

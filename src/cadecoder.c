@@ -17,7 +17,6 @@
 #include "caformat.h"
 #include "cautil.h"
 #include "def.h"
-#include "gcrypt-util.h"
 #include "realloc-buffer.h"
 #include "reflink.h"
 #include "rm-rf.h"
@@ -209,9 +208,9 @@ struct CaDecoder {
         uid_t uid_shift;
         uid_t uid_range; /* uid_range == 0 means "full range" */
 
-        gcry_md_hd_t archive_digest;
-        gcry_md_hd_t payload_digest;
-        gcry_md_hd_t hardlink_digest;
+        CaDigest *archive_digest;
+        CaDigest *payload_digest;
+        CaDigest *hardlink_digest;
 
         bool payload_digest_invalid:1;
         bool hardlink_digest_invalid:1;
@@ -398,9 +397,9 @@ CaDecoder *ca_decoder_unref(CaDecoder *d) {
 
         safe_close(d->boundary_fd);
 
-        gcry_md_close(d->archive_digest);
-        gcry_md_close(d->payload_digest);
-        gcry_md_close(d->hardlink_digest);
+        ca_digest_free(d->archive_digest);
+        ca_digest_free(d->payload_digest);
+        ca_digest_free(d->hardlink_digest);
 
         free(d);
 
@@ -2188,15 +2187,15 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         ca_decoder_enter_state(d, CA_DECODER_ENTRY);
         d->step_size = offset;
 
-        if (d->archive_digest)
-                gcry_md_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+        ca_digest_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+
         if (d->payload_digest) {
-                gcry_md_reset(d->payload_digest);
+                ca_digest_reset(d->payload_digest);
                 d->payload_digest_invalid = false;
         }
         if (d->hardlink_digest) {
-                gcry_md_reset(d->hardlink_digest);
-                gcry_md_write(d->hardlink_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                ca_digest_reset(d->hardlink_digest);
+                ca_digest_write(d->hardlink_digest, realloc_buffer_data(&d->buffer), d->step_size);
                 d->hardlink_digest_invalid = false;
         }
 
@@ -2380,9 +2379,9 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
 
                 if (d->archive_digest) {
                         if (arrived)
-                                gcry_md_reset(d->archive_digest);
+                                ca_digest_reset(d->archive_digest);
                         else if (!seek_continues)
-                                gcry_md_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                                ca_digest_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
                 }
 
                 return arrived ? CA_DECODER_FOUND : CA_DECODER_STEP;
@@ -2432,8 +2431,7 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
                 ca_decoder_enter_state(d, CA_DECODER_GOODBYE);
                 d->step_size = l;
 
-                if (d->archive_digest)
-                        gcry_md_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                ca_digest_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
 
                 return CA_DECODER_STEP;
 
@@ -3796,8 +3794,7 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
 
                 ca_decoder_enter_state(d, CA_DECODER_ENTERED);
 
-                if (d->archive_digest)
-                        gcry_md_reset(d->archive_digest);
+                ca_digest_reset(d->archive_digest);
 
                 return CA_DECODER_FOUND;
 
@@ -3851,11 +3848,11 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                                 d->step_size = MIN(realloc_buffer_size(&d->buffer), n->size - d->payload_offset);
 
                         if (d->archive_digest)
-                                gcry_md_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                                ca_digest_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
                         if (d->payload_digest && !d->payload_digest_invalid)
-                                gcry_md_write(d->payload_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                                ca_digest_write(d->payload_digest, realloc_buffer_data(&d->buffer), d->step_size);
                         if (d->hardlink_digest && !d->hardlink_digest_invalid)
-                                gcry_md_write(d->hardlink_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                                ca_digest_write(d->hardlink_digest, realloc_buffer_data(&d->buffer), d->step_size);
 
                         return CA_DECODER_PAYLOAD;
                 }
@@ -3974,8 +3971,7 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 d->payload_offset = d->seek_offset;
                 ca_decoder_reset_seek(d);
 
-                if (d->archive_digest)
-                        gcry_md_reset(d->archive_digest);
+                ca_digest_reset(d->archive_digest);
                 d->payload_digest_invalid = d->hardlink_digest_invalid = true;
 
                 return ca_decoder_step_node(d, n);
@@ -4010,13 +4006,12 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 d->payload_offset = d->seek_payload;
                 ca_decoder_reset_seek(d);
 
-                if (d->archive_digest)
-                        gcry_md_reset(d->archive_digest);
+                ca_digest_reset(d->archive_digest);
                 if (d->payload_digest) {
 
                         d->payload_digest_invalid = d->payload_offset > 0;
                         if (!d->payload_digest_invalid)
-                                gcry_md_reset(d->payload_digest);
+                                ca_digest_reset(d->payload_digest);
                 }
                 d->hardlink_digest_invalid = true;
 
@@ -5025,21 +5020,21 @@ int ca_decoder_enable_archive_digest(CaDecoder *d, bool b) {
         if (!d)
                 return -EINVAL;
 
-        return allocate_sha256_digest(&d->archive_digest, b);
+        return ca_digest_allocate_set(&d->archive_digest, CA_DIGEST_SHA256, b);
 }
 
 int ca_decoder_enable_payload_digest(CaDecoder *d, bool b) {
         if (!d)
                 return -EINVAL;
 
-        return allocate_sha256_digest(&d->payload_digest, b);
+        return ca_digest_allocate_set(&d->payload_digest, CA_DIGEST_SHA256, b);
 }
 
 int ca_decoder_enable_hardlink_digest(CaDecoder *d, bool b) {
         if (!d)
                 return -EINVAL;
 
-        return allocate_sha256_digest(&d->hardlink_digest, b);
+        return ca_digest_allocate_set(&d->hardlink_digest, CA_DIGEST_SHA256, b);
 }
 
 int ca_decoder_get_archive_digest(CaDecoder *d, CaChunkID *ret) {
@@ -5055,10 +5050,11 @@ int ca_decoder_get_archive_digest(CaDecoder *d, CaChunkID *ret) {
         if (d->state != CA_DECODER_EOF)
                 return -EBUSY;
 
-        q = gcry_md_read(d->archive_digest, GCRY_MD_SHA256);
+        q = ca_digest_read(d->archive_digest);
         if (!q)
                 return -EIO;
 
+        assert(ca_digest_get_size(d->archive_digest) == sizeof(CaChunkID));
         memcpy(ret, q, sizeof(CaChunkID));
         return 0;
 }
@@ -5089,10 +5085,11 @@ int ca_decoder_get_payload_digest(CaDecoder *d, CaChunkID *ret) {
         if (!S_ISREG(mode) && !S_ISBLK(mode))
                 return -ENOTTY;
 
-        q = gcry_md_read(d->payload_digest, GCRY_MD_SHA256);
+        q = ca_digest_read(d->payload_digest);
         if (!q)
                 return -EIO;
 
+        assert(ca_digest_get_size(d->payload_digest) == sizeof(CaChunkID));
         memcpy(ret, q, sizeof(CaChunkID));
         return 0;
 }
@@ -5123,10 +5120,11 @@ int ca_decoder_get_hardlink_digest(CaDecoder *d, CaChunkID *ret) {
         if (S_ISDIR(mode))
                 return -EISDIR;
 
-        q = gcry_md_read(d->hardlink_digest, GCRY_MD_SHA256);
+        q = ca_digest_read(d->hardlink_digest);
         if (!q)
                 return -EIO;
 
+        assert(ca_digest_get_size(d->hardlink_digest) == sizeof(CaChunkID));
         memcpy(ret, q, sizeof(CaChunkID));
         return 0;
 }
