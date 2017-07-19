@@ -56,6 +56,7 @@ enum {
         CA_FORMAT_ACL_DEFAULT_USER      = UINT64_C(0xbdf03df9bd010a91),
         CA_FORMAT_ACL_DEFAULT_GROUP     = UINT64_C(0xa0cb1168782d1f51),
         CA_FORMAT_FCAPS                 = UINT64_C(0xf7267db0afed0629),
+        CA_FORMAT_SELINUX               = UINT64_C(0x46faf0602fd26c59),
         CA_FORMAT_SYMLINK               = UINT64_C(0x664a6fb6830e0d6c),
         CA_FORMAT_DEVICE                = UINT64_C(0xac3dace369dfe643),
         CA_FORMAT_PAYLOAD               = UINT64_C(0x8b9e1d93d6dcffc9),
@@ -113,7 +114,7 @@ enum {
         /* Extended Attribute metadata */
         CA_FORMAT_WITH_XATTRS            = 0x10000000,
         CA_FORMAT_WITH_ACL               = 0x20000000,
-        /* CA_FORMAT_WITH_SELINUX           = 0x40000000, */
+        CA_FORMAT_WITH_SELINUX           = 0x40000000,
         CA_FORMAT_WITH_FCAPS             = 0x80000000,
 
         CA_FORMAT_SHA512_256             = UINT64_C(0x2000000000000000),
@@ -145,7 +146,7 @@ enum {
                 CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_XATTRS|
                 CA_FORMAT_WITH_ACL|
-                /* CA_FORMAT_WITH_SELINUX| */
+                CA_FORMAT_WITH_SELINUX|
                 CA_FORMAT_WITH_FCAPS,
 
         CA_FORMAT_WITH_UNIX = /* Conservative UNIX file properties */
@@ -192,6 +193,7 @@ enum {
                 CA_FORMAT_WITH_SUBVOLUME|
                 CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_ACL|
+                CA_FORMAT_WITH_SELINUX|
                 CA_FORMAT_WITH_FCAPS,
 
         CA_FORMAT_WITH_FUSE = /* All bits that may also be exposed via fuse */
@@ -242,7 +244,7 @@ enum {
                 CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_XATTRS|
                 CA_FORMAT_WITH_ACL|
-                /* CA_FORMAT_WITH_SELINUX| */
+                CA_FORMAT_WITH_SELINUX|
                 CA_FORMAT_WITH_FCAPS,
 
         CA_FORMAT_DEFAULT = /* The default set of flags */
@@ -335,6 +337,14 @@ typedef struct CaFormatACLDefault {
         le64_t other_permissions;
         le64_t mask_permissions;
 } CaFormatACLDefault;
+
+typedef struct CaFormatSELinux {
+        CaFormatHeader header;
+        char label[];
+} CaFormatSELinux;
+
+/* The kernel appears to permit one page max */
+#define CA_FORMAT_SELINUX_SIZE_MAX (offsetof(CaFormatSELinux, label) + 4096)
 
 typedef struct CaFormatSymlink {
         CaFormatHeader header;

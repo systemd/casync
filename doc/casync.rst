@@ -204,6 +204,7 @@ Individual archive features:
 --with=<subvolume-ro>      Store btrfs subvolume read-only property
 --with=<xattrs>            Store extended file attributes
 --with=<acl>               Store file access control lists
+--with=<selinux>           Store SElinux file labels
 --with=<fcaps>             Store file capabilities
 
 (and similar: ``--without=16bit-uids``, ``--without=32bit-uids``, ...)

@@ -12,6 +12,10 @@
 #include <linux/fs.h>
 #include <linux/msdos_fs.h>
 
+#if HAVE_SELINUX
+#include <selinux/selinux.h>
+#endif
+
 #include "cadecoder.h"
 #include "caformat-util.h"
 #include "caformat.h"
@@ -80,6 +84,8 @@ typedef struct CaDecoderNode {
         char *symlink_target; /* Only for S_ISLNK() */
         dev_t rdev;           /* Only for S_ISCHR() and S_ISBLK() */
 
+        char *selinux_label;
+
         CaDecoderExtendedAttribute *xattrs_first;
         CaDecoderExtendedAttribute *xattrs_last;
         CaDecoderExtendedAttribute *xattrs_current;
@@ -147,10 +153,10 @@ typedef enum CaDecoderState {
 struct CaDecoder {
         CaDecoderState state;
 
-        uint64_t feature_flags;
-        uint64_t replay_feature_flags;
-        uint64_t expected_feature_flags;
-        uint64_t feature_flags_mask;
+        uint64_t feature_flags;          /* The actual feature flags in the archive */
+        uint64_t replay_feature_flags;   /* The feature flags we shall restore and which are available in the archive */
+        uint64_t expected_feature_flags; /* The feature flags we expect to be stored in the file, given what we learnt from the index file */
+        uint64_t feature_flags_mask;     /* The mask of feature flags that the user asked for restoring */
 
         CaDecoderNode nodes[NODES_MAX];
         size_t n_nodes;
@@ -348,6 +354,8 @@ static void ca_decoder_node_flush_entry(CaDecoderNode *n) {
                 n->acl_default_mask_permissions = UINT64_MAX;
 
         n->have_acl = false;
+
+        n->selinux_label = mfree(n->selinux_label);
 }
 
 static void ca_decoder_node_free(CaDecoderNode *n) {
@@ -858,8 +866,6 @@ static bool validate_user_group_name(const char *name, size_t n) {
 }
 
 static bool validate_symlink_target(const char *target, size_t n) {
-        const char *p;
-
         assert(target || n == 0);
 
         if (n < 2)
@@ -868,9 +874,8 @@ static bool validate_symlink_target(const char *target, size_t n) {
         if (target[n-1] != 0)
                 return false;
 
-        for (p = target; p < target + n - 1; p++)
-                if (*p == 0)
-                        return false;
+        if (memchr(target, 0, n - 1))
+                return false;
 
         if (n > 4096) /* PATH_MAX is 4K on Linux */
                 return false;
@@ -1110,6 +1115,28 @@ static const CaFormatACLDefault* validate_format_acl_default(CaDecoder *d, const
                 return NULL;
 
         return a;
+}
+
+static const CaFormatSELinux *validate_format_selinux(CaDecoder *d, const void *p) {
+        const CaFormatSELinux *l = p;
+        size_t n;
+
+        if (read_le64(&l->header.size) < offsetof(CaFormatSELinux, label) + 2)
+                return NULL;
+        if (read_le64(&l->header.type) != CA_FORMAT_SELINUX)
+                return NULL;
+
+        if (!(d->feature_flags & CA_FORMAT_WITH_SELINUX))
+                return NULL;
+
+        n = read_le64(&l->header.size) - offsetof(CaFormatSELinux, label) - 1;
+        if (l->label[n] != 0)
+                return NULL;
+
+        if (memchr(l->label, 0, n))
+                return NULL;
+
+        return l;
 }
 
 static const CaFormatFCaps* validate_format_fcaps(CaDecoder *d, const void *p) {
@@ -1633,6 +1660,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         const CaFormatGoodbye *goodbye = NULL;
         const CaFormatACLGroupObj *acl_group_obj = NULL;
         const CaFormatACLDefault *acl_default = NULL;
+        const CaFormatSELinux *selinux = NULL;
         const CaFormatFCaps *fcaps = NULL;
         uint64_t offset = 0;
         bool done = false;
@@ -1709,6 +1737,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (n->have_acl)
                                 return -EBADMSG;
+                        if (selinux)
+                                return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
                         if (l > CA_FORMAT_USER_SIZE_MAX)
@@ -1740,6 +1770,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (n->have_acl)
                                 return -EBADMSG;
+                        if (selinux)
+                                return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
                         if (l > CA_FORMAT_GROUP_SIZE_MAX)
@@ -1767,6 +1799,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                         CaDecoderExtendedAttribute *u;
 
                         if (!entry)
+                                return -EBADMSG;
+                        if (selinux)
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
@@ -1832,6 +1866,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (n->acl_default_group)
                                 return -EBADMSG;
+                        if (selinux)
+                                return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
 
@@ -1892,6 +1928,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
 
                         if (!entry)
                                 return -EBADMSG;
+                        if (selinux)
+                                return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
 
@@ -1944,6 +1982,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (n->acl_default_user || n->acl_default_group)
                                 return -EBADMSG;
+                        if (selinux)
+                                return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
 
@@ -1972,6 +2012,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (n->acl_default_user || n->acl_default_group)
                                 return -EBADMSG;
+                        if (selinux)
+                                return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
 
@@ -1989,6 +2031,29 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
 
                         n->have_acl = true;
+
+                        offset += l;
+                        break;
+
+                case CA_FORMAT_SELINUX:
+                        if (!entry)
+                                return -EBADMSG;
+                        if (selinux)
+                                return -EBADMSG;
+                        if (fcaps)
+                                return -EBADMSG;
+                        if (l > CA_FORMAT_SELINUX_SIZE_MAX)
+                                return -EBADMSG;
+
+                        r = ca_decoder_object_is_complete(p, sz);
+                        if (r < 0)
+                                return r;
+                        if (r == 0)
+                                return CA_DECODER_REQUEST;
+
+                        selinux = validate_format_selinux(d, p);
+                        if (!selinux)
+                                return -EBADMSG;
 
                         offset += l;
                         break;
@@ -2192,6 +2257,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         assert(!n->group_name);
         assert(!n->fcaps);
         assert(!n->symlink_target);
+        assert(!n->selinux_label);
 
         n->entry = memdup(entry, sizeof(CaFormatEntry));
         if (!n->entry)
@@ -2217,6 +2283,12 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                 n->acl_default_group_obj_permissions = read_le64(&acl_default->group_obj_permissions);
                 n->acl_default_other_permissions = read_le64(&acl_default->other_permissions);
                 n->acl_default_mask_permissions = read_le64(&acl_default->mask_permissions);
+        }
+
+        if (selinux) {
+                n->selinux_label = strdup(selinux->label);
+                if (!n->selinux_label)
+                        return -ENOMEM;
         }
 
         if (fcaps) {
@@ -3734,6 +3806,66 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 }
         }
 
+        if (d->replay_feature_flags & CA_FORMAT_WITH_SELINUX) {
+#if HAVE_SELINUX
+                char *subpath = NULL, *label = NULL;
+                bool update = false;
+
+                if (child->fd >= 0)
+                        r = fgetfilecon(child->fd, &label) < 0 ? -errno : 0;
+                else {
+                        if (asprintf(&subpath, "/proc/self/fd/%i/%s", dir_fd, name) < 0)
+                                return -ENOMEM;
+
+                        r = lgetfilecon(subpath, &label) < 0 ? -errno : 0;
+                }
+                if (r == -EOPNOTSUPP) {
+                        if (child->selinux_label) {
+                                free(subpath);
+                                return -EOPNOTSUPP;
+                        }
+
+                        /* If the backing file system doesn't support labels, and we are not supposed to set any, then that's fine */
+                } else if (r == -ENODATA)
+                        /* If there has been no label assigned so far, then update if we need to set one now */
+                        update = !!child->selinux_label;
+                else if (r < 0) {
+                        /* In all other error cases propagate the error */
+                        free(subpath);
+                        return r;
+                } else {
+                        update = !streq_ptr(child->selinux_label, label);
+                        freecon(label);
+                }
+
+                if (update) {
+                        if (child->selinux_label) {
+                                if (child->fd >= 0)
+                                        r = fsetfilecon(child->fd, child->selinux_label) < 0 ? -errno : 0;
+                                else {
+                                        assert(subpath);
+                                        r = lsetfilecon(subpath, child->selinux_label) < 0 ? -errno : 0;
+                                }
+                        } else {
+                                if (child->fd >= 0)
+                                        r = fremovexattr(child->fd, "security.selinux") < 0 && errno != ENODATA ? -errno : 0;
+                                else {
+                                        assert(subpath);
+                                        r = lremovexattr(subpath, "security.selinux") < 0 && errno != -ENODATA ? -errno : 0;
+                                }
+                        }
+                } else
+                        r = 0;
+                free(subpath);
+                if (r < 0)
+                        return r;
+
+#else
+                if (child->selinux_label)
+                        return -EOPNOTSUPP;
+#endif
+        }
+
         if (d->replay_feature_flags & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_NSEC_TIME|CA_FORMAT_WITH_2SEC_TIME)) {
 
                 struct timespec ts[2] = {
@@ -3790,7 +3922,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 new_attr = ca_feature_flags_to_fat_attrs(read_le64(&child->entry->flags) & d->replay_feature_flags);
 
-                if (magic == MSDOS_SUPER_MAGIC) {
+                if (F_TYPE_EQUAL(magic, MSDOS_SUPER_MAGIC)) {
                         uint32_t max_attr, old_attr;
 
                         max_attr = ca_feature_flags_to_fat_attrs(d->replay_feature_flags);
@@ -3815,7 +3947,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         if (d->replay_feature_flags & CA_FORMAT_WITH_SUBVOLUME) {
                 bool is_subvol;
 
-                is_subvol = magic == BTRFS_SUPER_MAGIC && st.st_ino == 256;
+                is_subvol = F_TYPE_EQUAL(magic, BTRFS_SUPER_MAGIC) && st.st_ino == 256;
 
                 if (!!(read_le64(&child->entry->flags) & CA_FORMAT_WITH_SUBVOLUME) != is_subvol)
                         return -EEXIST;

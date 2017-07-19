@@ -1,6 +1,8 @@
 # -*- mode: meson -*-
 
 option('fuse', type : 'boolean', value : true,
-       description : 'build the fuse backend (requires fuse-devel)')
+       description : 'build the FUSE integration (requires fuse-devel)')
+option('selinux', type : 'boolean', value : true,
+       description : 'build the SELinux backend (requires libselinux-devel)')
 option('man', type : 'boolean', value : true,
        description : 'build and install man pages (requires spinx-build')

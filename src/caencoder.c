@@ -20,6 +20,10 @@
 #include <linux/magic.h>
 #include <linux/msdos_fs.h>
 
+#if HAVE_SELINUX
+#include <selinux/selinux.h>
+#endif
+
 #include "caencoder.h"
 #include "caformat-util.h"
 #include "caformat.h"
@@ -113,6 +117,10 @@ typedef struct CaEncoderNode {
         bool is_subvolume:1;
         bool is_subvolume_ro:1;
         bool subvolume_valid:1;
+
+        /* SELinux label */
+        bool selinux_label_valid:1;
+        char *selinux_label;
 
         /* The offset in the archive */
         uint64_t entry_offset;
@@ -255,6 +263,11 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
         n->acl_default_mask_permissions = UINT64_MAX;
 
         n->fcaps = mfree(n->fcaps);
+
+        if (n->selinux_label) {
+                freecon(n->selinux_label);
+                n->selinux_label = NULL;
+        }
 
         n->device_size = UINT64_MAX;
 
@@ -620,7 +633,7 @@ static int ca_encoder_node_read_btrfs(
         if (n->subvolume_valid)
                 return 0;
 
-        if (n->magic == BTRFS_SUPER_MAGIC &&
+        if (F_TYPE_EQUAL(n->magic, BTRFS_SUPER_MAGIC) &&
             n->stat.st_ino == 256) {
 
                 uint64_t bflags;
@@ -638,6 +651,64 @@ static int ca_encoder_node_read_btrfs(
 
         n->subvolume_valid = true;
 
+        return 0;
+}
+
+static int ca_encoder_node_read_selinux_label(
+                CaEncoder *e,
+                CaEncoderNode *n) {
+
+        char *label;
+        int r;
+
+        assert(e);
+        assert(n);
+
+        if ((e->feature_flags & CA_FORMAT_WITH_SELINUX) == 0)
+                return 0;
+        if (n->selinux_label_valid)
+                return 0;
+
+#if HAVE_SELINUX
+        if (n->fd >= 0)
+                r = fgetfilecon(n->fd, &label) < 0 ? -errno : 0;
+        else {
+                const struct dirent *de;
+                CaEncoderNode *parent;
+                char *subpath;
+
+                parent = ca_encoder_node_parent_of(e, n);
+                if (!parent)
+                        return -EUNATCH;
+
+                de = ca_encoder_node_current_dirent(parent);
+                if (!de)
+                        return -EUNATCH;
+
+                if (asprintf(&subpath, "/proc/self/fd/%i/%s", parent->fd, de->d_name) < 0)
+                        return -ENOMEM;
+
+                r = lgetfilecon(subpath, &label) < 0 ? -errno : 0;
+                free(subpath);
+        }
+
+        if (r < 0) {
+                if (!IN_SET(-r, ENODATA, EOPNOTSUPP))
+                        return r;
+
+                if (n->selinux_label) {
+                        freecon(n->selinux_label);
+                        n->selinux_label = NULL;
+                }
+        } else {
+                if (n->selinux_label)
+                        freecon(n->selinux_label);
+
+                n->selinux_label = label;
+        }
+#endif
+
+        n->selinux_label_valid = true;
         return 0;
 }
 
@@ -2201,6 +2272,10 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         if (r < 0)
                 return r;
 
+        r = ca_encoder_node_read_selinux_label(e, n);
+        if (r < 0)
+                return r;
+
         r = ca_encoder_node_read_xattrs(e, n);
         if (r < 0)
                 return r;
@@ -2310,6 +2385,9 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         size += ca_encoder_format_acl_user_size(n->acl_default_user, n->n_acl_default_user);
         size += ca_encoder_format_acl_group_size(n->acl_default_group, n->n_acl_default_group);
 
+        if (n->selinux_label_valid && n->selinux_label)
+                size += offsetof(CaFormatSELinux, label) + strlen(n->selinux_label) + 1;
+
         if (n->fcaps)
                 size += offsetof(CaFormatFCaps, data) + n->fcaps_size;
 
@@ -2404,6 +2482,16 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
 
         p = ca_encoder_format_acl_user_append(e, p, CA_FORMAT_ACL_DEFAULT_USER, n->acl_default_user, n->n_acl_default_user);
         p = ca_encoder_format_acl_group_append(e, p, CA_FORMAT_ACL_DEFAULT_GROUP, n->acl_default_group, n->n_acl_default_group);
+
+        if (n->selinux_label_valid && n->selinux_label) {
+                CaFormatHeader header = {
+                        .type = htole64(CA_FORMAT_SELINUX),
+                        .size = htole64(offsetof(CaFormatSELinux, label) + strlen(n->selinux_label) + 1),
+                };
+
+                p = mempcpy(p, &header, sizeof(header));
+                p = stpcpy(p, n->selinux_label) + 1;
+        }
 
         if (n->fcaps) {
                 CaFormatHeader header = {
