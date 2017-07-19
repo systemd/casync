@@ -866,8 +866,6 @@ static bool validate_user_group_name(const char *name, size_t n) {
 }
 
 static bool validate_symlink_target(const char *target, size_t n) {
-        const char *p;
-
         assert(target || n == 0);
 
         if (n < 2)
@@ -876,9 +874,8 @@ static bool validate_symlink_target(const char *target, size_t n) {
         if (target[n-1] != 0)
                 return false;
 
-        for (p = target; p < target + n - 1; p++)
-                if (*p == 0)
-                        return false;
+        if (memchr(target, 0, n - 1))
+                return false;
 
         if (n > 4096) /* PATH_MAX is 4K on Linux */
                 return false;
