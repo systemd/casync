@@ -33,6 +33,8 @@ int ca_sync_set_rate_limit_bps(CaSync *s, uint64_t rate_limit_bps);
 
 int ca_sync_set_feature_flags(CaSync *s, uint64_t flags);
 int ca_sync_get_feature_flags(CaSync *s, uint64_t *ret);
+
+int ca_sync_set_feature_flags_mask(CaSync *s, uint64_t mask);
 int ca_sync_get_covering_feature_flags(CaSync *s, uint64_t *ret);
 
 int ca_sync_set_punch_holes(CaSync *s, bool enabled);

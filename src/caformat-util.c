@@ -158,6 +158,9 @@ int ca_feature_flags_normalize(uint64_t flags, uint64_t *ret) {
         if (!ret)
                 return -EINVAL;
 
+        /* This normalizes the specified flags value, i.e. drops redundant bits, so that the resulting flags field has
+         * the minimum number of bits that express the feature set set. */
+
         if (flags == UINT64_MAX)
                 return -EINVAL;
         if ((flags & ~CA_FORMAT_FEATURE_FLAGS_MAX) != 0)
@@ -236,6 +239,34 @@ int ca_feature_flags_are_normalized(uint64_t flags) {
                 return false;
 
         return true;
+}
+
+int ca_feature_flags_normalize_mask(uint64_t mask, uint64_t *ret) {
+        if (!ret)
+                return -EINVAL;
+
+        /* This normalizes the specified flags parameter, so that all redundant bits that could be set are set. */
+
+        if (mask == UINT64_MAX) {
+                *ret = UINT64_MAX;
+                return 0;
+        }
+
+        mask &= CA_FORMAT_FEATURE_FLAGS_MAX;
+
+        if (mask & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS))
+                mask |= CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS;
+        if (mask & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_NSEC_TIME|CA_FORMAT_WITH_2SEC_TIME))
+                mask |= CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_NSEC_TIME|CA_FORMAT_WITH_2SEC_TIME;
+        if (mask & CA_FORMAT_WITH_PERMISSIONS)
+                mask |= CA_FORMAT_WITH_READ_ONLY;
+        if (mask & CA_FORMAT_WITH_ACL)
+                mask |= CA_FORMAT_WITH_PERMISSIONS|CA_FORMAT_WITH_READ_ONLY;
+        if (mask & CA_FORMAT_WITH_SUBVOLUME_RO)
+                mask |= CA_FORMAT_WITH_SUBVOLUME;
+
+        *ret = mask;
+        return 0;
 }
 
 int ca_feature_flags_time_granularity_nsec(uint64_t flags, uint64_t *ret) {
