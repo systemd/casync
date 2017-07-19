@@ -41,6 +41,7 @@ c_args = '''
         -Wno-missing-field-initializers
         -Wno-unused-result
         -Werror=overflow
+        -Werror=sign-compare
         -Wdate-time
         -Wnested-externs
         -ffast-math

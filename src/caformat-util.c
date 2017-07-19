@@ -374,7 +374,7 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
 
         switch (magic) {
 
-        case MSDOS_SUPER_MAGIC:
+        case (statfs_f_type_t) MSDOS_SUPER_MAGIC:
                 return
                         CA_FORMAT_WITH_2SEC_TIME|
                         CA_FORMAT_WITH_READ_ONLY|
@@ -382,7 +382,7 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FLAG_SYSTEM|
                         CA_FORMAT_WITH_FLAG_ARCHIVE;
 
-        case EXT2_SUPER_MAGIC:
+        case (statfs_f_type_t) EXT2_SUPER_MAGIC:
                 return
                         CA_FORMAT_WITH_16BIT_UIDS|
                         CA_FORMAT_WITH_32BIT_UIDS|
@@ -408,7 +408,7 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_SELINUX|
                         CA_FORMAT_WITH_FCAPS;
 
-        case XFS_SUPER_MAGIC:
+        case (statfs_f_type_t) XFS_SUPER_MAGIC:
                 return
                         CA_FORMAT_WITH_16BIT_UIDS|
                         CA_FORMAT_WITH_32BIT_UIDS|
@@ -433,7 +433,7 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_SELINUX|
                         CA_FORMAT_WITH_FCAPS;
 
-        case BTRFS_SUPER_MAGIC:
+        case (statfs_f_type_t) BTRFS_SUPER_MAGIC:
                 return
                         CA_FORMAT_WITH_16BIT_UIDS|
                         CA_FORMAT_WITH_32BIT_UIDS|
@@ -464,7 +464,7 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_SUBVOLUME_RO|
                         CA_FORMAT_WITH_FCAPS;
 
-        case TMPFS_MAGIC:
+        case (statfs_f_type_t) TMPFS_MAGIC:
                 return
                         CA_FORMAT_WITH_16BIT_UIDS|
                         CA_FORMAT_WITH_32BIT_UIDS|
@@ -482,7 +482,7 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_ACL|
                         CA_FORMAT_WITH_SELINUX;
 
-        case FUSE_SUPER_MAGIC:
+        case (statfs_f_type_t) FUSE_SUPER_MAGIC:
                 /* We don't actually know what the backing FUSE file system supports, but it's likely more limited than
                  * what we support ourselves, hence use that.*/
                 return CA_FORMAT_WITH_FUSE;

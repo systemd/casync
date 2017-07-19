@@ -3922,7 +3922,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 new_attr = ca_feature_flags_to_fat_attrs(read_le64(&child->entry->flags) & d->replay_feature_flags);
 
-                if (magic == MSDOS_SUPER_MAGIC) {
+                if (F_TYPE_EQUAL(magic, MSDOS_SUPER_MAGIC)) {
                         uint32_t max_attr, old_attr;
 
                         max_attr = ca_feature_flags_to_fat_attrs(d->replay_feature_flags);
@@ -3947,7 +3947,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         if (d->replay_feature_flags & CA_FORMAT_WITH_SUBVOLUME) {
                 bool is_subvol;
 
-                is_subvol = magic == BTRFS_SUPER_MAGIC && st.st_ino == 256;
+                is_subvol = F_TYPE_EQUAL(magic, BTRFS_SUPER_MAGIC) && st.st_ino == 256;
 
                 if (!!(read_le64(&child->entry->flags) & CA_FORMAT_WITH_SUBVOLUME) != is_subvol)
                         return -EEXIST;

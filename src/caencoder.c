@@ -633,7 +633,7 @@ static int ca_encoder_node_read_btrfs(
         if (n->subvolume_valid)
                 return 0;
 
-        if (n->magic == BTRFS_SUPER_MAGIC &&
+        if (F_TYPE_EQUAL(n->magic, BTRFS_SUPER_MAGIC) &&
             n->stat.st_ino == 256) {
 
                 uint64_t bflags;
