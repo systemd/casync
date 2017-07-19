@@ -6,6 +6,9 @@ import http.server, socketserver, os, sys, socket, time
 
 os.chdir(sys.argv[1])
 
+if len(sys.argv) >= 3:
+    PORT = int(sys.argv[2])
+
 def send_notify(text):
 
     if text is None or text == "":
