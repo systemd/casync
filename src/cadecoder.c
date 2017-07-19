@@ -153,10 +153,10 @@ typedef enum CaDecoderState {
 struct CaDecoder {
         CaDecoderState state;
 
-        uint64_t feature_flags;
-        uint64_t replay_feature_flags;
-        uint64_t expected_feature_flags;
-        uint64_t feature_flags_mask;
+        uint64_t feature_flags;          /* The actual feature flags in the archive */
+        uint64_t replay_feature_flags;   /* The feature flags we shall restore and which are available in the archive */
+        uint64_t expected_feature_flags; /* The feature flags we expect to be stored in the file, given what we learnt from the index file */
+        uint64_t feature_flags_mask;     /* The mask of feature flags that the user asked for restoring */
 
         CaDecoderNode nodes[NODES_MAX];
         size_t n_nodes;
