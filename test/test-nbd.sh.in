@@ -1,6 +1,12 @@
 #!/bin/bash -ex
 
-PARAMS=-v
+if [ -z "$1" ] ; then
+    DIGEST=sha512-256
+else
+    DIGEST="$1"
+fi
+
+PARAMS="-v --digest=$DIGEST"
 
 CASYNC_PROTOCOL_PATH=@top_builddir@
 export CASYNC_PROTOCOL_PATH
@@ -11,7 +17,7 @@ mkdir -p $SCRATCH_DIR
 dd if=/dev/urandom of=$SCRATCH_DIR/blob bs=102400 count=80
 
 @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/blob > $SCRATCH_DIR/test.digest
-sha256sum $SCRATCH_DIR/blob | cut -c -64 > $SCRATCH_DIR/test.digest2
+@top_builddir@/test-calc-digest $DIGEST $SCRATCH_DIR/blob > $SCRATCH_DIR/test.digest2
 
 @top_builddir@/casync $PARAMS make $SCRATCH_DIR/test.caibx $SCRATCH_DIR/blob
 @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/test.caibx > $SCRATCH_DIR/test.caibx.digest
@@ -22,8 +28,8 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.caibx.digest
 @top_builddir@/casync $PARAMS extract $SCRATCH_DIR/test.caibx $SCRATCH_DIR/blob2
 @top_builddir@/casync $PARAMS extract $SCRATCH_DIR/test.caibx --seed=$SCRATCH_DIR/blob2 $SCRATCH_DIR/blob3
 
-sha256sum $SCRATCH_DIR/blob2 | cut -c -64 > $SCRATCH_DIR/extract.digest
-sha256sum $SCRATCH_DIR/blob3 | cut -c -64 > $SCRATCH_DIR/extract2.digest
+@top_builddir@/test-calc-digest $DIGEST $SCRATCH_DIR/blob2 > $SCRATCH_DIR/extract.digest
+@top_builddir@/test-calc-digest $DIGEST $SCRATCH_DIR/blob3 > $SCRATCH_DIR/extract2.digest
 
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/extract.digest
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/extract2.digest
@@ -34,7 +40,7 @@ if [ `id -u` == 0 ] ; then
     if test -e /dev/nbd0 ; then
         MKDEV_PID=`@top_builddir@/notify-wait @top_builddir@/casync $PARAMS mkdev $SCRATCH_DIR/test.caibx $SCRATCH_DIR/test-node`
 
-        dd if=$SCRATCH_DIR/test-node bs=102400 count=80 | sha256sum | cut -c -64 > $SCRATCH_DIR/mkdev.digest
+        dd if=$SCRATCH_DIR/test-node bs=102400 count=80 | @top_builddir@/test-calc-digest $DIGEST > $SCRATCH_DIR/mkdev.digest
 
         diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/mkdev.digest
 

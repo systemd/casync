@@ -1,0 +1,7 @@
+#!/bin/bash -ex
+
+# This is the same as test-script.sh, except that we force the digest to be
+# sha256, in order to detect potential incompatibilities with the remoting
+# feature.
+
+exec @top_builddir@/test-script.sh sha256

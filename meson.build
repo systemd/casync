@@ -202,6 +202,14 @@ test_script = find_program(test_script_sh)
 test('test-script.sh', test_script,
      timeout : 30 * 60)
 
+test_script_sha256_sh = configure_file(
+        output : 'test-script-sha256.sh',
+        input : 'test/test-script-sha256.sh.in',
+        configuration : substs)
+test_script_sha256 = find_program(test_script_sha256_sh)
+test('test-script-sha256.sh', test_script_sha256,
+     timeout : 30 * 60)
+
 test_nbd_sh = configure_file(
         output : 'test-nbd.sh',
         input : 'test/test-nbd.sh.in',
@@ -243,6 +251,7 @@ test_sources = '''
 non_test_sources = '''
         test-caformat
         test-caindex
+        test-calc-digest
 '''.split()
 
 foreach test_name : test_sources + non_test_sources

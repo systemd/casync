@@ -175,6 +175,10 @@ struct CaEncoder {
 
         bool payload_digest_invalid:1;
         bool hardlink_digest_invalid:1;
+
+        bool want_archive_digest:1;
+        bool want_payload_digest:1;
+        bool want_hardlink_digest:1;
 };
 
 #define CA_ENCODER_AT_ROOT(e) ((e)->node_idx == 0)
@@ -197,7 +201,7 @@ CaEncoder *ca_encoder_new(void) {
         if (!e)
                 return NULL;
 
-        assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_EXCLUDE_NODUMP, &e->feature_flags) >= 0);
+        assert_se(ca_feature_flags_normalize(CA_FORMAT_DEFAULT, &e->feature_flags) >= 0);
         e->time_granularity = 1;
 
         return e;
@@ -1759,12 +1763,12 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
 
                 /* We just entered this node. In this case, generate the ENTRY record for it */
 
-                if (e->payload_digest) {
+                if (e->want_payload_digest) {
                         ca_digest_reset(e->payload_digest);
                         e->payload_digest_invalid = false;
                 }
 
-                if (e->hardlink_digest) {
+                if (e->want_hardlink_digest) {
                         ca_digest_reset(e->hardlink_digest);
                         e->hardlink_digest_invalid = false;
                 }
@@ -2541,6 +2545,22 @@ static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
         return 1;
 }
 
+static int ca_encoder_write_digest(CaEncoder *e, CaDigest **digest, const void *p, size_t l) {
+        int r;
+
+        if (!e)
+                return -EINVAL;
+        if (!digest)
+                return -EINVAL;
+
+        r = ca_digest_ensure_allocated(digest, ca_feature_flags_to_digest_type(e->feature_flags));
+        if (r < 0)
+                return r;
+
+        ca_digest_write(*digest, p, l);
+        return 0;
+}
+
 int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
         bool skip_applied = false;
         CaEncoderNode *n;
@@ -2614,12 +2634,12 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
                 return 0;
         }
 
-        if (e->archive_digest)
-                ca_digest_write(e->archive_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
-        if (e->hardlink_digest && !e->hardlink_digest_invalid && IN_SET(e->state, CA_ENCODER_ENTRY, CA_ENCODER_IN_PAYLOAD))
-                ca_digest_write(e->hardlink_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
-        if (e->payload_digest && !e->payload_digest_invalid && e->state == CA_ENCODER_IN_PAYLOAD)
-                ca_digest_write(e->payload_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
+        if (e->want_archive_digest)
+                ca_encoder_write_digest(e, &e->archive_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
+        if (e->want_hardlink_digest && !e->hardlink_digest_invalid && IN_SET(e->state, CA_ENCODER_ENTRY, CA_ENCODER_IN_PAYLOAD))
+                ca_encoder_write_digest(e, &e->hardlink_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
+        if (e->want_payload_digest && !e->payload_digest_invalid && e->state == CA_ENCODER_IN_PAYLOAD)
+                ca_encoder_write_digest(e, &e->payload_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
 
         *ret = realloc_buffer_data(&e->buffer);
         *ret_size = realloc_buffer_size(&e->buffer);
@@ -3271,16 +3291,15 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 realloc_buffer_empty(&e->buffer);
 
-                if (e->archive_digest)
-                        ca_digest_reset(e->archive_digest);
+                ca_digest_reset(e->archive_digest);
 
-                if (e->payload_digest) {
+                if (e->want_payload_digest) {
                         ca_digest_reset(e->payload_digest);
                         e->payload_digest_invalid = false;
                 }
 
                 e->hardlink_digest_invalid = location->offset > 0;
-                if (e->hardlink_digest && !e->hardlink_digest_invalid)
+                if (e->want_hardlink_digest && !e->hardlink_digest_invalid)
                         ca_digest_reset(e->hardlink_digest);
 
                 return CA_ENCODER_DATA;
@@ -3318,11 +3337,10 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 realloc_buffer_empty(&e->buffer);
 
-                if (e->archive_digest)
-                        ca_digest_reset(e->archive_digest);
+                ca_digest_reset(e->archive_digest);
 
                 e->payload_digest_invalid = location->offset > 0;
-                if (e->payload_digest && !e->payload_digest_invalid)
+                if (e->want_payload_digest && !e->payload_digest_invalid)
                         ca_digest_reset(e->payload_digest);
 
                 e->hardlink_digest_invalid = true;
@@ -3348,8 +3366,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 realloc_buffer_empty(&e->buffer);
 
-                if (e->archive_digest)
-                        ca_digest_reset(e->archive_digest);
+                ca_digest_reset(e->archive_digest);
 
                 return CA_ENCODER_DATA;
 
@@ -3378,8 +3395,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 realloc_buffer_empty(&e->buffer);
 
-                if (e->archive_digest)
-                        ca_digest_reset(e->archive_digest);
+                ca_digest_reset(e->archive_digest);
 
                 return CA_ENCODER_DATA;
 
@@ -3410,35 +3426,43 @@ int ca_encoder_enable_archive_digest(CaEncoder *e, bool b) {
         if (!e)
                 return -EINVAL;
 
-        return ca_digest_allocate_set(&e->archive_digest, CA_DIGEST_SHA256, b);
+        e->want_archive_digest = b;
+        return 0;
 }
 
 int ca_encoder_enable_payload_digest(CaEncoder *e, bool b) {
         if (!e)
                 return -EINVAL;
 
-        return ca_digest_allocate_set(&e->payload_digest, CA_DIGEST_SHA256, b);
+        e->want_payload_digest = b;
+        return 0;
 }
 
 int ca_encoder_enable_hardlink_digest(CaEncoder *e, bool b) {
         if (!e)
                 return -EINVAL;
 
-        return ca_digest_allocate_set(&e->hardlink_digest, CA_DIGEST_SHA256, b);
+        e->want_hardlink_digest = b;
+        return 0;
 }
 
 int ca_encoder_get_archive_digest(CaEncoder *e, CaChunkID *ret) {
         const void *q;
+        int r;
 
         if (!e)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
 
-        if (!e->archive_digest)
+        if (!e->want_archive_digest)
                 return -ENOMEDIUM;
         if (e->state != CA_ENCODER_EOF)
                 return -EBUSY;
+
+        r = ca_digest_ensure_allocated(&e->archive_digest, ca_feature_flags_to_digest_type(e->feature_flags));
+        if (r < 0)
+                return r;
 
         q = ca_digest_read(e->archive_digest);
         if (!q)
@@ -3453,13 +3477,14 @@ int ca_encoder_get_archive_digest(CaEncoder *e, CaChunkID *ret) {
 int ca_encoder_get_payload_digest(CaEncoder *e, CaChunkID *ret) {
         CaEncoderNode *n;
         const void *q;
+        int r;
 
         if (!e)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
 
-        if (!e->payload_digest)
+        if (!e->want_payload_digest)
                 return -ENOMEDIUM;
         if (e->state != CA_ENCODER_FINALIZE)
                 return -EBUSY;
@@ -3471,6 +3496,10 @@ int ca_encoder_get_payload_digest(CaEncoder *e, CaChunkID *ret) {
                 return -EUNATCH;
         if (!S_ISREG(n->stat.st_mode) && !S_ISBLK(n->stat.st_mode))
                 return -ENOTTY;
+
+        r = ca_digest_ensure_allocated(&e->payload_digest, ca_feature_flags_to_digest_type(e->feature_flags));
+        if (r < 0)
+                return r;
 
         q = ca_digest_read(e->payload_digest);
         if (!q)
@@ -3485,13 +3514,14 @@ int ca_encoder_get_payload_digest(CaEncoder *e, CaChunkID *ret) {
 int ca_encoder_get_hardlink_digest(CaEncoder *e, CaChunkID *ret) {
         CaEncoderNode *n;
         const void *q;
+        int r;
 
         if (!e)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
 
-        if (!e->hardlink_digest)
+        if (!e->want_hardlink_digest)
                 return -ENOMEDIUM;
         if (e->state != CA_ENCODER_FINALIZE)
                 return -EBUSY;
@@ -3504,6 +3534,10 @@ int ca_encoder_get_hardlink_digest(CaEncoder *e, CaChunkID *ret) {
 
         if (S_ISDIR(n->stat.st_mode))
                 return -EISDIR;
+
+        r = ca_digest_ensure_allocated(&e->hardlink_digest, ca_feature_flags_to_digest_type(e->feature_flags));
+        if (r < 0)
+                return r;
 
         q = ca_digest_read(e->hardlink_digest);
         if (!q)

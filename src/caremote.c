@@ -6,6 +6,8 @@
 #include <sys/stat.h>
 
 #include "cachunk.h"
+#include "caformat-util.h"
+#include "caformat.h"
 #include "caprotocol-util.h"
 #include "caprotocol.h"
 #include "caremote.h"
@@ -80,6 +82,7 @@ struct CaRemote {
 
         size_t frame_size;
 
+        CaDigestType digest_type;
         CaDigest* validate_digest;
 };
 
@@ -104,8 +107,7 @@ CaRemote* ca_remote_new(void) {
 
         rr->rate_limit_bps = UINT64_MAX;
 
-        if (ca_digest_new(CA_DIGEST_SHA256, &rr->validate_digest) < 0)
-                return mfree(rr);
+        rr->digest_type = _CA_DIGEST_TYPE_INVALID;
 
         return rr;
 }
@@ -1440,6 +1442,7 @@ static const CaProtocolRequest* validate_request(CaRemote *rr, const CaProtocolH
 
 static const CaProtocolChunk* validate_chunk(CaRemote *rr, const CaProtocolHeader *h) {
         const CaProtocolChunk *c;
+        uint64_t flags;
 
         assert(rr);
         assert(h);
@@ -1451,7 +1454,9 @@ static const CaProtocolChunk* validate_chunk(CaRemote *rr, const CaProtocolHeade
 
         c = (const CaProtocolChunk*) h;
 
-        if (read_le64(&c->flags) & ~CA_PROTOCOL_CHUNK_FLAG_MAX)
+
+        flags = read_le64(&c->flags);
+        if (flags & ~CA_PROTOCOL_CHUNK_FLAG_MAX)
                 return NULL;
 
         return c;
@@ -2017,12 +2022,53 @@ static int ca_remote_validate_chunk(
                 l = realloc_buffer_size(&rr->validate_buffer);
         }
 
+        /* We validate the digests of all incoming chunks. We support multiple digest algorithms in parallel. If the
+         * caller has set a specific algorithm explicitly, we will only validate by it. However, if none such algorithm
+         * was supplied, we'll use the one that worked on the last chunk first, and will then try all others we know
+         * before considering the digest to not match the contents */
+
+        if (!rr->validate_digest) {
+                /* Allocate the digest object, and start with sha512-256 if we don't know which algorithm to use. */
+                r = ca_digest_new(rr->digest_type >= 0 ? rr->digest_type : CA_DIGEST_SHA512_256, &rr->validate_digest);
+                if (r < 0)
+                        return r;
+        }
+
         r = ca_chunk_id_make(rr->validate_digest, p, l, &actual);
         if (r < 0)
                 return r;
 
-        if (!ca_chunk_id_equal(id, &actual))
+        if (!ca_chunk_id_equal(id, &actual)) {
+                CaDigestType old_type, i;
+
+                /* If an explicit digest algorithm was set, then a mismatch is fatal */
+                if (rr->digest_type >= 0)
+                        return -EBADMSG;
+
+                old_type = ca_digest_get_type(rr->validate_digest);
+                if (old_type < 0)
+                        return -EINVAL;
+
+                /* Otherwise iterate through all algorithms we know, and see if it works for them */
+                for (i = 0; i < _CA_DIGEST_TYPE_MAX; i++) {
+
+                        if (i == old_type)
+                                continue;
+
+                        r = ca_digest_set_type(rr->validate_digest, i);
+                        if (r < 0)
+                                return r;
+
+                        r = ca_chunk_id_make(rr->validate_digest, p, l, &actual);
+                        if (r < 0)
+                                return r;
+
+                        if (ca_chunk_id_equal(id, &actual))
+                                return 0;
+                }
+
                 return -EBADMSG;
+        }
 
         return 0;
 }
@@ -2704,4 +2750,37 @@ int ca_remote_forget_chunk(CaRemote *rr, const CaChunkID *id) {
 finish:
         free(qpos);
         return r;
+}
+
+int ca_remote_set_digest_type(CaRemote *rr, CaDigestType type) {
+        int r;
+
+        if (!rr)
+                return -EINVAL;
+        if (type >= _CA_DIGEST_TYPE_MAX)
+                return -EOPNOTSUPP;
+
+        if (type < 0)
+                rr->digest_type = _CA_DIGEST_TYPE_INVALID;
+        else {
+                if (rr->validate_digest) {
+                        r = ca_digest_set_type(rr->validate_digest, type);
+                        if (r < 0)
+                                return r;
+                }
+
+                rr->digest_type = type;
+        }
+
+        return 0;
+}
+
+int ca_remote_get_digest_type(CaRemote *rr, CaDigestType *ret) {
+        if (!rr)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        *ret = rr->digest_type;
+        return 0;
 }

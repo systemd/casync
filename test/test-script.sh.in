@@ -1,9 +1,15 @@
 #!/bin/bash -ex
 
-if [ `id -u` == 0 ] ; then
-    PARAMS="-v"
+if [ -z "$1" ] ; then
+    DIGEST=sha512-256
 else
-    PARAMS="-v --without=privileged"
+    DIGEST="$1"
+fi
+
+if [ `id -u` == 0 ] ; then
+    PARAMS="-v --digest=$DIGEST"
+else
+    PARAMS="-v --without=privileged --digest=$DIGEST"
 fi
 
 CASYNC_PROTOCOL_PATH=@top_builddir@
@@ -29,7 +35,7 @@ cd $SCRATCH_DIR/src
 @top_builddir@/casync $PARAMS list $SCRATCH_DIR/test.catar > $SCRATCH_DIR/test.catar.list
 @top_builddir@/casync $PARAMS mtree $SCRATCH_DIR/test.catar > $SCRATCH_DIR/test.catar.mtree
 @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/test.catar > $SCRATCH_DIR/test.catar.digest
-sha256sum $SCRATCH_DIR/test.catar | cut -c -64 > $SCRATCH_DIR/test.catar.digest2
+@top_builddir@/test-calc-digest $DIGEST $SCRATCH_DIR/test.catar > $SCRATCH_DIR/test.catar.digest2
 
 @top_builddir@/casync $PARAMS make $SCRATCH_DIR/test.caidx
 @top_builddir@/casync $PARAMS list $SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test.caidx.list

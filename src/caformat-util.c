@@ -145,7 +145,7 @@ int ca_with_feature_flags_format(uint64_t features, char **ret) {
                 features &= ~f;
         }
 
-        if ((features & ~(CA_FORMAT_EXCLUDE_NODUMP|CA_FORMAT_EXCLUDE_SUBMOUNTS)) != 0) {
+        if ((features & ~(CA_FORMAT_EXCLUDE_NODUMP|CA_FORMAT_EXCLUDE_SUBMOUNTS|CA_FORMAT_SHA512_256)) != 0) {
                 free(s);
                 return -EINVAL;
         }
@@ -464,4 +464,27 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FIFOS|
                         CA_FORMAT_WITH_SOCKETS;
         }
+}
+
+uint64_t ca_feature_flags_from_digest_type(CaDigestType type) {
+
+        switch (type) {
+
+        case CA_DIGEST_SHA256:
+                return 0;
+
+        case CA_DIGEST_SHA512_256:
+                return CA_FORMAT_SHA512_256;
+
+        default:
+                return UINT64_MAX;
+        }
+}
+
+CaDigestType ca_feature_flags_to_digest_type(uint64_t flags) {
+
+        if (flags & CA_FORMAT_SHA512_256)
+                return CA_DIGEST_SHA512_256;
+        else
+                return CA_DIGEST_SHA256;
 }

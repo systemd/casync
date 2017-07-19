@@ -3,6 +3,7 @@
 
 #include <inttypes.h>
 
+#include "cadigest.h"
 #include "util.h"
 
 const char *ca_format_type_name(uint64_t u);
@@ -22,5 +23,8 @@ uint32_t ca_feature_flags_to_fat_attrs(uint64_t flags);
 uint64_t ca_feature_flags_from_magic(statfs_f_type_t type);
 
 int ca_feature_flags_are_normalized(uint64_t f);
+
+uint64_t ca_feature_flags_from_digest_type(CaDigestType type);
+CaDigestType ca_feature_flags_to_digest_type(uint64_t flags);
 
 #endif
