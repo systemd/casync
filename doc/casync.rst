@@ -31,8 +31,8 @@ This will create either a .catar archive or an .caidx index for for the given
 of output is decided based on the extension. *DIRECTORY* is optional, and
 the current directory will be used if not specified.
 
-When an .caidx file is created, a .castr storage directory will be created too
-(see ``--store=`` option).
+When a .caidx or .caibx file is created, a .castr storage directory will be
+created too (see ``--store=`` option).
 
 |
 | **casync** extract [*ARCHIVE* | *ARCHIVE_INDEX*] [*DIRECTORY*]
@@ -137,6 +137,7 @@ General options:
 --store=PATH                    The primary chunk store to use
 --extra-store=PATH              Additional chunk store to look for chunks in
 --chunk-size=<[MIN]:AVG:[MAX]>  The minimal/average/maximum number of bytes in a chunk
+--digest=<sha256|sha512-256>    The digest algorithm to use.
 --seed=PATH                     Additional file or directory to use as seed
 --rate-limit-bps=LIMIT          Maximum bandwidth in bytes/s for remote communication
 --exclude-nodump=no             Don't exclude files with chattr(1)'s +d **nodump** flag when creating archive
@@ -199,6 +200,8 @@ Individual archive features:
 --with=<flag-sync>         Store synchronous file flag
 --with=<flag-nocomp>       Store disable compression file flag
 --with=<flag-projinherit>  Store project quota inheritance flag
+--with=<subvolume>         Store btrfs subvolume information
+--with=subvolume-ro        Store btrfs subvolume read-only property
 --with=<xattrs>            Store extended file attributes
 --with=<acl>               Store file access control lists
 --with=<fcaps>             Store file capabilities
