@@ -112,6 +112,13 @@ else
 endif
 conf.set10('HAVE_FUSE', get_option('fuse'))
 
+if get_option('selinux')
+        libselinux = dependency('libselinux')
+else
+        libselinux = []
+endif
+conf.set10('HAVE_SELINUX', get_option('selinux'))
+
 threads = dependency('threads')
 math = cc.find_library('m')
 
@@ -137,11 +144,12 @@ executable(
         casync_sources,
         link_with : libshared,
         dependencies : [
-                liblzma,
-                openssl,
                 libacl,
                 libfuse,
-                math],
+                liblzma,
+                libselinux,
+                math,
+                openssl],
         install : true)
 
 executable(
@@ -149,10 +157,10 @@ executable(
         casync_http_sources,
         link_with : libshared,
         dependencies : [
-                liblzma,
-                openssl,
                 libcurl,
-                math],
+                liblzma,
+                math,
+                openssl],
         install : true,
         install_dir : protocoldir)
 
@@ -261,11 +269,12 @@ foreach test_name : test_sources + non_test_sources
                 link_with : libshared,
                 include_directories : includes,
                 dependencies : [
-                        liblzma,
-                        openssl,
                         libacl,
-                        threads,
-                        math])
+                        liblzma,
+                        math,
+                        openssl,
+                        libselinux,
+                        threads])
 
         if test_sources.contains(test_name)
                 test(test_name, exe,

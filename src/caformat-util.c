@@ -41,6 +41,9 @@ const char *ca_format_type_name(uint64_t u) {
         case CA_FORMAT_ACL_DEFAULT_GROUP:
                 return "acl-default-group";
 
+        case CA_FORMAT_SELINUX:
+                return "selinux";
+
         case CA_FORMAT_SYMLINK:
                 return "symlink";
 
@@ -100,6 +103,7 @@ static const struct {
         { "flag-subvolume-ro",CA_FORMAT_WITH_SUBVOLUME_RO     },
         { "xattrs",           CA_FORMAT_WITH_XATTRS           },
         { "acl",              CA_FORMAT_WITH_ACL              },
+        { "selinux",          CA_FORMAT_WITH_SELINUX          },
         { "fcaps",            CA_FORMAT_WITH_FCAPS            },
         { "best",             CA_FORMAT_WITH_BEST             },
         { "unix",             CA_FORMAT_WITH_UNIX             },
@@ -401,6 +405,7 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FLAG_SYNC|
                         CA_FORMAT_WITH_XATTRS|
                         CA_FORMAT_WITH_ACL|
+                        CA_FORMAT_WITH_SELINUX|
                         CA_FORMAT_WITH_FCAPS;
 
         case XFS_SUPER_MAGIC:
@@ -425,6 +430,7 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FLAG_SYNC|
                         CA_FORMAT_WITH_XATTRS|
                         CA_FORMAT_WITH_ACL|
+                        CA_FORMAT_WITH_SELINUX|
                         CA_FORMAT_WITH_FCAPS;
 
         case BTRFS_SUPER_MAGIC:
@@ -453,6 +459,7 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_FLAG_NOCOMP|
                         CA_FORMAT_WITH_XATTRS|
                         CA_FORMAT_WITH_ACL|
+                        CA_FORMAT_WITH_SELINUX|
                         CA_FORMAT_WITH_SUBVOLUME|
                         CA_FORMAT_WITH_SUBVOLUME_RO|
                         CA_FORMAT_WITH_FCAPS;
@@ -472,7 +479,8 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_DEVICE_NODES|
                         CA_FORMAT_WITH_FIFOS|
                         CA_FORMAT_WITH_SOCKETS|
-                        CA_FORMAT_WITH_ACL;
+                        CA_FORMAT_WITH_ACL|
+                        CA_FORMAT_WITH_SELINUX;
 
         case FUSE_SUPER_MAGIC:
                 /* We don't actually know what the backing FUSE file system supports, but it's likely more limited than
