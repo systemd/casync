@@ -148,6 +148,7 @@ struct CaDecoder {
         CaDecoderState state;
 
         uint64_t feature_flags;
+        uint64_t expected_feature_flags;
 
         CaDecoderNode nodes[NODES_MAX];
         size_t n_nodes;
@@ -268,6 +269,7 @@ CaDecoder *ca_decoder_new(void) {
                 return NULL;
 
         d->feature_flags = UINT64_MAX;
+        d->expected_feature_flags = UINT64_MAX;
 
         d->seek_idx = UINT64_MAX;
         d->seek_offset = UINT64_MAX;
@@ -408,6 +410,14 @@ CaDecoder *ca_decoder_unref(CaDecoder *d) {
         free(d);
 
         return NULL;
+}
+
+int ca_decoder_set_expected_feature_flags(CaDecoder *d, uint64_t flags) {
+        if (!d)
+                return -EINVAL;
+
+        d->expected_feature_flags = flags;
+        return 0;
 }
 
 int ca_decoder_get_feature_flags(CaDecoder *d, uint64_t *ret) {
@@ -843,6 +853,10 @@ static bool validate_feature_flags(CaDecoder *d, uint64_t flags) {
 
         /* We use all bits on in the flags field as a special value, don't permit this in files */
         if (flags == UINT64_MAX)
+                return false;
+
+        if (d->expected_feature_flags != UINT64_MAX &&
+            flags != d->expected_feature_flags)
                 return false;
 
         r = ca_feature_flags_are_normalized(flags);

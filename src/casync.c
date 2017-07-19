@@ -2454,6 +2454,15 @@ static int ca_sync_propagate_flags_to_remotes(CaSync *s, uint64_t flags) {
         return 0;
 }
 
+static int ca_sync_propagate_flags_to_decoder(CaSync *s, uint64_t flags) {
+        assert(s);
+
+        if (!s->decoder)
+                return 0;
+
+        return ca_decoder_set_expected_feature_flags(s->decoder, flags);
+}
+
 static int ca_sync_propagate_index_flags(CaSync *s) {
         size_t cmin, cavg, cmax;
         uint64_t flags;
@@ -2464,7 +2473,7 @@ static int ca_sync_propagate_index_flags(CaSync *s) {
         /* If we read the header of the index file, make sure to propagate the flags and chunk size stored in it to the
          * seeds and remotes. */
 
-        if (!ca_sync_shall_seed(s) && ca_sync_n_remotes(s) == 0)
+        if (s->direction != CA_SYNC_DECODE)
                 return CA_SYNC_POLL;
 
         if (!s->index || s->index_flags_propagated) /* The flags/chunk size is already propagated */
@@ -2491,6 +2500,10 @@ static int ca_sync_propagate_index_flags(CaSync *s) {
                 return r;
 
         r = ca_sync_propagate_flags_to_remotes(s, flags);
+        if (r < 0)
+                return r;
+
+        r = ca_sync_propagate_flags_to_decoder(s, flags);
         if (r < 0)
                 return r;
 
