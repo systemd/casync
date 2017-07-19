@@ -12,7 +12,7 @@
 #define CA_CHUNK_ID_FORMAT_MAX (CA_CHUNK_ID_SIZE*2+1)
 
 typedef union CaChunkID {
-        /* For now, a SHA256 sum */
+        /* Depending on context either a SHA256 or SHA512/256 sum */
         uint8_t bytes[CA_CHUNK_ID_SIZE];
         uint64_t u64[CA_CHUNK_ID_SIZE / sizeof(uint64_t)];
 } CaChunkID;

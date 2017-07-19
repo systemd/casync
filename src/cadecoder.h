@@ -36,6 +36,9 @@ CaDecoder *ca_decoder_unref(CaDecoder *d);
 /* The actual feature flags in effect if known */
 int ca_decoder_get_feature_flags(CaDecoder *d, uint64_t *ret);
 
+/* The feature flags to expect. When the actual feature flags don't match this, this is considered an error */
+int ca_decoder_set_expected_feature_flags(CaDecoder *d, uint64_t flags);
+
 /* Various booleans to configure the mode of operation */
 int ca_decoder_set_punch_holes(CaDecoder *d, bool enabled);
 int ca_decoder_set_reflink(CaDecoder *d, bool enabled);

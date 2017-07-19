@@ -25,7 +25,7 @@ int main(int argc, char *argv[]) {
 
         assert_se(s = ca_sync_new_encode());
 
-        flags = CA_FORMAT_WITH_BEST|CA_FORMAT_EXCLUDE_NODUMP;
+        flags = CA_FORMAT_DEFAULT;
 
         if (geteuid() != 0)
                 flags &= ~CA_FORMAT_WITH_PRIVILEGED;

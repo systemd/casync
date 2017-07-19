@@ -55,6 +55,7 @@ static uint64_t arg_without = 0;
 static uid_t arg_uid_shift = 0, arg_uid_range = 0x10000U;
 static bool arg_uid_shift_apply = false;
 static bool arg_mkdir = true;
+static CaDigestType arg_digest = CA_DIGEST_SHA512_256;
 
 static void help(void) {
         printf("%1$s [OPTIONS...] make [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
@@ -75,6 +76,7 @@ static void help(void) {
                "     --chunk-size=[MIN:]AVG[:MAX]\n"
                "                             The minimal/average/maximum number of bytes in a\n"
                "                             chunk\n"
+               "     --digest=DIGEST         Pick chunk hash algorithm (sha256 or sha512-256)\n"
                "     --seed=PATH             Additional file or directory to use as seed\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote\n"
                "                             communication\n"
@@ -262,6 +264,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_UID_RANGE,
                 ARG_RECURSIVE,
                 ARG_MKDIR,
+                ARG_DIGEST,
         };
 
         static const struct option options[] = {
@@ -287,6 +290,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "uid-range",         required_argument, NULL, ARG_UID_RANGE         },
                 { "recursive",         required_argument, NULL, ARG_RECURSIVE         },
                 { "mkdir",             required_argument, NULL, ARG_MKDIR             },
+                { "digest",            required_argument, NULL, ARG_DIGEST            },
                 {}
         };
 
@@ -553,6 +557,19 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_recursive = r;
                         break;
 
+                case ARG_DIGEST: {
+                        CaDigestType t;
+
+                        t = ca_digest_type_from_string(optarg);
+                        if (t < 0) {
+                                fprintf(stderr, "Failed to parse --digest= parameter: %s\n", optarg);
+                                return r;
+                        }
+
+                        arg_digest = t;
+                        break;
+                }
+
                 case '?':
                         return -EINVAL;
 
@@ -662,6 +679,8 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
                 flags |= CA_FORMAT_EXCLUDE_NODUMP;
         if (arg_exclude_submounts)
                 flags |= CA_FORMAT_EXCLUDE_SUBMOUNTS;
+
+        flags |= ca_feature_flags_from_digest_type(arg_digest);
 
         r = ca_sync_set_feature_flags(s, flags);
         if (r < 0 && r != -ENOTTY) { /* sync object does not have an encoder */
@@ -775,6 +794,7 @@ static int verbose_print_feature_flags(CaSync *s) {
         fprintf(stderr, "Using feature flags: %s\n", strnone(t));
         fprintf(stderr, "Excluding files with chattr(1) -d flag: %s\n", yes_no(flags & CA_FORMAT_EXCLUDE_NODUMP));
         fprintf(stderr, "Excluding submounts: %s\n", yes_no(flags & CA_FORMAT_EXCLUDE_SUBMOUNTS));
+        fprintf(stderr, "Digest algorithm: %s\n", ca_digest_type_to_string(ca_feature_flags_to_digest_type(flags)));
 
         free(t);
 
@@ -2233,16 +2253,21 @@ static int verb_list(int argc, char *argv[]) {
                         }
 
                         if (streq(argv[0], "mtree") && S_ISREG(mode)) {
+                                static const char * const table[_CA_DIGEST_TYPE_MAX] = {
+                                        [CA_DIGEST_SHA256] = "sha256digest",
+                                        [CA_DIGEST_SHA512_256] = "sha512256digest",
+                                };
+
                                 CaChunkID digest;
                                 char v[CA_CHUNK_ID_FORMAT_MAX];
 
                                 r = ca_sync_get_payload_digest(s, &digest);
                                 if (r < 0) {
-                                        fprintf(stderr, "Failed to read SHA256 sum.\n");
+                                        fprintf(stderr, "Failed to read digest.\n");
                                         return -EINVAL;
                                 }
 
-                                printf(" sha256digest=%s\n", ca_chunk_id_format(&digest, v));
+                                printf(" %s=%s\n", table[arg_digest], ca_chunk_id_format(&digest, v));
 
                         } else if (streq(argv[0], "stat") && !S_ISDIR(mode)) {
                                 CaChunkID payload_digest, hardlink_digest;

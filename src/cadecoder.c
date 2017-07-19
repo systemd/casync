@@ -148,6 +148,7 @@ struct CaDecoder {
         CaDecoderState state;
 
         uint64_t feature_flags;
+        uint64_t expected_feature_flags;
 
         CaDecoderNode nodes[NODES_MAX];
         size_t n_nodes;
@@ -212,6 +213,10 @@ struct CaDecoder {
         CaDigest *payload_digest;
         CaDigest *hardlink_digest;
 
+        bool want_archive_digest:1;
+        bool want_payload_digest:1;
+        bool want_hardlink_digest:1;
+
         bool payload_digest_invalid:1;
         bool hardlink_digest_invalid:1;
 };
@@ -264,6 +269,7 @@ CaDecoder *ca_decoder_new(void) {
                 return NULL;
 
         d->feature_flags = UINT64_MAX;
+        d->expected_feature_flags = UINT64_MAX;
 
         d->seek_idx = UINT64_MAX;
         d->seek_offset = UINT64_MAX;
@@ -404,6 +410,14 @@ CaDecoder *ca_decoder_unref(CaDecoder *d) {
         free(d);
 
         return NULL;
+}
+
+int ca_decoder_set_expected_feature_flags(CaDecoder *d, uint64_t flags) {
+        if (!d)
+                return -EINVAL;
+
+        d->expected_feature_flags = flags;
+        return 0;
 }
 
 int ca_decoder_get_feature_flags(CaDecoder *d, uint64_t *ret) {
@@ -839,6 +853,10 @@ static bool validate_feature_flags(CaDecoder *d, uint64_t flags) {
 
         /* We use all bits on in the flags field as a special value, don't permit this in files */
         if (flags == UINT64_MAX)
+                return false;
+
+        if (d->expected_feature_flags != UINT64_MAX &&
+            flags != d->expected_feature_flags)
                 return false;
 
         r = ca_feature_flags_are_normalized(flags);
@@ -1551,6 +1569,22 @@ static int ca_decoder_do_seek(CaDecoder *d, CaDecoderNode *n) {
         return -ESPIPE;
 }
 
+static int ca_decoder_write_digest(CaDecoder *d, CaDigest **digest, const void *p, size_t l) {
+        int r;
+
+        if (!d)
+                return -EINVAL;
+        if (!digest)
+                return -EINVAL;
+
+        r = ca_digest_ensure_allocated(digest, ca_feature_flags_to_digest_type(d->feature_flags));
+        if (r < 0)
+                return r;
+
+        ca_digest_write(*digest, p, l);
+        return 0;
+}
+
 static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         const CaFormatEntry *entry = NULL;
         const CaFormatUser *user = NULL;
@@ -2187,15 +2221,15 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         ca_decoder_enter_state(d, CA_DECODER_ENTRY);
         d->step_size = offset;
 
-        ca_digest_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+        ca_decoder_write_digest(d, &d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
 
-        if (d->payload_digest) {
+        if (d->want_payload_digest) {
                 ca_digest_reset(d->payload_digest);
                 d->payload_digest_invalid = false;
         }
-        if (d->hardlink_digest) {
+        if (d->want_hardlink_digest) {
                 ca_digest_reset(d->hardlink_digest);
-                ca_digest_write(d->hardlink_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                ca_decoder_write_digest(d, &d->hardlink_digest, realloc_buffer_data(&d->buffer), d->step_size);
                 d->hardlink_digest_invalid = false;
         }
 
@@ -2377,11 +2411,11 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
 
                 d->step_size = l;
 
-                if (d->archive_digest) {
+                if (d->want_archive_digest) {
                         if (arrived)
                                 ca_digest_reset(d->archive_digest);
                         else if (!seek_continues)
-                                ca_digest_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                                ca_decoder_write_digest(d, &d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
                 }
 
                 return arrived ? CA_DECODER_FOUND : CA_DECODER_STEP;
@@ -2431,7 +2465,7 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
                 ca_decoder_enter_state(d, CA_DECODER_GOODBYE);
                 d->step_size = l;
 
-                ca_digest_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                ca_decoder_write_digest(d, &d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
 
                 return CA_DECODER_STEP;
 
@@ -3847,12 +3881,12 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                         else
                                 d->step_size = MIN(realloc_buffer_size(&d->buffer), n->size - d->payload_offset);
 
-                        if (d->archive_digest)
-                                ca_digest_write(d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
-                        if (d->payload_digest && !d->payload_digest_invalid)
-                                ca_digest_write(d->payload_digest, realloc_buffer_data(&d->buffer), d->step_size);
-                        if (d->hardlink_digest && !d->hardlink_digest_invalid)
-                                ca_digest_write(d->hardlink_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                        if (d->want_archive_digest)
+                                ca_decoder_write_digest(d, &d->archive_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                        if (d->want_payload_digest && !d->payload_digest_invalid)
+                                ca_decoder_write_digest(d, &d->payload_digest, realloc_buffer_data(&d->buffer), d->step_size);
+                        if (d->want_hardlink_digest && !d->hardlink_digest_invalid)
+                                ca_decoder_write_digest(d, &d->hardlink_digest, realloc_buffer_data(&d->buffer), d->step_size);
 
                         return CA_DECODER_PAYLOAD;
                 }
@@ -3880,7 +3914,7 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 }
 
                 /* If the caller doesn't want the payload, and we don't need it either, but know how large it is, then let's skip over it */
-                if (!d->payload && !d->payload_digest && n->fd < 0 && n->size != UINT64_MAX) {
+                if (!d->payload && !d->want_payload_digest && n->fd < 0 && n->size != UINT64_MAX) {
 
                         d->skip_bytes = n->size - d->payload_offset;
                         ca_decoder_enter_state(d, CA_DECODER_SKIPPING);
@@ -4007,7 +4041,7 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 ca_decoder_reset_seek(d);
 
                 ca_digest_reset(d->archive_digest);
-                if (d->payload_digest) {
+                if (d->want_payload_digest) {
 
                         d->payload_digest_invalid = d->payload_offset > 0;
                         if (!d->payload_digest_invalid)
@@ -5020,35 +5054,43 @@ int ca_decoder_enable_archive_digest(CaDecoder *d, bool b) {
         if (!d)
                 return -EINVAL;
 
-        return ca_digest_allocate_set(&d->archive_digest, CA_DIGEST_SHA256, b);
+        d->want_archive_digest = b;
+        return 0;
 }
 
 int ca_decoder_enable_payload_digest(CaDecoder *d, bool b) {
         if (!d)
                 return -EINVAL;
 
-        return ca_digest_allocate_set(&d->payload_digest, CA_DIGEST_SHA256, b);
+        d->want_payload_digest = b;
+        return 0;
 }
 
 int ca_decoder_enable_hardlink_digest(CaDecoder *d, bool b) {
         if (!d)
                 return -EINVAL;
 
-        return ca_digest_allocate_set(&d->hardlink_digest, CA_DIGEST_SHA256, b);
+        d->want_hardlink_digest = b;
+        return 0;
 }
 
 int ca_decoder_get_archive_digest(CaDecoder *d, CaChunkID *ret) {
         const void *q;
+        int r;
 
         if (!d)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
 
-        if (!d->archive_digest)
+        if (!d->want_archive_digest)
                 return -ENOMEDIUM;
         if (d->state != CA_DECODER_EOF)
                 return -EBUSY;
+
+        r = ca_digest_ensure_allocated(&d->archive_digest, ca_feature_flags_to_digest_type(d->feature_flags));
+        if (r < 0)
+                return r;
 
         q = ca_digest_read(d->archive_digest);
         if (!q)
@@ -5063,13 +5105,14 @@ int ca_decoder_get_payload_digest(CaDecoder *d, CaChunkID *ret) {
         CaDecoderNode *n;
         const void *q;
         mode_t mode;
+        int r;
 
         if (!d)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
 
-        if (!d->payload_digest)
+        if (!d->want_payload_digest)
                 return -ENOMEDIUM;
         if (d->state != CA_DECODER_FINALIZE)
                 return -EBUSY;
@@ -5085,6 +5128,10 @@ int ca_decoder_get_payload_digest(CaDecoder *d, CaChunkID *ret) {
         if (!S_ISREG(mode) && !S_ISBLK(mode))
                 return -ENOTTY;
 
+        r = ca_digest_ensure_allocated(&d->payload_digest, ca_feature_flags_to_digest_type(d->feature_flags));
+        if (r < 0)
+                return r;
+
         q = ca_digest_read(d->payload_digest);
         if (!q)
                 return -EIO;
@@ -5098,13 +5145,14 @@ int ca_decoder_get_hardlink_digest(CaDecoder *d, CaChunkID *ret) {
         CaDecoderNode *n;
         const void *q;
         mode_t mode;
+        int r;
 
         if (!d)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
 
-        if (!d->hardlink_digest)
+        if (!d->want_hardlink_digest)
                 return -ENOMEDIUM;
         if (d->state != CA_DECODER_FINALIZE)
                 return -EBUSY;
@@ -5119,6 +5167,10 @@ int ca_decoder_get_hardlink_digest(CaDecoder *d, CaChunkID *ret) {
                 return -ENODATA;
         if (S_ISDIR(mode))
                 return -EISDIR;
+
+        r = ca_digest_ensure_allocated(&d->hardlink_digest, ca_feature_flags_to_digest_type(d->feature_flags));
+        if (r < 0)
+                return r;
 
         q = ca_digest_read(d->hardlink_digest);
         if (!q)

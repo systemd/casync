@@ -1,3 +1,10 @@
+SHORT-TERM:
+* make sure we validate everything we load from local stores, too
+* support alternative compressors
+* when extracting, check that index feature flags and archive feature flags match
+* use btrfs reflink with contents checking
+* rework how default --with= and --without= are calculated, so that --except stuff doesn't leak into blob index
+
 TO MAKE IT USEFUL FOR BACKUPS:
 * encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
 * speed up repeated image generation: maintain persistent cache for directory trees that permits lookups by a path location as key, returning a chunk id and "newest covering mtime"
@@ -5,7 +12,6 @@ TO MAKE IT USEFUL FOR BACKUPS:
 LATER:
 * verify
 * diff
-* save/restore btrfs file/subvol flags
 * save/restore hardlinks?
 * check fs features when restoring
 * exclude patterns

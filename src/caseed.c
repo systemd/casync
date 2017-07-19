@@ -58,10 +58,7 @@ CaSeed *ca_seed_new(void) {
 
         s->chunker = (CaChunker) CA_CHUNKER_INIT;
 
-        assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_EXCLUDE_NODUMP, &s->feature_flags) >= 0);
-
-        if (ca_digest_new(CA_DIGEST_SHA256, &s->chunk_digest) < 0)
-                return mfree(s);
+        assert_se(ca_feature_flags_normalize(CA_FORMAT_DEFAULT, &s->feature_flags) >= 0);
 
         return s;
 }
@@ -221,6 +218,25 @@ static int ca_seed_open(CaSeed *s) {
         return 0;
 }
 
+static int ca_seed_make_chunk_id(CaSeed *s, const void *p, size_t l, CaChunkID *ret) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!p && l > 0)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!s->chunk_digest) {
+                r = ca_digest_new(ca_feature_flags_to_digest_type(s->feature_flags), &s->chunk_digest);
+                if (r < 0)
+                        return r;
+        }
+
+        return ca_chunk_id_make(s->chunk_digest, p, l, ret);
+}
+
 static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void *data, size_t l) {
         char ids[CA_CHUNK_ID_FORMAT_MAX];
         const char *t, *four, *combined;
@@ -240,7 +256,7 @@ static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void
         if (!t)
                 return -ENOMEM;
 
-        r = ca_chunk_id_make(s->chunk_digest, data, l, &id);
+        r = ca_seed_make_chunk_id(s, data, l, &id);
         if (r < 0)
                 return r;
 
@@ -595,7 +611,7 @@ int ca_seed_get(CaSeed *s,
                         if (n >= size) {
                                 CaChunkID test_id;
 
-                                r = ca_chunk_id_make(s->chunk_digest, p, size, &test_id);
+                                r = ca_seed_make_chunk_id(s, p, size, &test_id);
                                 if (r < 0)
                                         goto finish;
 

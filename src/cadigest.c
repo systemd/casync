@@ -56,7 +56,6 @@ int ca_digest_new(CaDigestType t, CaDigest **ret) {
         if (!ret)
                 return -EINVAL;
 
-
         d = new0(CaDigest, 1);
         if (!d)
                 return -ENOMEM;
@@ -180,24 +179,31 @@ CaDigestType ca_digest_type_from_string(const char *name) {
         return _CA_DIGEST_TYPE_INVALID;
 }
 
-int ca_digest_allocate_set(CaDigest **d, CaDigestType t, bool b) {
+int ca_digest_ensure_allocated(CaDigest **d, CaDigestType t) {
         int r;
 
         if (!d)
                 return -EINVAL;
-
-        if (b) {
-                if (*d)
-                        return 1;
-
-                r = ca_digest_new(t, d);
-                if (r < 0)
-                        return r;
-
-                return 1;
-        } else {
-                *d = ca_digest_free(*d);
-
+        if (*d)
                 return 0;
-        }
+
+        r = ca_digest_new(t, d);
+        if (r < 0)
+                return r;
+
+        return 1;
+}
+
+int ca_digest_set_type(CaDigest *d, CaDigestType t) {
+        if (!d)
+                return -EINVAL;
+        if (t < 0)
+                return -EINVAL;
+        if (t >= _CA_DIGEST_TYPE_MAX)
+                return -EOPNOTSUPP;
+
+        d->type = t;
+        ca_digest_reset(d);
+
+        return 0;
 }

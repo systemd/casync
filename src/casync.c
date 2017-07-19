@@ -138,9 +138,6 @@ static CaSync *ca_sync_new(void) {
         s->delete = true;
         s->payload = true;
 
-        if (ca_digest_new(CA_DIGEST_SHA256, &s->chunk_digest) < 0)
-                return mfree(s);
-
         return s;
 }
 
@@ -152,7 +149,7 @@ CaSync *ca_sync_new_encode(void) {
                 return NULL;
 
         s->direction = CA_SYNC_ENCODE;
-        assert_se(ca_feature_flags_normalize(CA_FORMAT_WITH_BEST|CA_FORMAT_EXCLUDE_NODUMP, &s->feature_flags) >= 0);
+        assert_se(ca_feature_flags_normalize(CA_FORMAT_DEFAULT, &s->feature_flags) >= 0);
 
         return s;
 }
@@ -2393,18 +2390,90 @@ static int ca_sync_remote_step(CaSync *s) {
         return CA_SYNC_POLL;
 }
 
-static int ca_sync_propagate_index_flags(CaSync *s) {
-        size_t cmin, cavg, cmax;
-        uint64_t flags;
+static int ca_sync_propagate_flags_to_seeds(CaSync *s, uint64_t flags, size_t cmin, size_t cavg, size_t cmax) {
         size_t i;
         int r;
 
         assert(s);
 
-        /* If we read the header of the index file, make sure to propagate the flags and chunk size stored in it to the
-         * seeds. */
+        for (i = 0; i < s->n_seeds; i++) {
 
-        if (!ca_sync_shall_seed(s))
+                r = ca_seed_set_feature_flags(s->seeds[i], flags);
+                if (r < 0)
+                        return r;
+
+                r = ca_seed_set_chunk_size_min(s->seeds[i], cmin);
+                if (r < 0)
+                        return r;
+
+                r = ca_seed_set_chunk_size_avg(s->seeds[i], cavg);
+                if (r < 0)
+                        return r;
+
+                r = ca_seed_set_chunk_size_max(s->seeds[i], cmax);
+                if (r < 0)
+                        return r;
+        }
+
+        return 0;
+}
+
+static int ca_sync_propagate_flags_to_remotes(CaSync *s, uint64_t flags) {
+        CaDigestType dtype;
+        size_t i;
+        int r;
+
+        dtype = ca_feature_flags_to_digest_type(flags);
+        if (dtype < 0)
+                return -EINVAL;
+
+        if (s->remote_archive) {
+                r = ca_remote_set_digest_type(s->remote_archive, dtype);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->remote_index) {
+                r = ca_remote_set_digest_type(s->remote_index, dtype);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->remote_wstore) {
+                r = ca_remote_set_digest_type(s->remote_wstore, dtype);
+                if (r < 0)
+                        return r;
+        }
+
+        for (i = 0; i < s->n_remote_rstores; i++) {
+                r = ca_remote_set_digest_type(s->remote_rstores[i], dtype);
+                if (r < 0)
+                        return r;
+        }
+
+        return 0;
+}
+
+static int ca_sync_propagate_flags_to_decoder(CaSync *s, uint64_t flags) {
+        assert(s);
+
+        if (!s->decoder)
+                return 0;
+
+        return ca_decoder_set_expected_feature_flags(s->decoder, flags);
+}
+
+static int ca_sync_propagate_index_flags(CaSync *s) {
+        size_t cmin, cavg, cmax;
+        uint64_t flags;
+        int r;
+
+        assert(s);
+
+        /* If we read the header of the index file, make sure to propagate the flags and chunk size stored in it to the
+         * seeds and remotes. */
+
+        if (s->direction != CA_SYNC_DECODE)
                 return CA_SYNC_POLL;
 
         if (!s->index || s->index_flags_propagated) /* The flags/chunk size is already propagated */
@@ -2426,24 +2495,17 @@ static int ca_sync_propagate_index_flags(CaSync *s) {
         if (r < 0)
                 return r;
 
-        for (i = 0; i < s->n_seeds; i++) {
+        r = ca_sync_propagate_flags_to_seeds(s, flags, cmin, cavg, cmax);
+        if (r < 0)
+                return r;
 
-                r = ca_seed_set_feature_flags(s->seeds[i], flags);
-                if (r < 0)
-                        return r;
+        r = ca_sync_propagate_flags_to_remotes(s, flags);
+        if (r < 0)
+                return r;
 
-                r = ca_seed_set_chunk_size_min(s->seeds[i], cmin);
-                if (r < 0)
-                        return r;
-
-                r = ca_seed_set_chunk_size_avg(s->seeds[i], cavg);
-                if (r < 0)
-                        return r;
-
-                r = ca_seed_set_chunk_size_max(s->seeds[i], cmax);
-                if (r < 0)
-                        return r;
-        }
+        r = ca_sync_propagate_flags_to_decoder(s, flags);
+        if (r < 0)
+                return r;
 
         s->index_flags_propagated = true;
         return CA_SYNC_STEP;
@@ -2683,12 +2745,20 @@ int ca_sync_has_local(CaSync *s, const CaChunkID *chunk_id) {
 }
 
 int ca_sync_make_chunk_id(CaSync *s, const void *p, size_t l, CaChunkID *ret) {
+        int r;
+
         if (!s)
                 return -EINVAL;
         if (!p && l > 0)
                 return -EINVAL;
         if (!ret)
                 return -EINVAL;
+
+        if (!s->chunk_digest) {
+                r = ca_digest_new(ca_feature_flags_to_digest_type(s->feature_flags), &s->chunk_digest);
+                if (r < 0)
+                        return r;
+        }
 
         return ca_chunk_id_make(s->chunk_digest, p, l, ret);
 }
