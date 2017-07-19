@@ -24,7 +24,7 @@ static void test_speed(CaDigestType t) {
                 c++;
         }
 
-        printf("%s: %zu MB/s\n", ca_digest_type_to_string(t), (c * NSEC_PER_SEC) / TEST_SPEED_RUNTIME_NSEC);
+        printf("%s: %zu MB/s\n", ca_digest_type_to_string(t), (size_t) ((c * NSEC_PER_SEC) / TEST_SPEED_RUNTIME_NSEC));
 }
 
 int main(int argc, char *argv[]) {
