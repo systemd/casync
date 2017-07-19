@@ -14,11 +14,13 @@ cc = meson.get_compiler('c')
 c_args = '''
         -Wextra
         -Werror=undef
-        -Wformat=2 -Wformat-security -Wformat-nonliteral
+        -Werror=format=2
+        -Wformat-security
+        -Wformat-nonliteral
         -Wlogical-op
         -Wmissing-include-dirs
-        -Wold-style-definition
-        -Wpointer-arith
+        -Werror=old-style-definition
+        -Werror=pointer-arith
         -Winit-self
         -Wdeclaration-after-statement
         -Wfloat-equal
@@ -27,18 +29,17 @@ c_args = '''
         -Werror=implicit-function-declaration
         -Werror=missing-declarations
         -Werror=return-type
+        -Werror=incompatible-pointer-types
         -Werror=shadow
         -Wstrict-prototypes
         -Wredundant-decls
         -Wmissing-noreturn
-        -Wshadow
         -Wendif-labels
         -Wstrict-aliasing=2
         -Wwrite-strings
         -Wno-unused-parameter
         -Wno-missing-field-initializers
         -Wno-unused-result
-        -Wno-format-signedness
         -Werror=overflow
         -Wdate-time
         -Wnested-externs
