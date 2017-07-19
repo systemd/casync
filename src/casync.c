@@ -89,6 +89,7 @@ typedef struct CaSync {
         size_t rate_limit_bps;
 
         uint64_t feature_flags;
+        uint64_t feature_flags_mask;
 
         uint64_t n_written_chunks;
         uint64_t n_reused_chunks;
@@ -137,6 +138,8 @@ static CaSync *ca_sync_new(void) {
         s->reflink = true;
         s->delete = true;
         s->payload = true;
+
+        s->feature_flags = s->feature_flags_mask = UINT64_MAX;
 
         return s;
 }
@@ -498,10 +501,24 @@ int ca_sync_get_covering_feature_flags(CaSync *s, uint64_t *ret) {
         if (!s)
                 return -EINVAL;
 
+        if (s->direction != CA_SYNC_ENCODE)
+                return -ENOTTY;
         if (!s->encoder)
                 return -ENODATA;
 
         return ca_encoder_get_covering_feature_flags(s->encoder, ret);
+}
+
+int ca_sync_set_feature_flags_mask(CaSync *s, uint64_t mask) {
+        if (!s)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_DECODE)
+                return -ENOTTY;
+        if (s->decoder)
+                return -EBUSY;
+
+        return ca_feature_flags_normalize_mask(mask, &s->feature_flags_mask);
 }
 
 static int ca_sync_allocate_index(CaSync *s) {
@@ -1315,6 +1332,9 @@ static int ca_sync_start(CaSync *s) {
                 if (r < 0)
                         return r;
                 r = ca_decoder_set_uid_range(s->decoder, s->uid_range);
+                if (r < 0)
+                        return r;
+                r = ca_decoder_set_feature_flags_mask(s->decoder, s->feature_flags_mask);
                 if (r < 0)
                         return r;
         }

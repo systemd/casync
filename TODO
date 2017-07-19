@@ -1,7 +1,6 @@
 SHORT-TERM:
 * make sure we validate everything we load from local stores, too
 * support alternative compressors
-* when extracting, check that index feature flags and archive feature flags match
 * use btrfs reflink with contents checking
 * rework how default --with= and --without= are calculated, so that --except stuff doesn't leak into blob index
 
@@ -30,7 +29,6 @@ LATER:
 * rework caindex to read multiple chunks per read (use reallocbuffer like elsewhere)
 * permit 511 (or 4095?) redundant NUL bytes at the end of archive and index files, so that they could in theory stored on block devices
 * seed: cache GOODBYE name table data so that we can regenerate the right bits when needed
-* when extracting, optionally make use of reduced feature bits than the archive contains
 * optionally import from/export to classic tar ball (and zip?)
 * optionally interpret aufs/union mount whiteout files?
 * fuse: expose acls and fcaps
@@ -38,7 +36,6 @@ LATER:
 * fuse: provide "mount.casync" compat symlink so that people can list casync mounts in /etc/fstab
 * encoder: change seeking to be more like decoder's seeking (i.e. delay returned events until the next ca_encoder_step() call)
 * rename offset accessor functions (drop the "archive")
-* when extracting, check that index feature flags and archive feature flags match
 * send progress information via sd_notify(), so that people can wrap casync nicely in UIs
 * maybe turn "recursive" mode into a numeric value specifying how far to descend?
 * make "casync stat" work on a directory with a subpath

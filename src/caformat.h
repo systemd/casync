@@ -145,7 +145,7 @@ enum {
                 CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_XATTRS|
                 CA_FORMAT_WITH_ACL|
-                /* CA_FORMAT_WITH_SELINUX */
+                /* CA_FORMAT_WITH_SELINUX| */
                 CA_FORMAT_WITH_FCAPS,
 
         CA_FORMAT_WITH_UNIX = /* Conservative UNIX file properties */
@@ -211,13 +211,47 @@ enum {
                 CA_FORMAT_WITH_CHATTR|
                 CA_FORMAT_WITH_XATTRS,
 
+        CA_FORMAT_WITH_MASK = /* All with bits */
+                CA_FORMAT_WITH_16BIT_UIDS|
+                CA_FORMAT_WITH_32BIT_UIDS|
+                CA_FORMAT_WITH_USER_NAMES|
+                CA_FORMAT_WITH_SEC_TIME|
+                CA_FORMAT_WITH_USEC_TIME|
+                CA_FORMAT_WITH_NSEC_TIME|
+                CA_FORMAT_WITH_2SEC_TIME|
+                CA_FORMAT_WITH_READ_ONLY|
+                CA_FORMAT_WITH_PERMISSIONS|
+                CA_FORMAT_WITH_SYMLINKS|
+                CA_FORMAT_WITH_DEVICE_NODES|
+                CA_FORMAT_WITH_FIFOS|
+                CA_FORMAT_WITH_SOCKETS|
+                CA_FORMAT_WITH_FLAG_HIDDEN|
+                CA_FORMAT_WITH_FLAG_SYSTEM|
+                CA_FORMAT_WITH_FLAG_ARCHIVE|
+                CA_FORMAT_WITH_FLAG_APPEND|
+                CA_FORMAT_WITH_FLAG_NOATIME|
+                CA_FORMAT_WITH_FLAG_COMPR|
+                CA_FORMAT_WITH_FLAG_NOCOW|
+                CA_FORMAT_WITH_FLAG_NODUMP|
+                CA_FORMAT_WITH_FLAG_DIRSYNC|
+                CA_FORMAT_WITH_FLAG_IMMUTABLE|
+                CA_FORMAT_WITH_FLAG_SYNC|
+                CA_FORMAT_WITH_FLAG_NOCOMP|
+                CA_FORMAT_WITH_FLAG_PROJINHERIT|
+                CA_FORMAT_WITH_SUBVOLUME|
+                CA_FORMAT_WITH_SUBVOLUME_RO|
+                CA_FORMAT_WITH_XATTRS|
+                CA_FORMAT_WITH_ACL|
+                /* CA_FORMAT_WITH_SELINUX| */
+                CA_FORMAT_WITH_FCAPS,
+
         CA_FORMAT_DEFAULT = /* The default set of flags */
                 CA_FORMAT_WITH_BEST|
                 CA_FORMAT_EXCLUDE_NODUMP|
                 CA_FORMAT_SHA512_256,
 
         CA_FORMAT_FEATURE_FLAGS_MAX = /* All known bits turned on */
-                UINT64_C(0xFFFFFFFF)|
+                CA_FORMAT_WITH_MASK|
                 CA_FORMAT_EXCLUDE_NODUMP|
                 CA_FORMAT_EXCLUDE_SUBMOUNTS|
                 CA_FORMAT_SHA512_256,

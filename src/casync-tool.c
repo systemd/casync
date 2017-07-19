@@ -683,8 +683,14 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
         flags |= ca_feature_flags_from_digest_type(arg_digest);
 
         r = ca_sync_set_feature_flags(s, flags);
-        if (r < 0 && r != -ENOTTY) { /* sync object does not have an encoder */
+        if (r < 0 && r != -ENOTTY) { /* only encoder syncs have a feature flags field */
                 fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
+                return r;
+        }
+
+        r = ca_sync_set_feature_flags_mask(s, flags);
+        if (r < 0 && r != -ENOTTY) { /* only decoder syncs have a feature flags mask field */
+                fprintf(stderr, "Failed to set feature flags mask: %s\n", strerror(-r));
                 return r;
         }
 
@@ -1193,7 +1199,7 @@ static int verb_make(int argc, char *argv[]) {
                 }
         }
 
-        r = load_feature_flags(s, operation == MAKE_BLOB_INDEX ? 0 : CA_FORMAT_WITH_BEST);
+        r = load_feature_flags(s, operation == MAKE_BLOB_INDEX ? 0 : CA_FORMAT_WITH_MASK);
         if (r < 0)
                 goto finish;
 
@@ -1537,7 +1543,7 @@ static int verb_extract(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
-        r = load_feature_flags(s, 0);
+        r = load_feature_flags(s, CA_FORMAT_WITH_MASK);
         if (r < 0)
                 goto finish;
 
@@ -1878,7 +1884,7 @@ static int verb_list(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
-        r = load_feature_flags(s, CA_FORMAT_WITH_BEST);
+        r = load_feature_flags(s, CA_FORMAT_WITH_MASK);
         if (r < 0)
                 goto finish;
 
@@ -2533,7 +2539,7 @@ static int verb_digest(int argc, char *argv[]) {
         if (r < 0)
                 goto finish;
 
-        r = load_feature_flags(s, IN_SET(operation, DIGEST_BLOB, DIGEST_BLOB_INDEX) ? 0 : CA_FORMAT_WITH_BEST);
+        r = load_feature_flags(s, IN_SET(operation, DIGEST_BLOB, DIGEST_BLOB_INDEX) ? 0 : CA_FORMAT_WITH_MASK);
         if (r < 0)
                 goto finish;
 

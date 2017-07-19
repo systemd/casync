@@ -201,9 +201,16 @@ Individual archive features:
 --with=<flag-nocomp>       Store disable compression file flag
 --with=<flag-projinherit>  Store project quota inheritance flag
 --with=<subvolume>         Store btrfs subvolume information
---with=subvolume-ro        Store btrfs subvolume read-only property
+--with=<subvolume-ro>      Store btrfs subvolume read-only property
 --with=<xattrs>            Store extended file attributes
 --with=<acl>               Store file access control lists
 --with=<fcaps>             Store file capabilities
 
 (and similar: ``--without=16bit-uids``, ``--without=32bit-uids``, ...)
+
+Archive features
+----------------
+
+The various ``--with=`` and ``--without=`` parameters control the precise set
+of metadata to store in the archive, or restore when extracting. These flags
+only apply if ``casync`` operates on the file system level.

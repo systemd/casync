@@ -148,7 +148,9 @@ struct CaDecoder {
         CaDecoderState state;
 
         uint64_t feature_flags;
+        uint64_t replay_feature_flags;
         uint64_t expected_feature_flags;
+        uint64_t feature_flags_mask;
 
         CaDecoderNode nodes[NODES_MAX];
         size_t n_nodes;
@@ -269,7 +271,9 @@ CaDecoder *ca_decoder_new(void) {
                 return NULL;
 
         d->feature_flags = UINT64_MAX;
+        d->replay_feature_flags = UINT64_MAX;
         d->expected_feature_flags = UINT64_MAX;
+        d->feature_flags_mask = UINT64_MAX;
 
         d->seek_idx = UINT64_MAX;
         d->seek_offset = UINT64_MAX;
@@ -418,6 +422,16 @@ int ca_decoder_set_expected_feature_flags(CaDecoder *d, uint64_t flags) {
 
         d->expected_feature_flags = flags;
         return 0;
+}
+
+int ca_decoder_set_feature_flags_mask(CaDecoder *d, uint64_t mask) {
+        if (!d)
+                return -EINVAL;
+
+        if (d->replay_feature_flags != UINT64_MAX)
+                return -EBUSY;
+
+        return ca_feature_flags_normalize_mask(mask, &d->feature_flags_mask);
 }
 
 int ca_decoder_get_feature_flags(CaDecoder *d, uint64_t *ret) {
@@ -659,6 +673,24 @@ static int ca_decoder_object_is_complete(const void *p, size_t size) {
         return size >= k;
 }
 
+static int ca_decoder_determine_replay_feature_flags(CaDecoder *d) {
+        uint64_t t;
+        int r;
+
+        assert(d);
+
+        /* First, let's extend the stream's feature flags so that all redundant bits are set */
+        r = ca_feature_flags_normalize_mask(d->feature_flags, &t);
+        if (r < 0)
+                return r;
+
+        /* Then, mask away everything the user's feature flag mask (that got extended like this too) doesn't allow */
+        t &= d->feature_flags_mask;
+
+        /* Finally, let's normalize this to drop all redundant bits again */
+        return ca_feature_flags_normalize(t, &d->replay_feature_flags);
+}
+
 static bool validate_filename(const char *name, size_t n) {
         const char *p;
 
@@ -863,10 +895,15 @@ static bool validate_feature_flags(CaDecoder *d, uint64_t flags) {
         if (r <= 0 && r != -EOPNOTSUPP) /* we let unsupported flags pass here, and let the caller decide what he wants to do with that */
                 return false;
 
-        if (d->feature_flags == UINT64_MAX)
+        if (d->feature_flags == UINT64_MAX) {
                 /* The first ENTRY record decides the flags for the whole archive */
                 d->feature_flags = flags;
-        else if (d->feature_flags != flags)
+
+                r = ca_decoder_determine_replay_feature_flags(d);
+                if (r < 0)
+                        return false;
+
+        } else if (d->feature_flags != flags)
                 return false;
 
         return true;
@@ -2544,14 +2581,14 @@ static int ca_decoder_node_get_fd(CaDecoder *d, CaDecoderNode *n) {
         return -1;
 }
 
-static int mkdir_or_mksubvol(int dir_fd, CaDecoderNode *n, const char *name) {
+static int mkdir_or_mksubvol(CaDecoder *d, int dir_fd, CaDecoderNode *n, const char *name) {
         int r;
 
         assert(dir_fd >= 0);
         assert(n);
         assert(name);
 
-        if (read_le64(&n->entry->flags) & CA_FORMAT_WITH_SUBVOLUME) {
+        if (d->replay_feature_flags & read_le64(&n->entry->flags) & CA_FORMAT_WITH_SUBVOLUME ) {
                 struct btrfs_ioctl_vol_args args = {};
                 mode_t saved;
                 size_t l;
@@ -2599,7 +2636,7 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
 
         case S_IFDIR:
 
-                r = mkdir_or_mksubvol(dir_fd, child, child->name);
+                r = mkdir_or_mksubvol(d, dir_fd, child, child->name);
                 if (r < 0 && r != -EEXIST)
                         return r;
 
@@ -2614,7 +2651,7 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
                         if (r < 0)
                                 return r;
 
-                        r = mkdir_or_mksubvol(dir_fd, child, child->temporary_name);
+                        r = mkdir_or_mksubvol(d, dir_fd, child, child->temporary_name);
                         if (r < 0)
                                 return r;
 
@@ -2642,6 +2679,9 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
 
         case S_IFLNK:
 
+                if ((d->replay_feature_flags & CA_FORMAT_WITH_SYMLINKS) == 0)
+                        return 0;
+
                 r = tempfn_random(child->name, &child->temporary_name);
                 if (r < 0)
                         return r;
@@ -2652,6 +2692,9 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
                 break;
 
         case S_IFIFO:
+
+                if ((d->replay_feature_flags & CA_FORMAT_WITH_FIFOS) == 0)
+                        return 0;
 
                 r = tempfn_random(child->name, &child->temporary_name);
                 if (r < 0)
@@ -2664,6 +2707,9 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
         case S_IFBLK:
         case S_IFCHR:
 
+                if ((d->replay_feature_flags & CA_FORMAT_WITH_DEVICE_NODES) == 0)
+                        return 0;
+
                 r = tempfn_random(child->name, &child->temporary_name);
                 if (r < 0)
                         return r;
@@ -2674,6 +2720,9 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
                 break;
 
         case S_IFSOCK:
+
+                if ((d->replay_feature_flags & CA_FORMAT_WITH_SOCKETS) == 0)
+                        return 0;
 
                 r = tempfn_random(child->name, &child->temporary_name);
                 if (r < 0)
@@ -2688,14 +2737,14 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
                 assert(false);
         }
 
-        if (child->fd >= 0 && (read_le64(&child->entry->flags) & d->feature_flags & CA_FORMAT_WITH_CHATTR) != 0) {
+        if (child->fd >= 0 && (read_le64(&child->entry->flags) & d->replay_feature_flags & CA_FORMAT_WITH_CHATTR) != 0) {
+
                 unsigned new_attr;
 
                 /* A select few chattr() attributes need to be applied (or are better applied) on empty
                  * files/directories instead of the final result, do so here. */
 
-                new_attr = ca_feature_flags_to_chattr(read_le64(&child->entry->flags) & d->feature_flags) & APPLY_EARLY_FS_FL;
-
+                new_attr = ca_feature_flags_to_chattr(read_le64(&child->entry->flags) & d->replay_feature_flags) & APPLY_EARLY_FS_FL;
                 if (new_attr != 0) {
                         if (ioctl(child->fd, FS_IOC_SETFLAGS, &new_attr) < 0)
                                 return -errno;
@@ -3354,6 +3403,18 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 return 0;
 
         assert(child->entry);
+
+        /* Ignore entries we are not supposed to replay */
+        if (S_ISLNK(read_le64(&child->entry->mode)) && (d->replay_feature_flags & CA_FORMAT_WITH_SYMLINKS) == 0)
+                return 0;
+        if (S_ISFIFO(read_le64(&child->entry->mode)) && (d->replay_feature_flags & CA_FORMAT_WITH_FIFOS) == 0)
+                return 0;
+        if (S_ISSOCK(read_le64(&child->entry->mode)) && (d->replay_feature_flags & CA_FORMAT_WITH_SOCKETS) == 0)
+                return 0;
+        if ((S_ISBLK(read_le64(&child->entry->mode)) || S_ISCHR(read_le64(&child->entry->mode))) &&
+                     (d->replay_feature_flags & CA_FORMAT_WITH_DEVICE_NODES) == 0)
+                return 0;
+
         name = child->temporary_name ?: child->name;
 
         if (child->fd >= 0)
@@ -3414,11 +3475,11 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         return r;
         }
 
-        if (d->feature_flags & (CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_USER_NAMES)) {
+        if (d->replay_feature_flags & (CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_USER_NAMES)) {
                 uid_t uid;
                 gid_t gid;
 
-                if (child->user_name) {
+                if ((d->replay_feature_flags & CA_FORMAT_WITH_USER_NAMES) && child->user_name) {
                         r = name_to_uid(d, child->user_name, &uid);
                         if (r < 0)
                                 return r;
@@ -3430,7 +3491,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                                 return -EINVAL;
                 }
 
-                if (child->group_name) {
+                if ((d->replay_feature_flags & CA_FORMAT_WITH_USER_NAMES) && child->group_name) {
                         r = name_to_gid(d, child->group_name, &gid);
                         if (r < 0)
                                 return r;
@@ -3457,7 +3518,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 }
         }
 
-        if (d->feature_flags & CA_FORMAT_WITH_READ_ONLY) {
+        if (d->replay_feature_flags & CA_FORMAT_WITH_READ_ONLY) {
 
                 if ((st.st_mode & 0400) == 0 || /* not readable? */
                     (S_ISDIR(st.st_mode) && (st.st_mode & 0100) == 0) || /* a dir, but not executable? */
@@ -3489,7 +3550,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                                 return -errno;
                 }
 
-        } else if (d->feature_flags & (CA_FORMAT_WITH_PERMISSIONS|CA_FORMAT_WITH_ACL)) {
+        } else if (d->replay_feature_flags & (CA_FORMAT_WITH_PERMISSIONS|CA_FORMAT_WITH_ACL)) {
 
                 if ((st.st_mode & 07777) != (read_le64(&child->entry->mode) & 07777)) {
 
@@ -3506,7 +3567,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 }
         }
 
-        if (d->feature_flags & CA_FORMAT_WITH_ACL) {
+        if (d->replay_feature_flags & CA_FORMAT_WITH_ACL) {
                 char proc_path[strlen("/proc/self/fd/") + DECIMAL_STR_MAX(int) + 1];
                 int path_fd = -1;
                 acl_t new_acl;
@@ -3561,7 +3622,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 safe_close(path_fd);
         }
 
-        if ((d->feature_flags & CA_FORMAT_WITH_XATTRS) && !S_ISLNK(st.st_mode) && child->fd >= 0) {
+        if ((d->replay_feature_flags & CA_FORMAT_WITH_XATTRS) && !S_ISLNK(st.st_mode) && child->fd >= 0) {
                 CaDecoderExtendedAttribute *x;
                 size_t space = 256;
                 ssize_t l;
@@ -3649,7 +3710,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 }
         }
 
-        if ((d->feature_flags & CA_FORMAT_WITH_FCAPS) && S_ISREG(st.st_mode) && child->fd >= 0) {
+        if ((d->replay_feature_flags & CA_FORMAT_WITH_FCAPS) && S_ISREG(st.st_mode) && child->fd >= 0) {
 
                 if (child->have_fcaps) {
                         if (fsetxattr(child->fd, "security.capability", child->fcaps, child->fcaps_size, 0) < 0)
@@ -3673,7 +3734,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 }
         }
 
-        if (d->feature_flags & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_NSEC_TIME|CA_FORMAT_WITH_2SEC_TIME)) {
+        if (d->replay_feature_flags & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_NSEC_TIME|CA_FORMAT_WITH_2SEC_TIME)) {
 
                 struct timespec ts[2] = {
                         { .tv_nsec = UTIME_OMIT },
@@ -3704,11 +3765,11 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 name = child->name;
         }
 
-        if ((d->feature_flags & CA_FORMAT_WITH_CHATTR) != 0 && child->fd >= 0) {
+        if ((d->replay_feature_flags & CA_FORMAT_WITH_CHATTR) != 0 && child->fd >= 0) {
                 unsigned max_attr, new_attr, old_attr;
 
-                max_attr = ca_feature_flags_to_chattr(d->feature_flags);
-                new_attr = ca_feature_flags_to_chattr(read_le64(&child->entry->flags));
+                max_attr = ca_feature_flags_to_chattr(d->replay_feature_flags);
+                new_attr = ca_feature_flags_to_chattr(read_le64(&child->entry->flags) & d->replay_feature_flags);
 
                 if (ioctl(child->fd, FS_IOC_GETFLAGS, &old_attr) < 0) {
 
@@ -3718,21 +3779,21 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 } else if ((old_attr & max_attr) != new_attr) {
                         unsigned final_attr;
 
-                        final_attr = (old_attr & ~max_attr) | new_attr;
+                        final_attr = (old_attr & ~max_attr) | (new_attr & max_attr);
                         if (ioctl(child->fd, FS_IOC_SETFLAGS, &final_attr) < 0)
                                 return -errno;
                 }
         }
 
-        if ((d->feature_flags & CA_FORMAT_WITH_FAT_ATTRS) != 0 && child->fd >= 0) {
+        if ((d->replay_feature_flags & CA_FORMAT_WITH_FAT_ATTRS) != 0 && child->fd >= 0) {
                 uint32_t new_attr;
 
-                new_attr = ca_feature_flags_to_fat_attrs(read_le64(&child->entry->flags));
+                new_attr = ca_feature_flags_to_fat_attrs(read_le64(&child->entry->flags) & d->replay_feature_flags);
 
                 if (magic == MSDOS_SUPER_MAGIC) {
                         uint32_t max_attr, old_attr;
 
-                        max_attr = ca_feature_flags_to_fat_attrs(d->feature_flags);
+                        max_attr = ca_feature_flags_to_fat_attrs(d->replay_feature_flags);
 
                         if (ioctl(child->fd, FAT_IOCTL_GET_ATTRIBUTES, &old_attr) < 0)
                                 return -errno;
@@ -3751,7 +3812,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 }
         }
 
-        if (d->feature_flags & CA_FORMAT_WITH_SUBVOLUME) {
+        if (d->replay_feature_flags & CA_FORMAT_WITH_SUBVOLUME) {
                 bool is_subvol;
 
                 is_subvol = magic == BTRFS_SUPER_MAGIC && st.st_ino == 256;
@@ -3759,7 +3820,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 if (!!(read_le64(&child->entry->flags) & CA_FORMAT_WITH_SUBVOLUME) != is_subvol)
                         return -EEXIST;
 
-                if ((d->feature_flags & CA_FORMAT_WITH_SUBVOLUME_RO) && is_subvol && child->fd >= 0) {
+                if ((d->replay_feature_flags & CA_FORMAT_WITH_SUBVOLUME_RO) && is_subvol && child->fd >= 0) {
                         uint64_t bflags, nflags;
 
                         if (ioctl(child->fd, BTRFS_IOC_SUBVOL_GETFLAGS, &bflags) < 0)
@@ -4398,10 +4459,11 @@ int ca_decoder_current_mtime(CaDecoder *d, uint64_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        if ((d->feature_flags & (CA_FORMAT_WITH_NSEC_TIME|
-                                 CA_FORMAT_WITH_USEC_TIME|
-                                 CA_FORMAT_WITH_SEC_TIME|
-                                 CA_FORMAT_WITH_2SEC_TIME)) == 0)
+        if ((d->replay_feature_flags &
+             (CA_FORMAT_WITH_NSEC_TIME|
+              CA_FORMAT_WITH_USEC_TIME|
+              CA_FORMAT_WITH_SEC_TIME|
+              CA_FORMAT_WITH_2SEC_TIME)) == 0)
                 return -ENODATA;
 
         n = ca_decoder_current_node(d);
@@ -4447,8 +4509,9 @@ int ca_decoder_current_uid(CaDecoder *d, uid_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        if ((d->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|
-                                 CA_FORMAT_WITH_32BIT_UIDS)) == 0)
+        if ((d->replay_feature_flags &
+             (CA_FORMAT_WITH_16BIT_UIDS|
+              CA_FORMAT_WITH_32BIT_UIDS)) == 0)
                 return -ENODATA;
 
         n = ca_decoder_current_node(d);
@@ -4476,8 +4539,9 @@ int ca_decoder_current_gid(CaDecoder *d, gid_t *ret) {
         if (!ret)
                 return -EINVAL;
 
-        if ((d->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|
-                                 CA_FORMAT_WITH_32BIT_UIDS)) == 0)
+        if ((d->replay_feature_flags &
+             (CA_FORMAT_WITH_16BIT_UIDS|
+              CA_FORMAT_WITH_32BIT_UIDS)) == 0)
                 return -ENODATA;
 
         n = ca_decoder_current_node(d);
@@ -4504,7 +4568,7 @@ int ca_decoder_current_user(CaDecoder *d, const char **ret) {
         if (!ret)
                 return -EINVAL;
 
-        if ((d->feature_flags & CA_FORMAT_WITH_USER_NAMES) == 0)
+        if ((d->replay_feature_flags & CA_FORMAT_WITH_USER_NAMES) == 0)
                 return -ENODATA;
 
         n = ca_decoder_current_node(d);
@@ -4526,7 +4590,7 @@ int ca_decoder_current_group(CaDecoder *d, const char **ret) {
         if (!ret)
                 return -EINVAL;
 
-        if ((d->feature_flags & CA_FORMAT_WITH_USER_NAMES) == 0)
+        if ((d->replay_feature_flags & CA_FORMAT_WITH_USER_NAMES) == 0)
                 return -ENODATA;
 
         n = ca_decoder_current_node(d);
@@ -4584,7 +4648,7 @@ int ca_decoder_current_chattr(CaDecoder *d, unsigned *ret) {
         if (!n->entry)
                 return -ENODATA;
 
-        *ret = ca_feature_flags_to_chattr(read_le64(&n->entry->flags));
+        *ret = ca_feature_flags_to_chattr(read_le64(&n->entry->flags) & d->replay_feature_flags);
         return 0;
 }
 
@@ -4609,7 +4673,7 @@ int ca_decoder_current_fat_attrs(CaDecoder *d, uint32_t *ret) {
         if (!n->entry)
                 return -ENODATA;
 
-        *ret = ca_feature_flags_to_fat_attrs(read_le64(&n->entry->flags));
+        *ret = ca_feature_flags_to_fat_attrs(read_le64(&n->entry->flags) & d->replay_feature_flags);
         return 0;
 }
 
