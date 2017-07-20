@@ -480,6 +480,8 @@ static inline bool strv_isempty(char **l) {
 #  ifndef __NR_renameat2
 #    if defined __x86_64__
 #      define __NR_renameat2 316
+#    elif defined __alpha__
+#      define __NR_renameat2 510
 #    elif defined __arm__
 #      define __NR_renameat2 382
 #    elif defined __aarch64__
