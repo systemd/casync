@@ -488,6 +488,8 @@ static inline bool strv_isempty(char **l) {
 #      define __NR_renameat2 276
 #    elif defined __hppa__
 #      define __NR_renameat2 337
+#    elif defined __ia64__
+#      define __NR_renameat2 1338
 #    elif defined _MIPS_SIM
 #      if _MIPS_SIM == _MIPS_SIM_ABI32
 #        define __NR_renameat2 4351
