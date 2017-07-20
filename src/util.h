@@ -508,6 +508,8 @@ static inline bool strv_isempty(char **l) {
 #      define __NR_renameat2 357
 #    elif defined __s390__ || defined __s390x__
 #      define __NR_renameat2 347
+#    elif defined __sh__
+#      define __NR_renameat2 371
 #    elif defined __arc__
 #      define __NR_renameat2 276
 #    else
