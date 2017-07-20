@@ -504,7 +504,7 @@ static inline bool strv_isempty(char **l) {
 #      endif
 #    elif defined __i386__
 #      define __NR_renameat2 353
-#    elif defined __powerpc64__
+#    elif defined __powerpc64__ || defined __powerpc__
 #      define __NR_renameat2 357
 #    elif defined __s390__ || defined __s390x__
 #      define __NR_renameat2 347
