@@ -3474,16 +3474,14 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         if (CA_DECODER_IS_NAKED(d))
                 return 0;
 
-        assert(child->entry);
-
         /* Ignore entries we are not supposed to replay */
-        if (S_ISLNK(read_le64(&child->entry->mode)) && (d->replay_feature_flags & CA_FORMAT_WITH_SYMLINKS) == 0)
+        if (S_ISLNK(mode) && (d->replay_feature_flags & CA_FORMAT_WITH_SYMLINKS) == 0)
                 return 0;
-        if (S_ISFIFO(read_le64(&child->entry->mode)) && (d->replay_feature_flags & CA_FORMAT_WITH_FIFOS) == 0)
+        if (S_ISFIFO(mode) && (d->replay_feature_flags & CA_FORMAT_WITH_FIFOS) == 0)
                 return 0;
-        if (S_ISSOCK(read_le64(&child->entry->mode)) && (d->replay_feature_flags & CA_FORMAT_WITH_SOCKETS) == 0)
+        if (S_ISSOCK(mode) && (d->replay_feature_flags & CA_FORMAT_WITH_SOCKETS) == 0)
                 return 0;
-        if ((S_ISBLK(read_le64(&child->entry->mode)) || S_ISCHR(read_le64(&child->entry->mode))) &&
+        if ((S_ISBLK(mode) || S_ISCHR(mode)) &&
                      (d->replay_feature_flags & CA_FORMAT_WITH_DEVICE_NODES) == 0)
                 return 0;
 
