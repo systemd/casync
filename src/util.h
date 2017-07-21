@@ -480,10 +480,18 @@ static inline bool strv_isempty(char **l) {
 #  ifndef __NR_renameat2
 #    if defined __x86_64__
 #      define __NR_renameat2 316
+#    elif defined __alpha__
+#      define __NR_renameat2 510
 #    elif defined __arm__
 #      define __NR_renameat2 382
 #    elif defined __aarch64__
 #      define __NR_renameat2 276
+#    elif defined __hppa__
+#      define __NR_renameat2 337
+#    elif defined __ia64__
+#      define __NR_renameat2 1338
+#    elif defined __m68k__
+#      define __NR_renameat2 351
 #    elif defined _MIPS_SIM
 #      if _MIPS_SIM == _MIPS_SIM_ABI32
 #        define __NR_renameat2 4351
@@ -496,10 +504,16 @@ static inline bool strv_isempty(char **l) {
 #      endif
 #    elif defined __i386__
 #      define __NR_renameat2 353
-#    elif defined __powerpc64__
+#    elif defined __powerpc64__ || defined __powerpc__
 #      define __NR_renameat2 357
 #    elif defined __s390__ || defined __s390x__
 #      define __NR_renameat2 347
+#    elif defined __sh__
+#      define __NR_renameat2 371
+#    elif defined __sh64__
+#      define __NR_renameat2 382
+#    elif defined __sparc__
+#      define __NR_renameat2 345
 #    elif defined __arc__
 #      define __NR_renameat2 276
 #    else
