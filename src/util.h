@@ -691,6 +691,10 @@ char *truncate_nl(char *p);
 
 static inline uint32_t rol32(uint32_t x, size_t i) {
         i %= 32;
+
+        if (i == 0) /* Make ubsan happy */
+                return x;
+
         return ((x) << (i)) | ((x) >> (32 - i));
 }
 

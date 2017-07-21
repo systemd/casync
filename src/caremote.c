@@ -1269,10 +1269,10 @@ static int ca_remote_process_request(CaRemote *rr, const CaProtocolRequest *req)
         assert(rr);
         assert(req);
 
-        ms = le64toh(req->header.size) - offsetof(CaProtocolRequest, chunks);
+        ms = read_le64(&req->header.size) - offsetof(CaProtocolRequest, chunks);
 
         for (p = req->chunks; p < req->chunks + ms; p += CA_CHUNK_ID_SIZE) {
-                r = ca_remote_enqueue_request(rr, (const CaChunkID*) p, le64toh(req->flags) & CA_PROTOCOL_REQUEST_HIGH_PRIORITY, false);
+                r = ca_remote_enqueue_request(rr, (const CaChunkID*) p, read_le64(&req->flags) & CA_PROTOCOL_REQUEST_HIGH_PRIORITY, false);
                 if (r < 0)
                         return r;
         }
@@ -1293,12 +1293,12 @@ static int ca_remote_process_chunk(CaRemote *rr, const CaProtocolChunk *chunk) {
         memcpy(&rr->last_chunk, chunk->chunk, CA_CHUNK_ID_SIZE);
         rr->last_chunk_valid = true;
 
-        ms = le64toh(chunk->header.size) - offsetof(CaProtocolChunk, data);
+        ms = read_le64(&chunk->header.size) - offsetof(CaProtocolChunk, data);
 
         r = ca_chunk_file_save(rr->cache_fd,
                                NULL,
                                &rr->last_chunk,
-                               (le64toh(chunk->flags) & CA_PROTOCOL_CHUNK_COMPRESSED) ? CA_CHUNK_COMPRESSED : CA_CHUNK_UNCOMPRESSED,
+                               (read_le64(&chunk->flags) & CA_PROTOCOL_CHUNK_COMPRESSED) ? CA_CHUNK_COMPRESSED : CA_CHUNK_UNCOMPRESSED,
                                CA_CHUNK_AS_IS,
                                chunk->data,
                                ms);
