@@ -839,7 +839,7 @@ static int verbose_print_path(CaSync *s, const char *verb) {
 
 static int verbose_print_done_make(CaSync *s) {
         uint64_t n_chunks = UINT64_MAX, size = UINT64_MAX, n_reused = UINT64_MAX, covering;
-        char buffer[128];
+        char buffer[FORMAT_BYTES_MAX];
         int r;
 
         assert(s);
