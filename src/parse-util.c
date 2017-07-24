@@ -45,14 +45,15 @@ int parse_size(const char *t, uint64_t *size) {
 
                 p += strspn(p, WHITESPACE);
 
+                if (*p == '-')
+                        return -ERANGE;
+
                 errno = 0;
                 l = strtoull(p, &e, 10);
                 if (errno > 0)
                         return -errno;
                 if (e == p)
                         return -EINVAL;
-                if (*p == '-')
-                        return -ERANGE;
 
                 if (*e == '.') {
                         e++;
