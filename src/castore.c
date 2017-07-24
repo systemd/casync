@@ -20,6 +20,9 @@ struct CaStore {
         ReallocBuffer buffer;
 
         CaChunkCompression compression;
+
+        uint64_t n_requests;
+        uint64_t n_request_bytes;
 };
 
 CaStore* ca_store_new(void) {
@@ -118,6 +121,9 @@ int ca_store_get(
         *ret = realloc_buffer_data(&store->buffer);
         *ret_size = realloc_buffer_size(&store->buffer);
 
+        store->n_requests++;
+        store->n_request_bytes += realloc_buffer_size(&store->buffer);
+
         return r;
 }
 
@@ -165,4 +171,24 @@ int ca_store_put(
         }
 
         return ca_chunk_file_save(AT_FDCWD, store->root, chunk_id, effective_compression, store->compression, data, size);
+}
+
+int ca_store_get_requests(CaStore *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        *ret = s->n_requests;
+        return 0;
+}
+
+int ca_store_get_request_bytes(CaStore *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        *ret = s->n_request_bytes;
+        return 0;
 }

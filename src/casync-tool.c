@@ -914,7 +914,8 @@ static int verbose_print_done_make(CaSync *s) {
 }
 
 static int verbose_print_done_extract(CaSync *s) {
-        uint64_t n_bytes;
+        char buffer[FORMAT_BYTES_MAX];
+        uint64_t n_bytes, n_requests;
         int r;
 
         if (!arg_verbose)
@@ -927,7 +928,7 @@ static int verbose_print_done_extract(CaSync *s) {
                         return r;
                 }
 
-                fprintf(stderr, "Zero bytes written as sparse files: %" PRIu64 "\n", n_bytes);
+                fprintf(stderr, "Zero bytes written as sparse files: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_reflink_bytes(s, &n_bytes);
@@ -937,7 +938,7 @@ static int verbose_print_done_extract(CaSync *s) {
                         return r;
                 }
 
-                fprintf(stderr, "Bytes cloned through reflinks: %" PRIu64 "\n", n_bytes);
+                fprintf(stderr, "Bytes cloned through reflinks: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_hardlink_bytes(s, &n_bytes);
@@ -947,7 +948,67 @@ static int verbose_print_done_extract(CaSync *s) {
                         return r;
                 }
 
-                fprintf(stderr, "Bytes cloned through hardlinks: %" PRIu64 "\n", n_bytes);
+                fprintf(stderr, "Bytes cloned through hardlinks: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
+        }
+
+        r = ca_sync_get_local_requests(s, &n_requests);
+        if (!IN_SET(r, -ENODATA, -ENOTTY)) {
+                if (r < 0) {
+                        fprintf(stderr, "Failed to determine number of successful local store requests: %s\n", strerror(-r));
+                        return r;
+                }
+
+                fprintf(stderr, "Chunk requests fulfilled from local store: %" PRIu64 "\n", n_requests);
+        }
+
+        r = ca_sync_get_local_request_bytes(s, &n_bytes);
+        if (!IN_SET(r, -ENODATA, -ENOTTY)) {
+                if (r < 0) {
+                        fprintf(stderr, "Failed to determine size of successful local store requests: %s\n", strerror(-r));
+                        return r;
+                }
+
+                fprintf(stderr, "Bytes used from local store: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
+        }
+
+        r = ca_sync_get_seed_requests(s, &n_requests);
+        if (!IN_SET(r, -ENODATA, -ENOTTY)) {
+                if (r < 0) {
+                        fprintf(stderr, "Failed to determine number of successful local seed requests: %s\n", strerror(-r));
+                        return r;
+                }
+
+                fprintf(stderr, "Chunk requests fulfilled from local seed: %" PRIu64 "\n", n_requests);
+        }
+
+        r = ca_sync_get_seed_request_bytes(s, &n_bytes);
+        if (!IN_SET(r, -ENODATA, -ENOTTY)) {
+                if (r < 0) {
+                        fprintf(stderr, "Failed to determine size of successful local seed requests: %s\n", strerror(-r));
+                        return r;
+                }
+
+                fprintf(stderr, "Bytes used from local seed: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
+        }
+
+        r = ca_sync_get_remote_requests(s, &n_requests);
+        if (!IN_SET(r, -ENODATA, -ENOTTY)) {
+                if (r < 0) {
+                        fprintf(stderr, "Failed to determine number of successful remote store requests: %s\n", strerror(-r));
+                        return r;
+                }
+
+                fprintf(stderr, "Chunk requests fulfilled from remote store: %" PRIu64 "\n", n_requests);
+        }
+
+        r = ca_sync_get_remote_request_bytes(s, &n_bytes);
+        if (!IN_SET(r, -ENODATA, -ENOTTY)) {
+                if (r < 0) {
+                        fprintf(stderr, "Failed to determine size of successful remote store requests: %s\n", strerror(-r));
+                        return r;
+                }
+
+                fprintf(stderr, "Bytes used from remote store: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         return 1;
