@@ -1,5 +1,5 @@
-#ifndef fooparse_utilfoo
-#define fooparse_utilfoo
+#ifndef fooparseutilfoo
+#define fooparseutilfoo
 
 #include <inttypes.h>
 
