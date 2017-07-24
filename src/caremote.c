@@ -84,6 +84,9 @@ struct CaRemote {
 
         CaDigestType digest_type;
         CaDigest* validate_digest;
+
+        uint64_t n_requests;
+        uint64_t n_request_bytes;
 };
 
 CaRemote* ca_remote_new(void) {
@@ -2133,6 +2136,9 @@ int ca_remote_request(
         if (ret_effective_compression)
                 *ret_effective_compression = compression;
 
+        rr->n_requests++;
+        rr->n_request_bytes += realloc_buffer_size(&rr->chunk_buffer);
+
         return 1;
 }
 
@@ -2782,5 +2788,25 @@ int ca_remote_get_digest_type(CaRemote *rr, CaDigestType *ret) {
                 return -EINVAL;
 
         *ret = rr->digest_type;
+        return 0;
+}
+
+int ca_remote_get_requests(CaRemote *rr, uint64_t *ret) {
+        if (!rr)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        *ret = rr->n_requests;
+        return 0;
+}
+
+int ca_remote_get_request_bytes(CaRemote *rr, uint64_t *ret) {
+        if (!rr)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        *ret = rr->n_request_bytes;
         return 0;
 }

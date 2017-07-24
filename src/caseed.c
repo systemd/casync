@@ -42,6 +42,9 @@ struct CaSeed {
         CaFileRoot *root;
 
         uint64_t feature_flags;
+
+        uint64_t n_requests;
+        uint64_t n_request_bytes;
 };
 
 CaSeed *ca_seed_new(void) {
@@ -632,6 +635,9 @@ int ca_seed_get(CaSeed *s,
                                 if (ret_origin)
                                         *ret_origin = origin;
 
+                                s->n_requests++;
+                                s->n_request_bytes += size;
+
                                 return 0;
                         }
                         break;
@@ -862,4 +868,30 @@ int ca_seed_set_chunks(CaSeed *s, bool b) {
 
         s->cache_chunks = b;
         return 1;
+}
+
+int ca_seed_get_requests(CaSeed *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!s->cache_chunks)
+                return -ENOTTY;
+
+        *ret = s->n_requests;
+        return 0;
+}
+
+int ca_seed_get_request_bytes(CaSeed *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!s->cache_chunks)
+                return -ENOTTY;
+
+        *ret = s->n_request_bytes;
+        return 0;
 }

@@ -3552,3 +3552,175 @@ int ca_sync_enable_hardlink_digest(CaSync *s, bool b) {
         s->hardlink_digest = b;
         return 1;
 }
+
+int ca_sync_get_seed_requests(CaSync *s, uint64_t *ret) {
+        uint64_t sum = 0;
+        size_t i;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        for (i = 0; i < s->n_seeds; i++) {
+                uint64_t x;
+
+                r = ca_seed_get_requests(s->seeds[i], &x);
+                if (r < 0)
+                        return r;
+
+                sum += x;
+        }
+
+        *ret = sum;
+        return 0;
+}
+
+int ca_sync_get_seed_request_bytes(CaSync *s, uint64_t *ret) {
+        uint64_t sum = 0;
+        size_t i;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        for (i = 0; i < s->n_seeds; i++) {
+                uint64_t x;
+
+                r = ca_seed_get_request_bytes(s->seeds[i], &x);
+                if (r < 0)
+                        return r;
+
+                sum += x;
+        }
+
+        *ret = sum;
+        return 0;
+}
+
+int ca_sync_get_local_requests(CaSync *s, uint64_t *ret) {
+        uint64_t sum;
+        size_t i;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->wstore) {
+                r = ca_store_get_requests(s->wstore, &sum);
+                if (r < 0)
+                        return r;
+        } else
+                sum = 0;
+
+        for (i = 0; i < s->n_rstores; i++) {
+                uint64_t x;
+
+                r = ca_store_get_requests(s->rstores[i], &x);
+                if (r < 0)
+                        return r;
+
+                sum += x;
+        }
+
+        *ret = sum;
+        return 0;
+}
+
+int ca_sync_get_local_request_bytes(CaSync *s, uint64_t *ret) {
+        uint64_t sum;
+        size_t i;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->wstore) {
+                r = ca_store_get_request_bytes(s->wstore, &sum);
+                if (r < 0)
+                        return r;
+        } else
+                sum = 0;
+
+        for (i = 0; i < s->n_rstores; i++) {
+                uint64_t x;
+
+                r = ca_store_get_request_bytes(s->rstores[i], &x);
+                if (r < 0)
+                        return r;
+
+                sum += x;
+        }
+
+        *ret = sum;
+        return 0;
+}
+
+int ca_sync_get_remote_requests(CaSync *s, uint64_t *ret) {
+        uint64_t sum;
+        size_t i;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->remote_wstore) {
+                r = ca_remote_get_requests(s->remote_wstore, &sum);
+                if (r < 0)
+                        return r;
+        } else
+                sum = 0;
+
+        for (i = 0; i < s->n_remote_rstores; i++) {
+                uint64_t x;
+
+                r = ca_remote_get_requests(s->remote_rstores[i], &x);
+                if (r < 0)
+                        return r;
+
+                sum += x;
+        }
+
+        *ret = sum;
+        return 0;
+}
+
+int ca_sync_get_remote_request_bytes(CaSync *s, uint64_t *ret) {
+        uint64_t sum;
+        size_t i;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->remote_wstore) {
+                r = ca_remote_get_request_bytes(s->remote_wstore, &sum);
+                if (r < 0)
+                        return r;
+        } else
+                sum = 0;
+
+        for (i = 0; i < s->n_remote_rstores; i++) {
+                uint64_t x;
+
+                r = ca_remote_get_request_bytes(s->remote_rstores[i], &x);
+                if (r < 0)
+                        return r;
+
+                sum += x;
+        }
+
+        *ret = sum;
+        return 0;
+}

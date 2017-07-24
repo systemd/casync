@@ -98,4 +98,7 @@ int ca_remote_has_chunks(CaRemote *rr);
 
 int ca_remote_forget_chunk(CaRemote *rr, const CaChunkID *id);
 
+int ca_remote_get_requests(CaRemote *rr, uint64_t *ret);
+int ca_remote_get_request_bytes(CaRemote *rr, uint64_t *ret);
+
 #endif

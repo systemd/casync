@@ -1,7 +1,9 @@
-#ifndef fooparse_utilfoo
-#define fooparse_utilfoo
+#ifndef fooparseutilfoo
+#define fooparseutilfoo
 
 #include <inttypes.h>
+
+#define FORMAT_BYTES_MAX 128
 
 int parse_size(const char *t, uint64_t *ret);
 

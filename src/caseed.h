@@ -45,4 +45,7 @@ int ca_seed_set_chunks(CaSeed *s, bool b);
 
 int ca_seed_get_file_root(CaSeed *s, CaFileRoot **ret);
 
+int ca_seed_get_requests(CaSeed *s, uint64_t *ret);
+int ca_seed_get_request_bytes(CaSeed *s, uint64_t *ret);
+
 #endif
