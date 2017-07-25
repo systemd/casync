@@ -3,7 +3,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "cachunk.h"
 #include "castore.h"
 #include "def.h"
 #include "realloc-buffer.h"
@@ -13,13 +12,21 @@
 /* #undef EINVAL */
 /* #define EINVAL __LINE__ */
 
+/* #undef EBADMSG */
+/* #define EBADMSG __LINE__ */
+
 struct CaStore {
         char *root;
         bool is_cache:1;
         bool mkdir_done:1;
         ReallocBuffer buffer;
 
+        CaDigestType digest_type;
+        ReallocBuffer validate_buffer;
+        CaDigest *validate_digest;
+
         CaChunkCompression compression;
+        CaCompressionType compression_type;
 
         uint64_t n_requests;
         uint64_t n_request_bytes;
@@ -32,7 +39,11 @@ CaStore* ca_store_new(void) {
         if (!store)
                 return NULL;
 
+        store->digest_type = _CA_DIGEST_TYPE_INVALID;
+
         store->compression = CA_CHUNK_COMPRESSED;
+        store->compression_type = CA_COMPRESSION_DEFAULT;
+
         return store;
 }
 
@@ -58,6 +69,9 @@ CaStore* ca_store_unref(CaStore *store) {
 
         free(store->root);
         realloc_buffer_free(&store->buffer);
+
+        ca_digest_free(store->validate_digest);
+        realloc_buffer_free(&store->validate_buffer);
 
         return mfree(store);
 }
@@ -93,6 +107,18 @@ int ca_store_set_compression(CaStore *store, CaChunkCompression c) {
         return 0;
 }
 
+int ca_store_set_compression_type(CaStore *store, CaCompressionType compression_type) {
+        if (!store)
+                return -EINVAL;
+        if (compression_type < 0)
+                return -EINVAL;
+        if (compression_type >= _CA_COMPRESSION_TYPE_MAX)
+                return -EOPNOTSUPP;
+
+        store->compression_type = compression_type;
+        return 0;
+}
+
 int ca_store_get(
                 CaStore *store,
                 const CaChunkID *chunk_id,
@@ -101,6 +127,9 @@ int ca_store_get(
                 uint64_t *ret_size,
                 CaChunkCompression *ret_effective_compression) {
 
+        CaChunkCompression effective;
+        ReallocBuffer *v;
+        CaChunkID actual;
         int r;
 
         if (!store)
@@ -114,12 +143,73 @@ int ca_store_get(
 
         realloc_buffer_empty(&store->buffer);
 
-        r = ca_chunk_file_load(AT_FDCWD, store->root, chunk_id, desired_compression, &store->buffer, ret_effective_compression);
+        r = ca_chunk_file_load(AT_FDCWD, store->root, chunk_id, desired_compression, store->compression_type, &store->buffer, &effective);
         if (r < 0)
                 return r;
 
+        if (effective == CA_CHUNK_COMPRESSED) {
+                realloc_buffer_empty(&store->validate_buffer);
+
+                r = ca_decompress(realloc_buffer_data(&store->buffer),
+                                  realloc_buffer_size(&store->buffer),
+                                  &store->validate_buffer);
+                if (r < 0)
+                        return r;
+
+                v = &store->validate_buffer;
+        } else
+                v = &store->buffer;
+
+        if (!store->validate_digest) {
+                r = ca_digest_new(store->digest_type >= 0 ? store->digest_type : CA_DIGEST_DEFAULT, &store->validate_digest);
+                if (r < 0)
+                        return r;
+        }
+
+        r = ca_chunk_id_make(store->validate_digest, realloc_buffer_data(v), realloc_buffer_size(v), &actual);
+        if (r < 0)
+                return r;
+
+        if (!ca_chunk_id_equal(chunk_id, &actual)) {
+                CaDigestType old_type, i;
+                bool good = false;
+                /* If a digest is explicitly configured, only accept this digest */
+
+                if (store->digest_type >= 0)
+                        return -EBADMSG;
+
+                old_type = ca_digest_get_type(store->validate_digest);
+                if (old_type < 0)
+                        return -EINVAL;
+
+                for (i = 0; i < _CA_DIGEST_TYPE_MAX; i++) {
+
+                        if (i == old_type)
+                                continue;
+
+                        r = ca_digest_set_type(store->validate_digest, i);
+                        if (r < 0)
+                                return r;
+
+                        r = ca_chunk_id_make(store->validate_digest, realloc_buffer_data(v), realloc_buffer_size(v), &actual);
+                        if (r < 0)
+                                return r;
+
+                        if (ca_chunk_id_equal(chunk_id, &actual)) {
+                                good = true;
+                                break;
+                        }
+                }
+
+                if (!good)
+                        return -EBADMSG;
+        }
+
         *ret = realloc_buffer_data(&store->buffer);
         *ret_size = realloc_buffer_size(&store->buffer);
+
+        if (ret_effective_compression)
+                *ret_effective_compression = effective;
 
         store->n_requests++;
         store->n_request_bytes += realloc_buffer_size(&store->buffer);
@@ -170,7 +260,12 @@ int ca_store_put(
                 store->mkdir_done = true;
         }
 
-        return ca_chunk_file_save(AT_FDCWD, store->root, chunk_id, effective_compression, store->compression, data, size);
+        return ca_chunk_file_save(
+                        AT_FDCWD, store->root,
+                        chunk_id,
+                        effective_compression, store->compression,
+                        store->compression_type,
+                        data, size);
 }
 
 int ca_store_get_requests(CaStore *s, uint64_t *ret) {
@@ -190,5 +285,28 @@ int ca_store_get_request_bytes(CaStore *s, uint64_t *ret) {
                 return -EINVAL;
 
         *ret = s->n_request_bytes;
+        return 0;
+}
+
+int ca_store_set_digest_type(CaStore *s, CaDigestType type) {
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (type >= _CA_DIGEST_TYPE_MAX)
+                return -EOPNOTSUPP;
+
+        if (type < 0)
+                s->digest_type = _CA_DIGEST_TYPE_INVALID;
+        else {
+                if (s->validate_digest) {
+                        r = ca_digest_set_type(s->validate_digest, type);
+                        if (r < 0)
+                                return r;
+                }
+
+                s->digest_type = type;
+        }
+
         return 0;
 }

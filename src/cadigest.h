@@ -10,6 +10,7 @@ typedef enum CaDigestType {
         CA_DIGEST_SHA256,
         CA_DIGEST_SHA512_256,
         _CA_DIGEST_TYPE_MAX,
+        CA_DIGEST_DEFAULT = CA_DIGEST_SHA512_256,
         _CA_DIGEST_TYPE_INVALID = -1,
 } CaDigestType;
 

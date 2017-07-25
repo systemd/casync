@@ -227,3 +227,21 @@ bool ca_xattr_name_store(const char *name) {
         return startswith(name, "user.") ||
                 startswith(name, "trusted.");
 }
+
+const char *ca_compressed_chunk_suffix(void) {
+        static const char *cached = NULL;
+        const char *e;
+
+        /* Old casync versions used the ".xz" suffix for storing compressed chunks, instead of ".cacnk" as today. To
+         * maintain minimal compatibility, support overiding the suffix with an environment variable. */
+
+        if (cached)
+                return cached;
+
+        e = getenv("CASYNC_COMPRESSED_CHUNK_SUFFIX");
+        if (!e)
+                e = ".cacnk";
+
+        cached = e;
+        return cached;
+}

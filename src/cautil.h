@@ -21,4 +21,6 @@ bool ca_locator_has_suffix(const char *p, const char *suffix);
 bool ca_xattr_name_is_valid(const char *s);
 bool ca_xattr_name_store(const char *p);
 
+const char *ca_compressed_chunk_suffix(void);
+
 #endif

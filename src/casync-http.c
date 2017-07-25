@@ -4,6 +4,7 @@
 
 #include "caprotocol.h"
 #include "caremote.h"
+#include "cautil.h"
 #include "realloc-buffer.h"
 #include "util.h"
 
@@ -239,19 +240,24 @@ static size_t write_chunk(const void *buffer, size_t size, size_t nmemb, void *u
 
 static char *chunk_url(const char *store_url, const CaChunkID *id) {
         char ids[CA_CHUNK_ID_FORMAT_MAX], *buffer;
+        const char *suffix;
         size_t n;
 
-        /* Chop off URL arguments and multiple trailing dashes, then append the chunk ID and ".xz" */
+        /* Chop off URL arguments and multiple trailing dashes, then append the chunk ID and ".cacnk" */
+
+        suffix = ca_compressed_chunk_suffix();
 
         n = strcspn(store_url, "?;");
         while (n > 0 && store_url[n-1] == '/')
                 n--;
 
-        buffer = new(char, n + 1 + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX-1 + 3 + 1);
+        buffer = new(char, n + 1 + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX-1 + strlen(suffix) + 1);
+        if (!buffer)
+                return NULL;
 
         ca_chunk_id_format(id, ids);
 
-        strcpy(mempcpy(mempcpy(mempcpy(mempcpy(mempcpy(buffer, store_url, n), "/", 1), ids, 4), "/", 1), ids, CA_CHUNK_ID_FORMAT_MAX-1), ".xz");
+        strcpy(mempcpy(mempcpy(mempcpy(mempcpy(mempcpy(buffer, store_url, n), "/", 1), ids, 4), "/", 1), ids, CA_CHUNK_ID_FORMAT_MAX-1), suffix);
 
         return buffer;
 }

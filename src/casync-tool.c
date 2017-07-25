@@ -10,7 +10,6 @@
 #include <sys/sysmacros.h>
 #include <time.h>
 
-#include "cachunk.h"
 #include "caformat-util.h"
 #include "caformat.h"
 #include "cafuse.h"
@@ -55,7 +54,8 @@ static uint64_t arg_without = 0;
 static uid_t arg_uid_shift = 0, arg_uid_range = 0x10000U;
 static bool arg_uid_shift_apply = false;
 static bool arg_mkdir = true;
-static CaDigestType arg_digest = CA_DIGEST_SHA512_256;
+static CaDigestType arg_digest = CA_DIGEST_DEFAULT;
+static CaCompressionType arg_compression = CA_COMPRESSION_DEFAULT;
 
 static void help(void) {
         printf("%1$s [OPTIONS...] make [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
@@ -76,7 +76,9 @@ static void help(void) {
                "     --chunk-size=[MIN:]AVG[:MAX]\n"
                "                             The minimal/average/maximum number of bytes in a\n"
                "                             chunk\n"
-               "     --digest=DIGEST         Pick chunk hash algorithm (sha256 or sha512-256)\n"
+               "     --digest=DIGEST         Pick chunk digest algorithm (sha256 or sha512-256)\n"
+               "     --compression=COMPRESSION\n"
+               "                             Pick chunk compression algorithm (xz or gzip)\n"
                "     --seed=PATH             Additional file or directory to use as seed\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote\n"
                "                             communication\n"
@@ -266,6 +268,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_RECURSIVE,
                 ARG_MKDIR,
                 ARG_DIGEST,
+                ARG_COMPRESSION,
         };
 
         static const struct option options[] = {
@@ -292,6 +295,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "recursive",         required_argument, NULL, ARG_RECURSIVE         },
                 { "mkdir",             required_argument, NULL, ARG_MKDIR             },
                 { "digest",            required_argument, NULL, ARG_DIGEST            },
+                { "compression",       required_argument, NULL, ARG_COMPRESSION       },
                 {}
         };
 
@@ -571,6 +575,19 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
                 }
 
+                case ARG_COMPRESSION: {
+                        CaCompressionType cc;
+
+                        cc = ca_compression_type_from_string(optarg);
+                        if (cc < 0) {
+                                fprintf(stderr, "Failed to parse --compression= parameter: %s\n", optarg);
+                                return r;
+                        }
+
+                        arg_compression = cc;
+                        break;
+                }
+
                 case '?':
                         return -EINVAL;
 
@@ -712,6 +729,12 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
         r = ca_sync_set_undo_immutable(s, arg_undo_immutable);
         if (r < 0 && r != -ENOTTY) {
                 fprintf(stderr, "Failed to set undo immutable flag: %s\n", strerror(-r));
+                return r;
+        }
+
+        r = ca_sync_set_compression_type(s, arg_compression);
+        if (r < 0 && r != -ENOTTY) {
+                fprintf(stderr, "Failed to set compression: %s\n", strerror(-r));
                 return r;
         }
 

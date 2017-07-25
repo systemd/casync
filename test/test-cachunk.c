@@ -20,7 +20,7 @@ static void test_chunk_file(void) {
         assert_se(fd >= 0);
         assert_se(unlink(path) >= 0);
 
-        r = ca_save_and_compress_fd(fd, buffer, sizeof(buffer));
+        r = ca_save_and_compress_fd(fd, CA_COMPRESSION_DEFAULT, buffer, sizeof(buffer));
         assert_se(r >= 0);
 
         assert_se(lseek(fd, 0, SEEK_SET) == 0);
@@ -33,7 +33,7 @@ static void test_chunk_file(void) {
 
         realloc_buffer_empty(&rb);
 
-        r = ca_compress(buffer, sizeof(buffer), &rb);
+        r = ca_compress(CA_COMPRESSION_DEFAULT, buffer, sizeof(buffer), &rb);
         assert_se(r >= 0);
 
         assert_se(lseek(fd, 0, SEEK_SET) == 0);
@@ -46,7 +46,7 @@ static void test_chunk_file(void) {
 
         assert_se(lseek(fd, 0, SEEK_SET) == 0);
 
-        r = ca_load_and_compress_fd(fd, &rb);
+        r = ca_load_and_compress_fd(fd, CA_COMPRESSION_DEFAULT, &rb);
         assert_se(r >= 0);
 
         r = ca_decompress(realloc_buffer_data(&rb), realloc_buffer_size(&rb), &rb2);
