@@ -1,4 +1,6 @@
+#include <fcntl.h>
 #include <linux/fs.h>
+#include <stddef.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 
@@ -6,6 +8,61 @@
 #include "util.h"
 
 #define FS_BLOCK_SIZE 4096U
+
+#define VALIDATE 1
+
+#if VALIDATE
+static ssize_t pread_try_harder(int fd, void *p, size_t s, off_t o) {
+        char path[sizeof("/proc/self/fd/") + DECIMAL_STR_MAX(fd)];
+        ssize_t n;
+        int fd_read, r;
+
+        n = pread(fd, p, s, o);
+        if (n >= 0)
+                return n;
+
+        r = -errno;
+
+        sprintf(path, "/proc/self/fd/%i", fd);
+
+        fd_read = open(path, O_CLOEXEC|O_RDONLY|O_NOCTTY);
+        if (fd_read < 0) {
+                errno = -r;
+                return r;
+        }
+
+        n = pread(fd_read, p, s, o);
+        safe_close(fd_read);
+        if (n < 0) {
+                errno = -r;
+                return r;
+        }
+
+        return n;
+}
+#endif
+
+static void validate(int source_fd, uint64_t source_offset, int destination_fd, uint64_t destination_offset, uint64_t size) {
+#if VALIDATE
+        ssize_t x, y;
+        uint8_t *buffer1, *buffer2;
+
+        buffer1 = new(uint8_t, size);
+        assert_se(buffer1);
+        buffer2 = new(uint8_t, size);
+        assert_se(buffer2);
+
+        x = pread_try_harder(source_fd, buffer1, size, source_offset);
+        y = pread_try_harder(destination_fd, buffer2, size, destination_offset);
+
+        assert_se(x == (ssize_t) size);
+        assert_se(y == (ssize_t) size);
+        assert_se(memcmp(buffer1, buffer2, size) == 0);
+
+        free(buffer1);
+        free(buffer2);
+#endif
+}
 
 int reflink_fd(
                 int source_fd,
@@ -73,6 +130,8 @@ int reflink_fd(
                 reflinked = size;
         }
 
+        validate(source_fd, source_offset, destination_fd, destination_offset, reflinked);
+
         if (ioctl(destination_fd, FICLONERANGE,
                   &(struct file_clone_range) {
                           .src_fd = source_fd,
@@ -81,6 +140,8 @@ int reflink_fd(
                           .dest_offset = destination_offset,
                   }) < 0)
                 return -errno;
+
+        validate(source_fd, source_offset, destination_fd, destination_offset, reflinked);
 
         if (ret_reflinked)
                 *ret_reflinked = reflinked;
