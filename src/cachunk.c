@@ -561,7 +561,7 @@ int ca_chunk_file_open(int chunk_fd, const char *prefix, const CaChunkID *chunki
                 *slash = '/';
         }
 
-        fd = openat(chunk_fd, path, flags, 0666);
+        fd = openat(chunk_fd, path, flags, 0444); /* we mark the chunk files read-only, as they should be considered immutable after creation */
         if (fd < 0) {
                 r = -errno;
 
