@@ -5,6 +5,7 @@
 #include <stdio.h>
 
 #include "cachunk.h"
+#include "cautil.h"
 #include "compressor.h"
 #include "def.h"
 #include "util.h"
@@ -675,7 +676,7 @@ int ca_chunk_file_load(
                 if (fd != -ENOENT)
                         return fd;
 
-                fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, ".xz", O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+                fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, ca_compressed_chunk_suffix(), O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
                 if (fd == -ELOOP)
                         return -EADDRNOTAVAIL;
                 if (fd < 0)
@@ -765,7 +766,7 @@ int ca_chunk_file_save(
         if (r < 0)
                 goto fail;
 
-        r = ca_chunk_file_rename(chunk_fd, prefix, chunkid, suffix, desired_compression == CA_CHUNK_COMPRESSED ? ".xz" : NULL);
+        r = ca_chunk_file_rename(chunk_fd, prefix, chunkid, suffix, desired_compression == CA_CHUNK_COMPRESSED ? ca_compressed_chunk_suffix() : NULL);
         if (r < 0)
                 goto fail;
 
@@ -835,7 +836,7 @@ int ca_chunk_file_test(int chunk_fd, const char *prefix, const CaChunkID *chunki
         if (r != 0)
                 return r;
 
-        return ca_chunk_file_access(chunk_fd, prefix, chunkid, ".xz");
+        return ca_chunk_file_access(chunk_fd, prefix, chunkid, ca_compressed_chunk_suffix());
 }
 
 int ca_chunk_file_remove(int chunk_fd, const char *prefix, const CaChunkID *chunkid) {
@@ -850,5 +851,5 @@ int ca_chunk_file_remove(int chunk_fd, const char *prefix, const CaChunkID *chun
         if (r < 0 && r != -ENOENT)
                 return -EINVAL;
 
-        return ca_chunk_file_unlink(chunk_fd, prefix, chunkid, ".xz");
+        return ca_chunk_file_unlink(chunk_fd, prefix, chunkid, ca_compressed_chunk_suffix());
 }
