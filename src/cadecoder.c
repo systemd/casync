@@ -3204,7 +3204,7 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
                         source_fd = ca_location_open(l);
                         if (source_fd == -ENOENT) {
                                 fprintf(stderr, "Can't open reflink source %s: %s\n", ca_location_format(l), strerror(-source_fd));
-                                continue;
+                                goto next;
                         }
                         if (source_fd < 0)
                                 return source_fd;
@@ -3212,9 +3212,9 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
                         r = reflink_fd(source_fd, l->offset, n->fd, offset, l->size, &reflinked);
                         safe_close(source_fd);
                         if (r == -EBADR) /* the offsets are not multiples of 512 */
-                                continue;
+                                goto next;
                         if (r == -EXDEV) /* cross-device reflinks aren't supported */
-                                continue;
+                                goto next;
                         if (IN_SET(r, -ENOTTY, -EOPNOTSUPP)) /* reflinks not supported */
                                 break;
                         if (r < 0)
@@ -3223,6 +3223,7 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
                         d->n_reflink_bytes += reflinked;
                 }
 
+        next:
                 offset += l->size;
         }
 
