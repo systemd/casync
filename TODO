@@ -1,6 +1,4 @@
 SHORT-TERM:
-* make sure we validate everything we load from local stores, too
-* support alternative compressors
 * use btrfs reflink with contents checking
 * rework how default --with= and --without= are calculated, so that --except stuff doesn't leak into blob index
 
@@ -31,7 +29,7 @@ LATER:
 * seed: cache GOODBYE name table data so that we can regenerate the right bits when needed
 * optionally import from/export to classic tar ball (and zip?)
 * optionally interpret aufs/union mount whiteout files?
-* fuse: expose acls and fcaps
+* fuse: expose acls and fcaps, selinux
 * fuse: possibly translate user names on access
 * fuse: provide "mount.casync" compat symlink so that people can list casync mounts in /etc/fstab
 * encoder: change seeking to be more like decoder's seeking (i.e. delay returned events until the next ca_encoder_step() call)
