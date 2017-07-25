@@ -6,6 +6,8 @@ libshared_sources = files('''
         cachunkid.c
         cachunkid.h
         cacommon.h
+        cacompression.c
+        cacompression.h
         cadecoder.c
         cadecoder.h
         cadigest.c
@@ -40,6 +42,8 @@ libshared_sources = files('''
         casync.h
         cautil.c
         cautil.h
+        compressor.c
+        compressor.h
         def.h
         fssize.c
         fssize.h

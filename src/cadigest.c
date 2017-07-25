@@ -172,6 +172,9 @@ CaDigestType ca_digest_type_from_string(const char *name) {
         if (!name)
                 return _CA_DIGEST_TYPE_INVALID;
 
+        if (streq(name, "default"))
+                return CA_DIGEST_DEFAULT;
+
         for (t = 0; t < _CA_DIGEST_TYPE_MAX; t++)
                 if (streq(table[t], name))
                         return t;

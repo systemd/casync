@@ -7,7 +7,6 @@
 #include "cachunk.h"
 #include "cachunkid.h"
 #include "cacommon.h"
-#include "calocation.h"
 #include "caorigin.h"
 
 typedef struct CaSync CaSync;
@@ -43,6 +42,7 @@ int ca_sync_set_hardlink(CaSync *s, bool enabled);
 int ca_sync_set_delete(CaSync *s, bool enabled);
 int ca_sync_set_payload(CaSync *s, bool enabled);
 int ca_sync_set_undo_immutable(CaSync *s, bool enabled);
+int ca_sync_set_compression_type(CaSync *s, CaCompressionType compression);
 
 int ca_sync_set_uid_shift(CaSync *s, uid_t uid);
 int ca_sync_set_uid_range(CaSync *s, uid_t uid);

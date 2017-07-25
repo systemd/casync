@@ -103,6 +103,8 @@ libcurl = dependency('libcurl',
 openssl = dependency('openssl',
                      version : '>= 1.0')
 
+libz = dependency('zlib')
+
 libacl = cc.find_library('acl')
 
 
@@ -149,6 +151,7 @@ executable(
                 libacl,
                 libfuse,
                 liblzma,
+                libz,
                 libselinux,
                 math,
                 openssl],
@@ -161,6 +164,7 @@ executable(
         dependencies : [
                 libcurl,
                 liblzma,
+                libz,
                 math,
                 openssl],
         install : true,
@@ -220,6 +224,14 @@ test_script_sha256 = find_program(test_script_sha256_sh)
 test('test-script-sha256.sh', test_script_sha256,
      timeout : 30 * 60)
 
+test_script_gzip_sh = configure_file(
+        output : 'test-script-gzip.sh',
+        input : 'test/test-script-gzip.sh.in',
+        configuration : substs)
+test_script_gzip = find_program(test_script_gzip_sh)
+test('test-script-gzip.sh', test_script_gzip,
+     timeout : 30 * 60)
+
 test_nbd_sh = configure_file(
         output : 'test-nbd.sh',
         input : 'test/test-nbd.sh.in',
@@ -273,6 +285,7 @@ foreach test_name : test_sources + non_test_sources
                 dependencies : [
                         libacl,
                         liblzma,
+                        libz,
                         math,
                         openssl,
                         libselinux,

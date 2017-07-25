@@ -118,6 +118,8 @@ typedef struct CaSync {
         uint64_t chunk_size_min;
         uint64_t chunk_size_avg;
         uint64_t chunk_size_max;
+
+        CaCompressionType compression_type;
 } CaSync;
 
 static CaSync *ca_sync_new(void) {
@@ -140,6 +142,8 @@ static CaSync *ca_sync_new(void) {
         s->payload = true;
 
         s->feature_flags = s->feature_flags_mask = UINT64_MAX;
+
+        s->compression_type = CA_COMPRESSION_DEFAULT;
 
         return s;
 }
@@ -1362,6 +1366,10 @@ static int ca_sync_start(CaSync *s) {
                 if (!s->cache_store)
                         return -ENOMEM;
 
+                r = ca_store_set_digest_type(s->cache_store, ca_feature_flags_to_digest_type(s->feature_flags));
+                if (r < 0)
+                        return r;
+
                 r = ca_remote_add_local_feature_flags(s->remote_index, CA_PROTOCOL_PUSH_INDEX_CHUNKS);
                 if (r < 0)
                         return r;
@@ -1437,6 +1445,19 @@ static int ca_sync_start(CaSync *s) {
                         return r;
 
                 r = ca_seed_set_chunks(s->seeds[i], !!s->index);
+                if (r < 0)
+                        return r;
+        }
+
+        /* Tell the wstore which compression algorithm to use */
+        if (s->wstore) {
+                r = ca_store_set_compression_type(s->wstore, s->compression_type);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->remote_wstore) {
+                r = ca_remote_set_compression_type(s->remote_wstore, s->compression_type);
                 if (r < 0)
                         return r;
         }
@@ -2410,6 +2431,36 @@ static int ca_sync_remote_step(CaSync *s) {
         return CA_SYNC_POLL;
 }
 
+static int ca_sync_propagate_flags_to_stores(CaSync *s, uint64_t flags) {
+        CaDigestType dtype;
+        size_t i;
+        int r;
+
+        dtype = ca_feature_flags_to_digest_type(flags);
+        if (dtype < 0)
+                return -EINVAL;
+
+        if (s->wstore) {
+                r = ca_store_set_digest_type(s->wstore, dtype);
+                if (r < 0)
+                        return r;
+        }
+
+        for (i = 0; i < s->n_rstores; i++) {
+                r = ca_store_set_digest_type(s->rstores[i], dtype);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->cache_store) {
+                r = ca_store_set_digest_type(s->cache_store, dtype);
+                if (r < 0)
+                        return r;
+        }
+
+        return 0;
+}
+
 static int ca_sync_propagate_flags_to_seeds(CaSync *s, uint64_t flags, size_t cmin, size_t cavg, size_t cmax) {
         size_t i;
         int r;
@@ -2512,6 +2563,10 @@ static int ca_sync_propagate_index_flags(CaSync *s) {
                 return r;
 
         r = ca_index_get_chunk_size_max(s->index, &cmax);
+        if (r < 0)
+                return r;
+
+        r = ca_sync_propagate_flags_to_stores(s, flags);
         if (r < 0)
                 return r;
 
@@ -2618,7 +2673,7 @@ int ca_sync_get_local(
                 if (desired_compression == CA_CHUNK_COMPRESSED) {
                         realloc_buffer_empty(&s->compress_buffer);
 
-                        r = ca_compress(p, l, &s->compress_buffer);
+                        r = ca_compress(s->compression_type, p, l, &s->compress_buffer);
                         if (r < 0) {
                                 ca_origin_unref(origin);
                                 return r;
@@ -3722,5 +3777,19 @@ int ca_sync_get_remote_request_bytes(CaSync *s, uint64_t *ret) {
         }
 
         *ret = sum;
+        return 0;
+}
+
+int ca_sync_set_compression_type(CaSync *s, CaCompressionType compression) {
+        if (!s)
+                return -EINVAL;
+        if (compression < 0)
+                return -EINVAL;
+        if (compression >= _CA_COMPRESSION_TYPE_MAX)
+                return -EOPNOTSUPP;
+        if (s->started)
+                return -EBUSY;
+
+        s->compression_type = compression;
         return 0;
 }

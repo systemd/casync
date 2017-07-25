@@ -6,10 +6,16 @@ else
     DIGEST="$1"
 fi
 
-if [ `id -u` == 0 ] ; then
-    PARAMS="-v --digest=$DIGEST"
+if [ -z "$2" ] ; then
+    COMPRESSION=gzip
 else
-    PARAMS="-v --without=privileged --digest=$DIGEST"
+    COMPRESSION="$2"
+fi
+
+if [ `id -u` == 0 ] ; then
+    PARAMS="-v --digest=$DIGEST --compression=$COMPRESSION"
+else
+    PARAMS="-v --without=privileged --digest=$DIGEST --compression=$COMPRESSION"
 fi
 
 CASYNC_PROTOCOL_PATH=@top_builddir@

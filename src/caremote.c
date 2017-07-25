@@ -5,7 +5,6 @@
 #include <sys/prctl.h>
 #include <sys/stat.h>
 
-#include "cachunk.h"
 #include "caformat-util.h"
 #include "caformat.h"
 #include "caprotocol-util.h"
@@ -87,6 +86,8 @@ struct CaRemote {
 
         uint64_t n_requests;
         uint64_t n_request_bytes;
+
+        CaCompressionType compression_type;
 };
 
 CaRemote* ca_remote_new(void) {
@@ -111,6 +112,7 @@ CaRemote* ca_remote_new(void) {
         rr->rate_limit_bps = UINT64_MAX;
 
         rr->digest_type = _CA_DIGEST_TYPE_INVALID;
+        rr->compression_type = CA_COMPRESSION_DEFAULT;
 
         return rr;
 }
@@ -1303,6 +1305,7 @@ static int ca_remote_process_chunk(CaRemote *rr, const CaProtocolChunk *chunk) {
                                &rr->last_chunk,
                                (read_le64(&chunk->flags) & CA_PROTOCOL_CHUNK_COMPRESSED) ? CA_CHUNK_COMPRESSED : CA_CHUNK_UNCOMPRESSED,
                                CA_CHUNK_AS_IS,
+                               CA_COMPRESSION_DEFAULT,
                                chunk->data,
                                ms);
         if (r == -EEXIST)
@@ -2032,7 +2035,7 @@ static int ca_remote_validate_chunk(
 
         if (!rr->validate_digest) {
                 /* Allocate the digest object, and start with sha512-256 if we don't know which algorithm to use. */
-                r = ca_digest_new(rr->digest_type >= 0 ? rr->digest_type : CA_DIGEST_SHA512_256, &rr->validate_digest);
+                r = ca_digest_new(rr->digest_type >= 0 ? rr->digest_type : CA_DIGEST_DEFAULT, &rr->validate_digest);
                 if (r < 0)
                         return r;
         }
@@ -2108,7 +2111,7 @@ int ca_remote_request(
 
         realloc_buffer_empty(&rr->chunk_buffer);
 
-        r = ca_chunk_file_load(rr->cache_fd, NULL, chunk_id, desired_compression, &rr->chunk_buffer, &compression);
+        r = ca_chunk_file_load(rr->cache_fd, NULL, chunk_id, desired_compression, rr->compression_type, &rr->chunk_buffer, &compression);
         if (r == -ENOENT) {
                 /* We don't have it right now. Enqueue it */
                 r = ca_remote_enqueue_request(rr, chunk_id, high_priority, true);
@@ -2613,7 +2616,7 @@ int ca_remote_next_chunk(
 
                 realloc_buffer_empty(&rr->chunk_buffer);
 
-                r = ca_chunk_file_load(rr->cache_fd, NULL, &rr->last_chunk, desired_compression, &rr->chunk_buffer, &compression);
+                r = ca_chunk_file_load(rr->cache_fd, NULL, &rr->last_chunk, desired_compression, rr->compression_type, &rr->chunk_buffer, &compression);
                 if (r < 0)
                         return r;
 
@@ -2808,5 +2811,17 @@ int ca_remote_get_request_bytes(CaRemote *rr, uint64_t *ret) {
                 return -EINVAL;
 
         *ret = rr->n_request_bytes;
+        return 0;
+}
+
+int ca_remote_set_compression_type(CaRemote *rr, CaCompressionType ct) {
+        if (!rr)
+                return -EINVAL;
+        if (ct < 0)
+                return -EINVAL;
+        if (ct >= _CA_COMPRESSION_TYPE_MAX)
+                return -EOPNOTSUPP;
+
+        rr->compression_type = ct;
         return 0;
 }
