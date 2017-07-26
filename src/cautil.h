@@ -23,4 +23,6 @@ bool ca_xattr_name_store(const char *p);
 
 const char *ca_compressed_chunk_suffix(void);
 
+int ca_locator_patch_last_component(const char *locator, const char *last_component, char **ret);
+
 #endif
