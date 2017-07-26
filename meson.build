@@ -62,6 +62,8 @@ foreach arg : c_args
 endforeach
 
 conf = configuration_data()
+conf.set_quoted('PACKAGE_VERSION', meson.project_version())
+
 conf.set('_GNU_SOURCE', true)
 conf.set('__SANE_USERSPACE_TYPES__', true)
 

@@ -70,6 +70,7 @@ static void help(void) {
                "%1$s [OPTIONS...] mkdev [BLOB|BLOB_INDEX] [NODE]\n\n"
                "Content-Addressable Data Synchronization Tool\n\n"
                "  -h --help                  Show this help\n"
+               "     --version               Show brief version information\n"
                "  -v --verbose               Show terse status information during runtime\n"
                "     --store=PATH            The primary chunk store to use\n"
                "     --extra-store=PATH      Additional chunk store to look for chunks in\n"
@@ -152,6 +153,11 @@ static void help(void) {
                "     --with=selinux          Store SELinux file labels\n"
                "     --with=fcaps            Store file capabilities\n"
                "     (and similar: --without=16bit-uids, --without=32bit-uids, ...)\n",
+               program_invocation_short_name);
+}
+
+static void version(void) {
+        printf("%s " PACKAGE_VERSION "\n",
                program_invocation_short_name);
 }
 
@@ -269,10 +275,12 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_MKDIR,
                 ARG_DIGEST,
                 ARG_COMPRESSION,
+                ARG_VERSION,
         };
 
         static const struct option options[] = {
                 { "help",              no_argument,       NULL, 'h'                   },
+                { "version",           no_argument,       NULL, ARG_VERSION           },
                 { "verbose",           no_argument,       NULL, 'v'                   },
                 { "store",             required_argument, NULL, ARG_STORE             },
                 { "extra-store",       required_argument, NULL, ARG_EXTRA_STORE       },
@@ -313,6 +321,10 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case 'h':
                         help();
+                        return 0;
+
+                case ARG_VERSION:
+                        version();
                         return 0;
 
                 case 'v':
