@@ -57,7 +57,7 @@ bool ca_is_url(const char *s) {
         if (k <= 0)
                 return false;
 
-        if (e[k] != '/' && e[k] != 0)
+        if (!IN_SET(e[k], '/', ';', '?', 0))
                 return false;
 
         return true;
@@ -85,7 +85,16 @@ bool ca_is_ssh_path(const char *s) {
                 if (s[n + 1 + k] != ':')
                         return false;
 
-        } else if (s[n] != ':')
+                if (isempty(s + n + 1 + k + 1))
+                        return false;
+
+        } else if (s[n] == ':') {
+
+                if (isempty(s + n + 1))
+                        return false;
+
+                return true;
+        } else
                 return false;
 
         return true;
@@ -244,4 +253,112 @@ const char *ca_compressed_chunk_suffix(void) {
 
         cached = e;
         return cached;
+}
+
+int ca_locator_patch_last_component(const char *locator, const char *last_component, char **ret) {
+        CaLocatorClass class;
+        char *result;
+
+        if (!locator)
+                return -EINVAL;
+        if (!last_component)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        class = ca_classify_locator(locator);
+        if (class < 0)
+                return -EINVAL;
+
+        switch (class) {
+
+        case CA_LOCATOR_URL: {
+                const char *p, *q;
+                char *d;
+
+                /* First, skip protocol and hostname part */
+                p = strstr(locator, "://");
+                assert(p);
+                p += 3;
+                p += strcspn(p, "/;?");
+
+                /* Chop off any arguments */
+                q = p + strcspn(p, ";?");
+
+                /* Find the last "/" */
+                for (;;) {
+                        if (q <= p)
+                                break;
+
+                        if (q[-1] == '/')
+                                break;
+
+                        q--;
+                }
+
+                d = strndupa(locator, q - locator);
+
+                if (endswith(d, "/"))
+                        result = strjoin(d, last_component);
+                else
+                        result = strjoin(d, "/", last_component);
+
+                break;
+        }
+
+        case CA_LOCATOR_SSH: {
+                const char *prefix;
+                const char *p;
+
+                p = strchr(locator, ':');
+                assert(p);
+
+                p++;
+                prefix = strndupa(locator, p - locator);
+
+                if (strchr(p, '/')) {
+                        char *d;
+
+                        d = dirname_malloc(p);
+                        if (!d)
+                                return -ENOMEM;
+
+                        if (endswith(d, "/"))
+                                result = strjoin(prefix, d, last_component);
+                        else
+                                result = strjoin(prefix, d, "/", last_component);
+                        free(d);
+                } else
+                        result = strjoin(prefix, last_component);
+                break;
+        }
+
+        case CA_LOCATOR_PATH:
+
+                if (strchr(locator, '/')) {
+                        char *d;
+
+                        d = dirname_malloc(locator);
+                        if (!d)
+                                return -ENOMEM;
+
+                        if (endswith(d, "/"))
+                                result = strjoin(d, last_component);
+                        else
+                                result = strjoin(d, "/", last_component);
+                        free(d);
+                } else
+                        result = strdup(last_component);
+
+                break;
+
+        default:
+                assert_not_reached("Unknown locator type");
+        }
+
+        if (!result)
+                return -ENOMEM;
+
+        *ret = result;
+        return 0;
 }

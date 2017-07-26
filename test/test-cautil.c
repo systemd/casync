@@ -79,11 +79,50 @@ static void test_classify_locator(void) {
         assert_se(ca_classify_locator("lennart@foobar:quux.txt") == CA_LOCATOR_SSH);
 }
 
+static void test_locator_patch_last_component_one(const char *old, const char *last_component, int code, const char *result) {
+        char *p;
+
+        assert_se(ca_locator_patch_last_component(old, last_component, &p) == code);
+
+        if (code >= 0) {
+                assert_se(streq(p, result));
+                free(p);
+        }
+}
+
+static void test_locator_patch_last_component(void) {
+
+        test_locator_patch_last_component_one("", "quux", -EINVAL, NULL);
+
+        test_locator_patch_last_component_one("foo", "quux", 0, "quux");
+        test_locator_patch_last_component_one("./miepf", "quux", 0, "./quux");
+        test_locator_patch_last_component_one("../miepf", "quux", 0, "../quux");
+        test_locator_patch_last_component_one("some/thing/miepf", "quux", 0, "some/thing/quux");
+        test_locator_patch_last_component_one("/some/thing/miepf", "quux", 0, "/some/thing/quux");
+        test_locator_patch_last_component_one("localhost:", "quux", 0, "quux");
+
+        test_locator_patch_last_component_one("localhost:miepf", "quux", 0, "localhost:quux");
+        test_locator_patch_last_component_one("localhost:miepf/waldo", "quux", 0, "localhost:miepf/quux");
+        test_locator_patch_last_component_one("localhost:/miepf", "quux", 0, "localhost:/quux");
+        test_locator_patch_last_component_one("localhost:/miepf/waldo", "quux", 0, "localhost:/miepf/quux");
+
+        test_locator_patch_last_component_one("http://example.com", "quux", 0, "http://example.com/quux");
+        test_locator_patch_last_component_one("http://example.com?foo", "quux", 0, "http://example.com/quux");
+        test_locator_patch_last_component_one("http://example.com/", "quux", 0, "http://example.com/quux");
+        test_locator_patch_last_component_one("http://example.com/?foo", "quux", 0, "http://example.com/quux");
+        test_locator_patch_last_component_one("http://example.com/miepf", "quux", 0, "http://example.com/quux");
+        test_locator_patch_last_component_one("http://example.com/miepf?foo", "quux", 0, "http://example.com/quux");
+        test_locator_patch_last_component_one("http://example.com/miepf/more", "quux", 0, "http://example.com/miepf/quux");
+        test_locator_patch_last_component_one("http://example.com/miepf/more?foo", "quux", 0, "http://example.com/miepf/quux");
+
+}
+
 int main(int argc, char *argv[]) {
 
         test_locator_has_suffix();
         test_strip_file_url();
         test_classify_locator();
+        test_locator_patch_last_component();
 
         return 0;
 }

@@ -70,6 +70,7 @@ static void help(void) {
                "%1$s [OPTIONS...] mkdev [BLOB|BLOB_INDEX] [NODE]\n\n"
                "Content-Addressable Data Synchronization Tool\n\n"
                "  -h --help                  Show this help\n"
+               "     --version               Show brief version information\n"
                "  -v --verbose               Show terse status information during runtime\n"
                "     --store=PATH            The primary chunk store to use\n"
                "     --extra-store=PATH      Additional chunk store to look for chunks in\n"
@@ -152,6 +153,11 @@ static void help(void) {
                "     --with=selinux          Store SELinux file labels\n"
                "     --with=fcaps            Store file capabilities\n"
                "     (and similar: --without=16bit-uids, --without=32bit-uids, ...)\n",
+               program_invocation_short_name);
+}
+
+static void version(void) {
+        printf("%s " PACKAGE_VERSION "\n",
                program_invocation_short_name);
 }
 
@@ -269,10 +275,12 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_MKDIR,
                 ARG_DIGEST,
                 ARG_COMPRESSION,
+                ARG_VERSION,
         };
 
         static const struct option options[] = {
                 { "help",              no_argument,       NULL, 'h'                   },
+                { "version",           no_argument,       NULL, ARG_VERSION           },
                 { "verbose",           no_argument,       NULL, 'v'                   },
                 { "store",             required_argument, NULL, ARG_STORE             },
                 { "extra-store",       required_argument, NULL, ARG_EXTRA_STORE       },
@@ -313,6 +321,10 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case 'h':
                         help();
+                        return 0;
+
+                case ARG_VERSION:
+                        version();
                         return 0;
 
                 case 'v':
@@ -607,6 +619,7 @@ static int parse_argv(int argc, char *argv[]) {
 
 static int set_default_store(const char *index_path) {
         const char *e;
+        int r;
 
         if (arg_store)
                 return 0;
@@ -616,39 +629,13 @@ static int set_default_store(const char *index_path) {
                 /* If the default store is set via an environment variable, use that */
                 arg_store = strdup(e);
         else if (index_path) {
-                char *d;
-                CaLocatorClass c;
 
                 /* Otherwise, derive it from the index file path */
 
-                c = ca_classify_locator(index_path);
-                if (c < 0) {
-                        fprintf(stderr, "Failed to automatically derive store location: %s\n", index_path);
-                        return -EINVAL;
-                }
-
-                if (c == CA_LOCATOR_URL) {
-                        const char *p;
-
-                        p = index_path + strcspn(index_path, ";?");
-                        for (;;) {
-                                if (p <= index_path)
-                                        break;
-
-                                if (p[-1] == '/')
-                                        break;
-
-                                p--;
-                        }
-
-                        d = strndupa(index_path, p - index_path);
-                        arg_store = strjoin(d, "default.castr");
-                } else {
-                        d = dirname_malloc(index_path);
-                        if (!d)
-                                return log_oom();
-                        arg_store = strjoin(d, "/default.castr");
-                        free(d);
+                r = ca_locator_patch_last_component(index_path, "default.castr", &arg_store);
+                if (r < 0) {
+                        fprintf(stderr, "Failed to automatically derive store location from index: %s\n", strerror(-r));
+                        return r;
                 }
         } else
                 /* And if we don't know any, then place it in the current directory */
@@ -4042,6 +4029,8 @@ finish:
         free(arg_store);
         strv_free(arg_extra_stores);
         strv_free(arg_seeds);
+
+        /* fprintf(stderr, PID_FMT ": exiting with error code: %s\n", getpid(), strerror(-r)); */
 
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

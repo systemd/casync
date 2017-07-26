@@ -24,15 +24,20 @@ Commands
 --------
 
 | **casync** **make** [*ARCHIVE* | *ARCHIVE_INDEX*] [*DIRECTORY*]
-| **casync** **make** [*ARCHIVE* | *ARCHIVE_INDEX* | *BLOB_INDEX*] *FILE* | *DEVICE*
+| **casync** **make** [*BLOB_INDEX*] *FILE* | *DEVICE*
 
 This will create either a .catar archive or an .caidx index for for the given
 *DIRECTORY*, or a .caibx index for the given *FILE* or block *DEVICE*. The type
-of output is decided based on the extension. *DIRECTORY* is optional, and
-the current directory will be used if not specified.
+of output is automatically chosen based on the file extension (this may be
+override with ``--what=``). *DIRECTORY* is optional, and the current directory
+will be used if not specified.
 
 When a .caidx or .caibx file is created, a .castr storage directory will be
-created too (see ``--store=`` option).
+created too, by default located in the same directory, and named
+``default.castr`` unless configured otherwise (see ``--store=`` option).
+
+The metadata included in the archive is controlled by the ``--with-*`` and
+``--without-*`` options.
 
 |
 | **casync** extract [*ARCHIVE* | *ARCHIVE_INDEX*] [*DIRECTORY*]
@@ -42,6 +47,9 @@ This will extract the contents of a .catar archive or .caidx index
 into the specified *DIRECTORY*, or the contents specified by *BLOB_INDEX*
 to the specified *FILE* or block *DEVICE*. *DIRECTORY* may be omitted,
 and the current directory will be used by default.
+
+The metadata replayed from the archive is controlled by the ``--with-*`` and
+``--without-*`` options.
 
 |
 | **casync** list [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
@@ -60,16 +68,13 @@ The output includes the permission mask and file names::
 |
 | **casync** mtree [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
 
-This is similar to **list**, but includes information about each entry
-in a key=value format::
+This is similar to **list**, but includes information about each entry in the
+key=value format defined by BSD mtree(5):
 
   $ casync mtree /usr/share/doc/casync
   . type=dir mode=0755 uid=0 gid=0 time=1500343585.721189650
   README.md type=file mode=0644 size=7286 uid=0 gid=0 time=1498175562.000000000 sha256digest=af75eacac1f00abf6adaa7510a2c7fe00a4636daf9ea910d69d96f0a4ae85df4
   TODO type=file mode=0644 size=2395 uid=0 gid=0 time=1498175562.000000000 sha256digest=316f11a03c08ec39f0328ab1f7446bd048507d3fbeafffe7c32fad4942244b7d
-
-What information is included is influenced by the ``--with-*`` and
-``--without-*`` options.
 
 |
 | **casync** stat [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
@@ -94,7 +99,7 @@ Example output::
 |
 | **casync** digest [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*]
 
-This will compute and print the SHA256 checksum of the argument.
+This will compute and print the checksum of the argument.
 The argument is optional and defaults to the current directory::
 
   $ casync digest
@@ -107,14 +112,14 @@ The argument is optional and defaults to the current directory::
 | **casync** mount [*ARCHIVE* | *ARCHIVE_INDEX*] *PATH*
 
 This will mount the specified .catar archive or .caidx index at the
-specified *PATH*, using the fuse protocol.
+specified *PATH*, using the FUSE protocol.
 
 |
 | **casync** mkdev [*BLOB* | *BLOB_INDEX*] [*NODE*]
 
 This will create a block device *NODE* with the contents specified
 by the .caibx *BLOB_INDEX* or just the file or block device *BLOB*,
-using the nbd protocol.
+using the NBD protocol.
 
 Example::
 
@@ -135,11 +140,12 @@ General options:
 --help, -h                      Show terse help output
 --verbose, -v                   Show terse status information during runtime
 --store=PATH                    The primary chunk store to use
---extra-store=PATH              Additional chunk store to look for chunks in
---chunk-size=<[MIN]:AVG:[MAX]>  The minimal/average/maximum number of bytes in a chunk
---digest=<sha256|sha512-256>    The digest algorithm to use.
---seed=PATH                     Additional file or directory to use as seed
---rate-limit-bps=LIMIT          Maximum bandwidth in bytes/s for remote communication
+--extra-store=<PATH>            Additional chunk store to look for chunks in
+--chunk-size=<[MIN:]AVG[:MAX]>  The minimal/average/maximum number of bytes in a chunk
+--digest=<DIGEST>               Pick digest algorithm (sha512-256 or sha256)
+--compression=<COMPRESSION>     Pick compression algorithm (zstd, xz or gzip)
+--seed=<PATH>                   Additional file or directory to use as seed
+--rate-limit-bps=<LIMIT>        Maximum bandwidth in bytes/s for remote communication
 --exclude-nodump=no             Don't exclude files with chattr(1)'s +d **nodump** flag when creating archive
 --exclude-submounts=yes         Exclude submounts when creating archive
 --reflink=no                    Don't create reflinks from seeds when extracting
@@ -150,7 +156,7 @@ General options:
 --seed-output=no                Don't implicitly add pre-existing output as seed when extracting
 --recursive=no                  List non-recursively
 --uid-shift=<yes|SHIFT>         Shift UIDs/GIDs
---uid-range=RANGE               Restrict UIDs/GIDs to range
+--uid-range=<RANGE>             Restrict UIDs/GIDs to range
 
 Input/output selector:
 
