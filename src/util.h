@@ -39,6 +39,8 @@
                 UNIQ_T(A,aq) > UNIQ_T(B,bq) ? UNIQ_T(A,aq) : UNIQ_T(B,bq); \
         })
 
+#define MAX3(a, b, c) MAX(MAX(a, b), c)
+
 #undef MIN
 #define MIN(a, b) __MIN(UNIQ, (a), UNIQ, (b))
 #define __MIN(aq, a, bq, b)                             \

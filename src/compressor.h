@@ -4,6 +4,7 @@
 #include <lzma.h>
 #include <stdbool.h>
 #include <zlib.h>
+#include <zstd.h>
 
 #include "cacompression.h"
 
@@ -20,6 +21,12 @@ typedef struct CompressorContext {
         union {
                 lzma_stream xz;
                 struct z_stream_s gzip;
+                struct {
+                        ZSTD_CStream *cstream;
+                        ZSTD_DStream *dstream;
+                        ZSTD_inBuffer input;
+                        ZSTD_outBuffer output;
+                } zstd;
         };
 } CompressorContext;
 

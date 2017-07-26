@@ -4,6 +4,7 @@
 static const char* const table[_CA_COMPRESSION_TYPE_MAX] = {
         [CA_COMPRESSION_XZ] = "xz",
         [CA_COMPRESSION_GZIP] = "gzip",
+        [CA_COMPRESSION_ZSTD] = "zstd",
 };
 
 const char* ca_compression_type_to_string(CaCompressionType c) {

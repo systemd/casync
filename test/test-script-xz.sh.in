@@ -1,0 +1,6 @@
+#!/bin/bash -ex
+
+# This is the same as test-script.sh, except that we force the compression
+# algorithm to be xz.
+
+exec @top_builddir@/test-script.sh default xz

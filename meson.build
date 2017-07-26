@@ -105,6 +105,8 @@ openssl = dependency('openssl',
 
 libz = dependency('zlib')
 
+libzstd = dependency('libzstd')
+
 libacl = cc.find_library('acl')
 
 
@@ -151,8 +153,9 @@ executable(
                 libacl,
                 libfuse,
                 liblzma,
-                libz,
                 libselinux,
+                libz,
+                libzstd,
                 math,
                 openssl],
         install : true)
@@ -165,6 +168,7 @@ executable(
                 libcurl,
                 liblzma,
                 libz,
+                libzstd,
                 math,
                 openssl],
         install : true,
@@ -232,6 +236,14 @@ test_script_gzip = find_program(test_script_gzip_sh)
 test('test-script-gzip.sh', test_script_gzip,
      timeout : 30 * 60)
 
+test_script_xz_sh = configure_file(
+        output : 'test-script-xz.sh',
+        input : 'test/test-script-xz.sh.in',
+        configuration : substs)
+test_script_xz = find_program(test_script_xz_sh)
+test('test-script-xz.sh', test_script_xz,
+     timeout : 30 * 60)
+
 test_nbd_sh = configure_file(
         output : 'test-nbd.sh',
         input : 'test/test-nbd.sh.in',
@@ -285,10 +297,11 @@ foreach test_name : test_sources + non_test_sources
                 dependencies : [
                         libacl,
                         liblzma,
+                        libselinux,
                         libz,
+                        libzstd,
                         math,
                         openssl,
-                        libselinux,
                         threads])
 
         if test_sources.contains(test_name)
