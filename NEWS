@@ -1,0 +1,70 @@
+~~~ casync 2 ~~~
+
+- casync now supports retrieving index and chunk data from sftp:// URLs. (In
+  addition to the existing ftp://, http:// and https:// support).
+
+- casync will now honour $TMP if it is set, for placing temporary files and
+  directories.
+
+- casync now saves/restores basic btrfs subvolume information. (Specifically it
+  will store whether a directory is a subvolume, and whether it has the
+  read-only bit set.) Control this metadata option with the new
+  --with=subvolume/--without=subvolume and
+  --with=subvolume-ro/--without=subvolume-ro switches.
+
+- casync now saves/restores SELinux label information. Control this metadata
+  option with the new --with=selinux/--without=selinux switches.
+
+- The libgcrypt dependency has been replaced with an OpenSSL dependency, as
+  that appears to be better supported today, and may be used to generate
+  SHA512/256 hashes (see below).
+
+- casync now permits selecting the hash function to use with the new --digest=
+  option. SHA512/256 is now supported in addition to the old SHA256 algorithm,
+  which continues to be supported. The new default however is SHA512/256, as it
+  is substantially faster at otherwise equal properties on today's 64bit
+  processors. In specific environments SHA256 might perform better, hence both
+  algorithms remain supported. Index files contain information about the hash
+  algorithm used, hence automatic compatibility is retained.
+
+- casync now permits selecting the compression format to use with the new
+  option --compression=. In addition to the originally reported xz compression,
+  gzip and zstd compression are now supported, the latter being the new default
+  as it provides excellent compression at very high speeds. It's OK to mix
+  chunks compressed with different algorithms in the same store, but of course
+  clients downloading them need to be new enough to read chunks in non-xz
+  formats. Note that the file suffix for compressed chunks changed ".xz" →
+  ".cacnk", as they now may contain either compression, and continuing to use
+  the ".xz" suffix would be misleading. To retain compatibility with older
+  casync, the environment variable $CASYNC_COMPRESSED_CHUNK_SUFFIX may be set
+  to ".xz", to force usage of the old suffix.
+
+- When extracting archives or archive indexes a subset of the metadata stored
+  in the archive may now be selected to be replayed, using the usual --with=
+  and --without= options. For example, if an archive containing full metadata
+  is extracted with --without=privileged only the unprivileged metadata fields
+  are extracted (i.e. no file ownership, ACLs, SELinux labels, ...).
+
+- After completing an operation statistics about downloaded chunks are now
+  shown.
+
+- When invoking "casync mkdev" the third parameter may now be an arbitrarily
+  selected path below /dev which is then created as a symlink to the block
+  device used, and registered with udev. This means the usual device
+  enumeration will find the block device under the name picked. Example:
+
+          # casync mkdev /somepath/tomy/index-file.caibx /dev/quux
+
+  This will expose the block image /somepath/tomy/index-file.caibx as /dev/quux.
+
+Contributions from: David Guibert, enkore, Felipe Sateler, Jesus Rodriguez,
+John Paul Adrian Glaubitz, Lennart Poettering, Martin Pitt, Silvio Fricke,
+Zbigniew Jędrzejewski-Szmek
+
+~~~ casync 1 ~~~
+
+- Initial release
+
+Contributions from: Daniel Mack, Djalal Harouni, Lennart Poettering, Martin
+Pitt, Nikita Puzyryov, Thomas Hindoe Paaboel Andersen, Zbigniew
+Jędrzejewski-Szmek
