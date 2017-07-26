@@ -1,5 +1,5 @@
 project('casync', 'c',
-        version : '0.1',
+        version : '2',
         license : 'LGPLv2+',
         default_options: [
                 'c_std=gnu99',
