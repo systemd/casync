@@ -61,8 +61,9 @@ sizes are pretty evenly distributed, without the file boundaries
 affecting them.
 
 The "chunking" algorithm is based on a the buzhash rolling hash
-function. SHA256 is used as strong hash function to generate digests
-of the chunks. xz is used to compress the individual chunks.
+function. SHA512/256 is used as strong hash function to generate digests of the
+chunks (alternatively: SHA256). zstd is used to compress the individual chunks
+(alternatively xz or gzip).
 
 Is this new? Conceptually, not too much. This uses well-known concepts,
 implemented in a variety of other projects, and puts them together in a
@@ -88,6 +89,7 @@ but there are other systems that use similar algorithms, in particular:
 2. .caidx → index file referring to a directory tree (i.e. a .catar file)
 3. .caibx → index file referring to a blob (i.e. any other file)
 4. .castr → chunk store directory (where we store chunks under their hashes)
+5. .cacnk → a compressed chunk in a chunk store (i.e. one of the files stored below a .castr directory)
 
 ## Operations on directory trees
 
