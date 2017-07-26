@@ -1,5 +1,5 @@
 #!/bin/sh
-DEVPKGS="pkg-config liblzma-dev libcurl4-openssl-dev libssl-dev libacl1-dev libfuse-dev zlib1g-dev"
+DEVPKGS="pkg-config liblzma-dev libcurl4-openssl-dev libssl-dev libacl1-dev libfuse-dev zlib1g-dev libzstd-dev"
 
 echo
 echo "============= Installing amd64 build dependencies =============="
