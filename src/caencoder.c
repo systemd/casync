@@ -21,7 +21,7 @@
 #include <linux/msdos_fs.h>
 
 #if HAVE_SELINUX
-#include <selinux/selinux.h>
+#  include <selinux/selinux.h>
 #endif
 
 #include "caencoder.h"
@@ -264,10 +264,12 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
 
         n->fcaps = mfree(n->fcaps);
 
+#if HAVE_SELINUX
         if (n->selinux_label) {
                 freecon(n->selinux_label);
                 n->selinux_label = NULL;
         }
+#endif
 
         n->device_size = UINT64_MAX;
 
@@ -658,18 +660,20 @@ static int ca_encoder_node_read_selinux_label(
                 CaEncoder *e,
                 CaEncoderNode *n) {
 
+#if HAVE_SELINUX
         char *label;
         int r;
+#endif
 
         assert(e);
         assert(n);
 
         if ((e->feature_flags & CA_FORMAT_WITH_SELINUX) == 0)
                 return 0;
+#if HAVE_SELINUX
         if (n->selinux_label_valid)
                 return 0;
 
-#if HAVE_SELINUX
         if (n->fd >= 0)
                 r = fgetfilecon(n->fd, &label) < 0 ? -errno : 0;
         else {
@@ -706,10 +710,13 @@ static int ca_encoder_node_read_selinux_label(
 
                 n->selinux_label = label;
         }
-#endif
 
         n->selinux_label_valid = true;
         return 0;
+
+#else
+        return -EOPNOTSUPP;
+#endif
 }
 
 static int compare_xattr(const void *a, const void *b) {

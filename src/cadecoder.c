@@ -13,7 +13,7 @@
 #include <linux/msdos_fs.h>
 
 #if HAVE_SELINUX
-#include <selinux/selinux.h>
+#  include <selinux/selinux.h>
 #endif
 
 #include "cadecoder.h"

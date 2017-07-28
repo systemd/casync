@@ -2729,7 +2729,7 @@ int ca_remote_forget_chunk(CaRemote *rr, const CaChunkID *id) {
 
                 p = startswith(qpos, "low-priority/");
                 if (!p) {
-                        p = startswith(p, "high-priority/");
+                        p = startswith(qpos, "high-priority/");
                         if (!p) {
                                 r = -EBADMSG;
                                 goto finish;
