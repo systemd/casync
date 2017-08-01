@@ -69,7 +69,7 @@ The output includes the permission mask and file names::
 | **casync** mtree [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
 
 This is similar to **list**, but includes information about each entry in the
-key=value format defined by BSD mtree(5):
+key=value format defined by BSD mtree(5)::
 
   $ casync mtree /usr/share/doc/casync
   . type=dir mode=0755 uid=0 gid=0 time=1500343585.721189650
