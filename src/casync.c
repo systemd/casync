@@ -2473,15 +2473,7 @@ static int ca_sync_propagate_flags_to_seeds(CaSync *s, uint64_t flags, size_t cm
                 if (r < 0)
                         return r;
 
-                r = ca_seed_set_chunk_size_min(s->seeds[i], cmin);
-                if (r < 0)
-                        return r;
-
-                r = ca_seed_set_chunk_size_avg(s->seeds[i], cavg);
-                if (r < 0)
-                        return r;
-
-                r = ca_seed_set_chunk_size_max(s->seeds[i], cmax);
+                r = ca_seed_set_chunk_size(s->seeds[i], cmin, cavg, cmax);
                 if (r < 0)
                         return r;
         }
