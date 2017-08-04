@@ -64,7 +64,7 @@ static int iterate_until_file(CaSync *s) {
                                 return r;
                         }
 
-                        return 0;
+                        break;
 
                 case CA_SYNC_NOT_FOUND:
                         /* fprintf(stderr, "Not found.\n"); */
