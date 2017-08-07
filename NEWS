@@ -57,9 +57,9 @@
 
   This will expose the block image /somepath/tomy/index-file.caibx as /dev/quux.
 
-Contributions from: David Guibert, enkore, Felipe Sateler, Jesus Rodriguez,
-John Paul Adrian Glaubitz, Lennart Poettering, Martin Pitt, Silvio Fricke,
-Zbigniew Jędrzejewski-Szmek
+Contributions from: David Guibert, enkore, Felipe Sateler, Igor Gnatenko, Jesus
+Rodriguez, John Paul Adrian Glaubitz, Lennart Poettering, Martin Pitt, Silvio
+Fricke, Zbigniew Jędrzejewski-Szmek
 
 ~~~ casync 1 ~~~
 
