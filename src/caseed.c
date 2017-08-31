@@ -773,39 +773,12 @@ int ca_seed_set_feature_flags(CaSeed *s, uint64_t flags) {
         return ca_feature_flags_normalize(flags, &s->feature_flags);
 }
 
-int ca_seed_set_chunk_size_min(CaSeed *s, size_t cmin) {
+int ca_seed_set_chunk_size(CaSeed *s, size_t cmin, size_t cavg, size_t cmax) {
         if (!s)
                 return -EINVAL;
-        if (cmin < CA_CHUNK_SIZE_LIMIT_MIN)
-                return -EINVAL;
-        if (cmin > CA_CHUNK_SIZE_LIMIT_MAX)
-                return -EINVAL;
 
-        s->chunker.chunk_size_min = cmin;
-        return 0;
-}
+        ca_chunker_set_size(&s->chunker, cmin, cavg, cmax);
 
-int ca_seed_set_chunk_size_avg(CaSeed *s, size_t cavg) {
-        if (!s)
-                return -EINVAL;
-        if (cavg < CA_CHUNK_SIZE_LIMIT_MIN)
-                return -EINVAL;
-        if (cavg > CA_CHUNK_SIZE_LIMIT_MAX)
-                return -EINVAL;
-
-        s->chunker.chunk_size_avg = cavg;
-        return 0;
-}
-
-int ca_seed_set_chunk_size_max(CaSeed *s, size_t cmax) {
-        if (!s)
-                return -EINVAL;
-        if (cmax < CA_CHUNK_SIZE_LIMIT_MIN)
-                return -EINVAL;
-        if (cmax > CA_CHUNK_SIZE_LIMIT_MAX)
-                return -EINVAL;
-
-        s->chunker.chunk_size_max = cmax;
         return 0;
 }
 
