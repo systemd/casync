@@ -108,6 +108,7 @@ static void help(void) {
                "     --what=blob             Operate on blob file\n"
                "     --what=blob-index       Operate on blob index file\n"
                "     --what=directory        Operate on directory\n\n"
+               "     --what=help             Print allowed values\n\n"
                "Archive feature sets:\n"
                "     --with=best             Store most accurate information\n"
                "     --with=unix             Store UNIX baseline information\n"
@@ -262,12 +263,19 @@ static int parse_what_selector(const char *arg, enum arg_what *what) {
                 *what = WHAT_BLOB_INDEX;
         else if (streq(arg, "directory"))
                 *what = WHAT_DIRECTORY;
-        else {
+        else if (streq(arg, "help")) {
+                printf("Allowed --what= selectors:\n"
+                       "archive-index\n"
+                       "blob\n"
+                       "blob-index\n"
+                       "directory\n");
+                return 0;
+        } else {
                 fprintf(stderr, "Failed to parse --what= selector: %s\n", arg);
                 return -EINVAL;
         }
 
-        return 0;
+        return 1;
 }
 
 static int parse_argv(int argc, char *argv[]) {
@@ -430,7 +438,7 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_WHAT:
                         r = parse_what_selector(optarg, &arg_what);
-                        if (r < 0)
+                        if (r <= 0)
                                 return r;
                         break;
 

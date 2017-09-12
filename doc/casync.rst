@@ -29,7 +29,7 @@ Commands
 This will create either a .catar archive or an .caidx index for for the given
 *DIRECTORY*, or a .caibx index for the given *FILE* or block *DEVICE*. The type
 of output is automatically chosen based on the file extension (this may be
-override with ``--what=``). *DIRECTORY* is optional, and the current directory
+overridden with ``--what=``). *DIRECTORY* is optional, and the current directory
 will be used if not specified.
 
 When a .caidx or .caibx file is created, a .castr storage directory will be
@@ -165,6 +165,7 @@ Input/output selector:
 --what=blob             Operate on blob file
 --what=blob-index       Operate on blob index file
 --what=directory        Operate on directory
+--what=help             Print a list of allowed values (and terminate the program)
 
 Turn on archive feature sets:
 
