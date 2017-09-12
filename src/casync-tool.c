@@ -1401,7 +1401,7 @@ static int verb_extract(int argc, char *argv[]) {
 
         ExtractOperation operation = _EXTRACT_OPERATION_INVALID;
         int r, output_fd = -1, input_fd = -1;
-        char *input = NULL, *output = NULL;
+        _cleanup_free_ char *input = NULL, *output = NULL;
         const char *seek_path = NULL;
         CaSync *s = NULL;
 
@@ -1731,9 +1731,6 @@ finish:
         if (output_fd >= 3)
                 (void) close(output_fd);
 
-        free(input);
-        free(output);
-
         return r;
 }
 
@@ -2049,7 +2046,7 @@ static int verb_list(int argc, char *argv[]) {
         ListOperation operation = _LIST_OPERATION_INVALID;
         const char *seek_path = NULL;
         int r, input_fd = -1;
-        char *input = NULL;
+        _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
         bool toplevel_shown = false;
 
@@ -2377,7 +2374,6 @@ finish:
         if (input_fd >= 3)
                 (void) close(input_fd);
 
-        free(input);
         return r;
 }
 
@@ -2396,7 +2392,7 @@ static int verb_digest(int argc, char *argv[]) {
         bool set_base_mode = false;
         const char *seek_path = NULL;
         int r, input_fd = -1;
-        char *input = NULL;
+        _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
         bool show_payload_digest = false;
         int seeking = false;
@@ -2740,8 +2736,6 @@ finish:
         if (input_fd >= 3)
                 (void) close(input_fd);
 
-        free(input);
-
         return r;
 }
 
@@ -2755,7 +2749,7 @@ static int verb_mount(int argc, char *argv[]) {
         MountOperation operation = _MOUNT_OPERATION_INVALID;
         const char *mount_path = NULL;
         int r, input_fd = -1;
-        char *input = NULL;
+        _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
 
         if (argc > 3 || argc < 2) {
@@ -2861,8 +2855,6 @@ finish:
         if (input_fd >= 3)
                 (void) close(input_fd);
 
-        free(input);
-
         return r;
 #else
         fprintf(stderr, "Compiled without support for fuse.\n");
@@ -2883,7 +2875,7 @@ static int verb_mkdev(int argc, char *argv[]) {
         const char *path = NULL, *name = NULL;
         bool make_symlink = false, rm_symlink = false;
         int r, input_fd = -1;
-        char *input = NULL;
+        _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
 
         if (argc > 3) {
@@ -3292,8 +3284,6 @@ finish:
 
         if (input_fd >= 3)
                 (void) close(input_fd);
-
-        free(input);
 
         return r;
 }
