@@ -24,7 +24,7 @@
 #include "signal-handler.h"
 #include "util.h"
 
-static enum {
+static enum arg_what {
         WHAT_ARCHIVE,
         WHAT_ARCHIVE_INDEX,
         WHAT_BLOB,
@@ -251,6 +251,25 @@ static int parse_chunk_sizes(const char *v, size_t *ret_min, size_t *ret_avg, si
         return 0;
 }
 
+static int parse_what_selector(const char *arg, enum arg_what *what) {
+        if (streq(arg, "archive"))
+                *what = WHAT_ARCHIVE;
+        else if (streq(arg, "archive-index"))
+                *what = WHAT_ARCHIVE_INDEX;
+        else if (streq(arg, "blob"))
+                *what = WHAT_BLOB;
+        else if (streq(arg, "blob-index"))
+                *what = WHAT_BLOB_INDEX;
+        else if (streq(arg, "directory"))
+                *what = WHAT_DIRECTORY;
+        else {
+                fprintf(stderr, "Failed to parse --what= selector: %s\n", arg);
+                return -EINVAL;
+        }
+
+        return 0;
+}
+
 static int parse_argv(int argc, char *argv[]) {
 
         enum {
@@ -410,21 +429,9 @@ static int parse_argv(int argc, char *argv[]) {
                 }
 
                 case ARG_WHAT:
-                        if (streq(optarg, "archive"))
-                                arg_what = WHAT_ARCHIVE;
-                        else if (streq(optarg, "archive-index"))
-                                arg_what = WHAT_ARCHIVE_INDEX;
-                        else if (streq(optarg, "blob"))
-                                arg_what = WHAT_BLOB;
-                        else if (streq(optarg, "blob-index"))
-                                arg_what = WHAT_BLOB_INDEX;
-                        else if (streq(optarg, "directory"))
-                                arg_what = WHAT_DIRECTORY;
-                        else {
-                                fprintf(stderr, "Failed to parse --what= selector: %s\n", optarg);
-                                return -EINVAL;
-                        }
-
+                        r = parse_what_selector(optarg, &arg_what);
+                        if (r < 0)
+                                return r;
                         break;
 
                 case ARG_EXCLUDE_NODUMP:
