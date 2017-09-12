@@ -1814,7 +1814,7 @@ static int verb_list(int argc, char *argv[]) {
         else if (arg_what == WHAT_DIRECTORY)
                 operation = LIST_DIRECTORY;
         else if (arg_what != _WHAT_INVALID) {
-                fprintf(stderr, "\"list\" operation may only be combined with --what=archive, --what=archive-index or --what=directory.\n");
+                fprintf(stderr, "\"%s\" operation may only be combined with --what=archive, archive-index, or directory.\n", argv[0]);
                 r = -EINVAL;
                 goto finish;
         }
@@ -1900,7 +1900,7 @@ static int verb_list(int argc, char *argv[]) {
                 input = NULL;
 
         if (operation == _LIST_OPERATION_INVALID) {
-                fprintf(stderr, "Failed to determine what to list. Use --what=archive, --what=archive-index or --what=directory.\n");
+                fprintf(stderr, "Failed to determine what to list. Use --what=archive, archive-index, or directory.\n");
                 r = -EINVAL;
                 goto finish;
         }
