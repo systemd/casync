@@ -679,7 +679,7 @@ static int ca_encoder_node_read_selinux_label(
         else {
                 const struct dirent *de;
                 CaEncoderNode *parent;
-                char *subpath;
+                _cleanup_free_ char *subpath = NULL;
 
                 parent = ca_encoder_node_parent_of(e, n);
                 if (!parent)
@@ -693,7 +693,6 @@ static int ca_encoder_node_read_selinux_label(
                         return -ENOMEM;
 
                 r = lgetfilecon(subpath, &label) < 0 ? -errno : 0;
-                free(subpath);
         }
 
         if (r < 0) {
@@ -915,7 +914,7 @@ static int ca_encoder_node_read_xattrs(
                                         n->fcaps_size = z;
 
                                 } else {
-                                        char *name;
+                                        _cleanup_free_ char *name = NULL;
                                         size_t z;
                                         void *d;
 
@@ -931,7 +930,6 @@ static int ca_encoder_node_read_xattrs(
                                         z = realloc_buffer_size(&e->xattr_value_buffer);
                                         d = realloc_buffer_steal(&e->xattr_value_buffer);
                                         if (!d) {
-                                                free(name);
                                                 r = -ENOMEM;
                                                 goto finish;
                                         }
@@ -941,6 +939,7 @@ static int ca_encoder_node_read_xattrs(
                                                 .data = d,
                                                 .data_size = z,
                                         };
+                                        name = NULL;
                                 }
                         }
                 }
@@ -967,7 +966,7 @@ static int ca_encoder_node_read_mount_id(
                 CaEncoderNode *n) {
 
         size_t line_allocated = 0;
-        char *line = NULL, *p;
+        _cleanup_free_ char *line = NULL, *p = NULL;
         FILE *f;
         int r;
 
@@ -985,7 +984,6 @@ static int ca_encoder_node_read_mount_id(
                 return -ENOMEM;
 
         f = fopen(p, "re");
-        free(p);
         if (!f)
                 return -errno;
 
@@ -1028,7 +1026,6 @@ static int ca_encoder_node_read_mount_id(
 
 finish:
         fclose(f);
-        free(line);
 
         return r;
 }
@@ -1079,7 +1076,7 @@ static int uid_to_name(CaEncoder *e, uid_t uid, char **ret) {
 
         for (;;) {
                 struct passwd pwbuf, *pw = NULL;
-                char *buf;
+                _cleanup_free_ char *buf = NULL;
 
                 buf = malloc(bufsize);
                 if (!buf)
@@ -1090,12 +1087,11 @@ static int uid_to_name(CaEncoder *e, uid_t uid, char **ret) {
                         char *n;
 
                         n = strdup(pw->pw_name);
-                        free(buf);
-
+                        if (!n)
+                                return -ENOMEM;
                         *ret = n;
                         return 1;
                 }
-                free(buf);
                 if (r != ERANGE) {
                         uid_t shifted_uid;
                         /* User name cannot be retrieved */
@@ -1137,7 +1133,7 @@ static int gid_to_name(CaEncoder *e, gid_t gid, char **ret) {
 
         for (;;) {
                 struct group grbuf, *gr = NULL;
-                char *buf;
+                _cleanup_free_ char *buf = NULL;
 
                 buf = malloc(bufsize);
                 if (!buf)
@@ -1148,13 +1144,12 @@ static int gid_to_name(CaEncoder *e, gid_t gid, char **ret) {
                         char *n;
 
                         n = strdup(gr->gr_name);
-                        free(buf);
+                        if (!n)
+                                return -ENOMEM;
 
                         *ret = n;
                         return 1;
                 }
-
-                free(buf);
                 if (r != ERANGE) {
                         gid_t shifted_gid;
 
@@ -1310,7 +1305,7 @@ static int ca_encoder_node_process_acl(
 
                 case ACL_USER: {
                         uid_t uid, shifted_uid;
-                        char *name;
+                        _cleanup_free_ char *name = NULL;
 
                         q = acl_get_qualifier(entry);
                         if (!q)
@@ -1333,25 +1328,23 @@ static int ca_encoder_node_process_acl(
                                 r = uid_to_name(e, uid, &name);
                                 if (r < 0)
                                         return r;
-                        } else
-                                name = NULL;
-
-                        if (!GREEDY_REALLOC(*user_entries, n_allocated_user, *n_user_entries+1)) {
-                                free(name);
-                                return -ENOMEM;
                         }
+
+                        if (!GREEDY_REALLOC(*user_entries, n_allocated_user, *n_user_entries+1))
+                                return -ENOMEM;
 
                         (*user_entries)[(*n_user_entries)++] = (CaEncoderACLEntry) {
                                 .name = name,
                                 .permissions = permissions,
                                 .uid = (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) ? shifted_uid : 0,
                         };
+                        name = NULL;
                         break;
                 }
 
                 case ACL_GROUP: {
                         gid_t gid, shifted_gid;
-                        char *name;
+                        _cleanup_free_ char *name = NULL;
 
                         q = acl_get_qualifier(entry);
                         if (!q)
@@ -1374,19 +1367,17 @@ static int ca_encoder_node_process_acl(
                                 r = gid_to_name(e, gid, &name);
                                 if (r < 0)
                                         return r;
-                        } else
-                                name = NULL;
-
-                        if (!GREEDY_REALLOC(*group_entries, n_allocated_group, *n_group_entries+1)) {
-                                free(name);
-                                return -ENOMEM;
                         }
+
+                        if (!GREEDY_REALLOC(*group_entries, n_allocated_group, *n_group_entries+1))
+                                return -ENOMEM;
 
                         (*group_entries)[(*n_group_entries)++] = (CaEncoderACLEntry) {
                                 .name = name,
                                 .permissions = permissions,
                                 .gid = (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) ? shifted_gid : 0,
                         };
+                        name = NULL;
                         break;
                 }
 
@@ -2563,7 +2554,7 @@ static int name_table_compare(const void *a, const void *b) {
 
 static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
         const CaEncoderNameTable *table;
-        CaEncoderNameTable *bst = NULL;
+        _cleanup_free_ CaEncoderNameTable *bst = NULL;
         CaFormatGoodbye *g;
         CaFormatGoodbyeTail *tail;
         size_t size, i;
@@ -2625,8 +2616,6 @@ static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
                         .hash = htole64(table[i].hash),
                 };
         }
-
-        free(bst);
 
         assert(n->entry_offset != UINT64_MAX);
         assert(n->entry_offset < e->archive_offset);
@@ -2743,7 +2732,7 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
 }
 
 static int ca_encoder_node_path(CaEncoder *e, CaEncoderNode *node, char **ret) {
-        char *p = NULL;
+        _cleanup_free_ char *p = NULL;
         size_t n = 0, i;
         bool found = false;
 
@@ -2775,10 +2764,8 @@ static int ca_encoder_node_path(CaEncoder *e, CaEncoderNode *node, char **ret) {
                 nn = n + (n > 0) + k;
 
                 np = realloc(p, nn+1);
-                if (!np) {
-                        free(p);
+                if (!np)
                         return -ENOMEM;
-                }
 
                 q = np + n;
                 if (n > 0)
@@ -2790,10 +2777,8 @@ static int ca_encoder_node_path(CaEncoder *e, CaEncoderNode *node, char **ret) {
                 n = nn;
         }
 
-        if (!found) {
-                free(p);
+        if (!found)
                 return -EINVAL;
-        }
 
         if (!p) {
                 p = strdup("");
@@ -2802,6 +2787,7 @@ static int ca_encoder_node_path(CaEncoder *e, CaEncoderNode *node, char **ret) {
         }
 
         *ret = p;
+        p = NULL;
         return 0;
 }
 
@@ -3182,7 +3168,7 @@ int ca_encoder_current_archive_offset(CaEncoder *e, uint64_t *ret) {
 int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret) {
         CaLocationDesignator designator;
         CaEncoderNode *node;
-        char *path = NULL;
+        _cleanup_free_ char *path = NULL;
         CaLocation *l;
         int r;
 
@@ -3232,11 +3218,11 @@ int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret) {
                 return r;
 
         r = ca_location_new(path, designator, e->payload_offset + add, UINT64_MAX, &l);
-        free(path);
         if (r < 0)
                 return r;
 
         *ret = l;
+        path = NULL;
         return 0;
 }
 
