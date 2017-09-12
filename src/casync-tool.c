@@ -2018,7 +2018,7 @@ static int verb_list(int argc, char *argv[]) {
                         goto finish;
 
                 case CA_SYNC_NEXT_FILE: {
-                        char *path;
+                        _cleanup_free_ char *path = NULL;
                         mode_t mode;
 
                         r = ca_sync_current_mode(s, &mode);
@@ -2042,7 +2042,6 @@ static int verb_list(int argc, char *argv[]) {
                                         r = ca_sync_seek_next_sibling(s);
                                         if (r < 0) {
                                                 fprintf(stderr, "Failed to seek to next sibling: %s\n", strerror(-r));
-                                                free(path);
                                                 goto finish;
                                         }
                                 }
@@ -2071,7 +2070,6 @@ static int verb_list(int argc, char *argv[]) {
 
                                 r = mtree_escape(path, &escaped);
                                 if (r < 0) {
-                                        free(path);
                                         log_oom();
                                         goto finish;
                                 }
@@ -2102,7 +2100,6 @@ static int verb_list(int argc, char *argv[]) {
                                 if (target) {
                                         r = mtree_escape(target, &escaped);
                                         if (r < 0) {
-                                                free(path);
                                                 log_oom();
                                                 goto finish;
                                         }
@@ -2124,7 +2121,6 @@ static int verb_list(int argc, char *argv[]) {
                                 if (user) {
                                         r = mtree_escape(user, &escaped);
                                         if (r < 0) {
-                                                free(path);
                                                 log_oom();
                                                 goto finish;
                                         }
@@ -2136,7 +2132,6 @@ static int verb_list(int argc, char *argv[]) {
                                 if (group) {
                                         r = mtree_escape(group, &escaped);
                                         if (r < 0) {
-                                                free(path);
                                                 log_oom();
                                                 goto finish;
                                         }
@@ -2181,7 +2176,6 @@ static int verb_list(int argc, char *argv[]) {
                                 (void) ca_sync_current_archive_offset(s, &offset);
 
                                 r = mtree_escape(path, &escaped);
-                                free(path);
                                 if (r < 0) {
                                         log_oom();
                                         goto finish;
@@ -2317,7 +2311,6 @@ static int verb_list(int argc, char *argv[]) {
                                 }
                         }
 
-                        free(path);
                         break;
                 }
 
