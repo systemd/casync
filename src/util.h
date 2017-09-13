@@ -133,14 +133,26 @@ static inline void* mfree(void* p) {
                 abort();                                                \
         } while(false)                                                  \
 
-static inline int safe_close(int fd) {
-        if (fd >= 0) {
+static inline int safe_close_above(int above, int fd) {
+        if (fd >= above) {
                 int saved_errno = errno;
                 assert_se(close(fd) >= 0 || errno != EBADF);
                 errno = saved_errno;
         }
 
         return -1;
+}
+
+static inline int safe_close(int fd) {
+        return safe_close_above(0, fd);
+}
+
+static inline int safe_closep(int *fd) {
+        return safe_close(*fd);
+}
+
+static inline void safe_close_nonstdp(int *fd) {
+        safe_close_above(STDERR_FILENO, *fd);
 }
 
 typedef uint16_t le16_t;

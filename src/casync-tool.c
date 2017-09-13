@@ -1400,7 +1400,8 @@ static int verb_extract(int argc, char *argv[]) {
         } ExtractOperation;
 
         ExtractOperation operation = _EXTRACT_OPERATION_INVALID;
-        int r, output_fd = -1, input_fd = -1;
+        int r;
+        _cleanup_(safe_close_nonstdp) output_fd = -1, input_fd = -1;
         _cleanup_free_ char *input = NULL, *output = NULL;
         const char *seek_path = NULL;
         CaSync *s = NULL;
@@ -1726,11 +1727,6 @@ static int verb_extract(int argc, char *argv[]) {
 finish:
         ca_sync_unref(s);
 
-        if (input_fd >= 3)
-                (void) close(input_fd);
-        if (output_fd >= 3)
-                (void) close(output_fd);
-
         return r;
 }
 
@@ -2045,7 +2041,8 @@ static int verb_list(int argc, char *argv[]) {
 
         ListOperation operation = _LIST_OPERATION_INVALID;
         const char *seek_path = NULL;
-        int r, input_fd = -1;
+        int r;
+        _cleanup_(safe_close_nonstdp) input_fd = -1;
         _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
         bool toplevel_shown = false;
@@ -2371,9 +2368,6 @@ static int verb_list(int argc, char *argv[]) {
 finish:
         ca_sync_unref(s);
 
-        if (input_fd >= 3)
-                (void) close(input_fd);
-
         return r;
 }
 
@@ -2391,7 +2385,8 @@ static int verb_digest(int argc, char *argv[]) {
         DigestOperation operation = _DIGEST_OPERATION_INVALID;
         bool set_base_mode = false;
         const char *seek_path = NULL;
-        int r, input_fd = -1;
+        int r;
+        _cleanup_(safe_close_nonstdp) int input_fd = -1;
         _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
         bool show_payload_digest = false;
@@ -2733,9 +2728,6 @@ static int verb_digest(int argc, char *argv[]) {
 finish:
         ca_sync_unref(s);
 
-        if (input_fd >= 3)
-                (void) close(input_fd);
-
         return r;
 }
 
@@ -2748,7 +2740,8 @@ static int verb_mount(int argc, char *argv[]) {
         } MountOperation;
         MountOperation operation = _MOUNT_OPERATION_INVALID;
         const char *mount_path = NULL;
-        int r, input_fd = -1;
+        int r;
+        _cleanup_(safe_close_nonstdp) input_fd = -1;
         _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
 
@@ -2852,9 +2845,6 @@ static int verb_mount(int argc, char *argv[]) {
 finish:
         ca_sync_unref(s);
 
-        if (input_fd >= 3)
-                (void) close(input_fd);
-
         return r;
 #else
         fprintf(stderr, "Compiled without support for fuse.\n");
@@ -2874,7 +2864,8 @@ static int verb_mkdev(int argc, char *argv[]) {
         CaBlockDevice *nbd = NULL;
         const char *path = NULL, *name = NULL;
         bool make_symlink = false, rm_symlink = false;
-        int r, input_fd = -1;
+        int r;
+        _cleanup_(safe_close_nonstdp) input_fd = -1;
         _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
 
@@ -3281,9 +3272,6 @@ finish:
 
         if (rm_symlink)
                 (void) unlink(name);
-
-        if (input_fd >= 3)
-                (void) close(input_fd);
 
         return r;
 }
@@ -3876,7 +3864,8 @@ static int verb_udev(int argc, char *argv[]) {
         const char *e;
         char pretty[FILENAME_MAX+1];
         const char *p;
-        int fd, r;
+        _cleanup_(safe_closep) int fd = -1;
+        int r;
         ssize_t n;
 
         if (argc != 2) {
@@ -3913,13 +3902,11 @@ static int verb_udev(int argc, char *argv[]) {
 
         } else {
                 /* Uh? We managed to lock this file? in that case casync behind it died, let's ignore this, and quit immediately. */
-                safe_close(fd);
+                fd = safe_close(fd);
                 return 0;
         }
 
         n = read(fd, pretty, sizeof(pretty));
-        safe_close(fd);
-
         if (n < 0) {
                 r = -errno;
                 fprintf(stderr, "Failed to read from %s: %s\n", p, strerror(-r));
