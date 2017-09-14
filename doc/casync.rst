@@ -29,7 +29,7 @@ Commands
 This will create either a .catar archive or an .caidx index for for the given
 *DIRECTORY*, or a .caibx index for the given *FILE* or block *DEVICE*. The type
 of output is automatically chosen based on the file extension (this may be
-override with ``--what=``). *DIRECTORY* is optional, and the current directory
+overridden with ``--what=``). *DIRECTORY* is optional, and the current directory
 will be used if not specified.
 
 When a .caidx or .caibx file is created, a .castr storage directory will be
@@ -165,8 +165,9 @@ Input/output selector:
 --what=blob             Operate on blob file
 --what=blob-index       Operate on blob index file
 --what=directory        Operate on directory
+--what=help             Print a list of allowed values (and terminate the program)
 
-Archive feature sets:
+Turn on archive feature sets:
 
 --with=best             Store most accurate information
 --with=unix             Store UNIX baseline information
@@ -176,7 +177,12 @@ Archive feature sets:
 --with=privileged       Store file data that requires privileges to restore
 --with=fuse             Store file data that can exposed again via 'casync mount'
 
-(and similar: ``--without=fat-attrs``, ``--without=privileged``, ...)
+To turn archive features *off*, ``--without=…`` may be used, such as
+``--without=fat-attrs``, ``--without=privileged``, etc.
+To disable all optional features, ``--without=all`` may be used.
+(The positive form ``--with=all`` does not make sense, because some
+features are conflicting. To enable the maximum set of information, use
+``--with=best``.)
 
 Individual archive features:
 

@@ -24,7 +24,7 @@
 #include "signal-handler.h"
 #include "util.h"
 
-static enum {
+static enum arg_what {
         WHAT_ARCHIVE,
         WHAT_ARCHIVE_INDEX,
         WHAT_BLOB,
@@ -108,6 +108,7 @@ static void help(void) {
                "     --what=blob             Operate on blob file\n"
                "     --what=blob-index       Operate on blob index file\n"
                "     --what=directory        Operate on directory\n\n"
+               "     --what=help             Print allowed values\n\n"
                "Archive feature sets:\n"
                "     --with=best             Store most accurate information\n"
                "     --with=unix             Store UNIX baseline information\n"
@@ -118,7 +119,8 @@ static void help(void) {
                "                             restore\n"
                "     --with=fuse             Store file data that can exposed again via\n"
                "                             'casync mount'\n"
-               "     (and similar: --without=fat-attrs, --without=privileged, ...)\n\n"
+               "     (and similar: --without=fat-attrs, --without=privileged, ...)\n"
+               "     --without=all           Disable all optional attributes\n\n"
                "Individual archive features:\n"
                "     --with=16bit-uids       Store reduced 16bit UID/GID information\n"
                "     --with=32bit-uids       Store full 32bit UID/GID information\n"
@@ -248,6 +250,32 @@ static int parse_chunk_sizes(const char *v, size_t *ret_min, size_t *ret_avg, si
         *ret_max = c;
 
         return 0;
+}
+
+static int parse_what_selector(const char *arg, enum arg_what *what) {
+        if (streq(arg, "archive"))
+                *what = WHAT_ARCHIVE;
+        else if (streq(arg, "archive-index"))
+                *what = WHAT_ARCHIVE_INDEX;
+        else if (streq(arg, "blob"))
+                *what = WHAT_BLOB;
+        else if (streq(arg, "blob-index"))
+                *what = WHAT_BLOB_INDEX;
+        else if (streq(arg, "directory"))
+                *what = WHAT_DIRECTORY;
+        else if (streq(arg, "help")) {
+                printf("Allowed --what= selectors:\n"
+                       "archive-index\n"
+                       "blob\n"
+                       "blob-index\n"
+                       "directory\n");
+                return 0;
+        } else {
+                fprintf(stderr, "Failed to parse --what= selector: %s\n", arg);
+                return -EINVAL;
+        }
+
+        return 1;
 }
 
 static int parse_argv(int argc, char *argv[]) {
@@ -409,21 +437,9 @@ static int parse_argv(int argc, char *argv[]) {
                 }
 
                 case ARG_WHAT:
-                        if (streq(optarg, "archive"))
-                                arg_what = WHAT_ARCHIVE;
-                        else if (streq(optarg, "archive-index"))
-                                arg_what = WHAT_ARCHIVE_INDEX;
-                        else if (streq(optarg, "blob"))
-                                arg_what = WHAT_BLOB;
-                        else if (streq(optarg, "blob-index"))
-                                arg_what = WHAT_BLOB_INDEX;
-                        else if (streq(optarg, "directory"))
-                                arg_what = WHAT_DIRECTORY;
-                        else {
-                                fprintf(stderr, "Failed to parse --what= selector: %s\n", optarg);
-                                return -EINVAL;
-                        }
-
+                        r = parse_what_selector(optarg, &arg_what);
+                        if (r <= 0)
+                                return r;
                         break;
 
                 case ARG_EXCLUDE_NODUMP:
@@ -1384,8 +1400,9 @@ static int verb_extract(int argc, char *argv[]) {
         } ExtractOperation;
 
         ExtractOperation operation = _EXTRACT_OPERATION_INVALID;
-        int r, output_fd = -1, input_fd = -1;
-        char *input = NULL, *output = NULL;
+        int r;
+        _cleanup_(safe_close_nonstdp) output_fd = -1, input_fd = -1;
+        _cleanup_free_ char *input = NULL, *output = NULL;
         const char *seek_path = NULL;
         CaSync *s = NULL;
 
@@ -1710,14 +1727,6 @@ static int verb_extract(int argc, char *argv[]) {
 finish:
         ca_sync_unref(s);
 
-        if (input_fd >= 3)
-                (void) close(input_fd);
-        if (output_fd >= 3)
-                (void) close(output_fd);
-
-        free(input);
-        free(output);
-
         return r;
 }
 
@@ -1759,6 +1768,268 @@ static int mtree_escape(const char *p, char **ret) {
         return mtree_escape_full(p, (size_t) -1, ret);
 }
 
+static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
+        _cleanup_free_ char *path = NULL;
+        mode_t mode;
+        int r;
+
+        r = ca_sync_current_mode(s, &mode);
+        if (r < 0) {
+                fprintf(stderr, "Failed to query current mode: %s\n", strerror(-r));
+                return r;
+        }
+
+        r = ca_sync_current_path(s, &path);
+        if (r < 0) {
+                fprintf(stderr, "Failed to query current path: %s\n", strerror(-r));
+                return r;
+        }
+
+        if (streq(arg0, "list")) {
+                char ls_mode[LS_FORMAT_MODE_MAX];
+
+                printf("%s %s\n", ls_format_mode(mode, ls_mode), path);
+
+                if (!arg_recursive && *toplevel_shown) {
+                        r = ca_sync_seek_next_sibling(s);
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to seek to next sibling: %s\n", strerror(-r));
+                                return r;
+                        }
+                }
+
+                *toplevel_shown = true;
+
+        } else if (streq(arg0, "mtree")) {
+
+                const char *target = NULL, *user = NULL, *group = NULL;
+                uint64_t mtime = UINT64_MAX, size = UINT64_MAX;
+                uid_t uid = UID_INVALID;
+                gid_t gid = GID_INVALID;
+                dev_t rdev = (dev_t) -1;
+                char *escaped;
+
+                (void) ca_sync_current_target(s, &target);
+                (void) ca_sync_current_mtime(s, &mtime);
+                (void) ca_sync_current_size(s, &size);
+                (void) ca_sync_current_uid(s, &uid);
+                (void) ca_sync_current_gid(s, &gid);
+                (void) ca_sync_current_user(s, &user);
+                (void) ca_sync_current_group(s, &group);
+                (void) ca_sync_current_rdev(s, &rdev);
+
+                r = mtree_escape(path, &escaped);
+                if (r < 0)
+                        return log_oom();
+
+                fputs(isempty(escaped) ? "." : escaped, stdout);
+                free(escaped);
+
+                if (S_ISLNK(mode))
+                        fputs(" type=link", stdout);
+                else if (S_ISDIR(mode))
+                        fputs(" type=dir", stdout);
+                else if (S_ISREG(mode))
+                        fputs(" type=file", stdout);
+                else if (S_ISSOCK(mode))
+                        fputs(" type=socket", stdout);
+                else if (S_ISCHR(mode))
+                        fputs(" type=char", stdout);
+                else if (S_ISBLK(mode))
+                        fputs(" type=block", stdout);
+                else if (S_ISFIFO(mode))
+                        fputs(" type=fifo", stdout);
+
+                printf(" mode=%04o",  mode & 07777);
+
+                if (size != UINT64_MAX)
+                        printf(" size=%" PRIu64, size);
+
+                if (target) {
+                        if (mtree_escape(target, &escaped) < 0)
+                                return log_oom();
+
+                        printf(" link=%s", escaped);
+                        free(escaped);
+                }
+
+                if (rdev != (dev_t) -1)
+                        printf(" device=linux,%" PRIu32 ",%" PRIu32,
+                               (uint32_t) major(rdev),
+                               (uint32_t) minor(rdev));
+
+                if (uid_is_valid(uid))
+                        printf(" uid=" UID_FMT, uid);
+                if (uid_is_valid(gid))
+                        printf(" gid=" GID_FMT, gid);
+
+                if (user) {
+                        if (mtree_escape(user, &escaped) < 0)
+                                return log_oom();
+
+                        printf(" uname=%s", escaped);
+                        free(escaped);
+                }
+
+                if (group) {
+                        if (mtree_escape(group, &escaped) < 0)
+                                return log_oom();
+
+                        printf(" gname=%s", escaped);
+                        free(escaped);
+                }
+
+                if (mtime != UINT64_MAX)
+                        printf(" time=%" PRIu64 ".%09" PRIu64,
+                               mtime / UINT64_C(1000000000),
+                               mtime % UINT64_C(1000000000));
+
+                if (!S_ISREG(mode))
+                        /* End this in a newline — unless this is a regular file,
+                         * in which case we'll print the payload checksum shortly */
+                        putchar('\n');
+        } else {
+                const char *target = NULL, *user = NULL, *group = NULL;
+                uint64_t mtime = UINT64_MAX, size = UINT64_MAX, offset = UINT64_MAX;
+                char ls_mode[LS_FORMAT_MODE_MAX], ls_flags[LS_FORMAT_CHATTR_MAX], ls_fat_attrs[LS_FORMAT_FAT_ATTRS_MAX];
+                uid_t uid = UID_INVALID;
+                gid_t gid = GID_INVALID;
+                dev_t rdev = (dev_t) -1;
+                unsigned flags = (unsigned) -1;
+                uint32_t fat_attrs = (uint32_t) -1;
+                char *escaped;
+                const char *xname;
+                const void *xvalue;
+                size_t xsize;
+
+                assert(streq(arg0, "stat"));
+
+                (void) ca_sync_current_target(s, &target);
+                (void) ca_sync_current_mtime(s, &mtime);
+                (void) ca_sync_current_size(s, &size);
+                (void) ca_sync_current_uid(s, &uid);
+                (void) ca_sync_current_gid(s, &gid);
+                (void) ca_sync_current_user(s, &user);
+                (void) ca_sync_current_group(s, &group);
+                (void) ca_sync_current_rdev(s, &rdev);
+                (void) ca_sync_current_chattr(s, &flags);
+                (void) ca_sync_current_fat_attrs(s, &fat_attrs);
+                (void) ca_sync_current_archive_offset(s, &offset);
+
+                if (mtree_escape(path, &escaped) < 0)
+                        return log_oom();
+
+                printf("    File: %s\n"
+                       "    Mode: %s\n",
+                       isempty(escaped) ? "." : escaped,
+                       strna(ls_format_mode(mode, ls_mode)));
+
+                escaped = mfree(escaped);
+
+                if (flags != (unsigned) -1)
+                        printf("FileAttr: %s\n", strna(ls_format_chattr(flags, ls_flags)));
+
+                if (fat_attrs != (uint32_t) -1)
+                        printf(" FATAttr: %s\n", strna(ls_format_fat_attrs(fat_attrs, ls_fat_attrs)));
+
+                if (offset != UINT64_MAX)
+                        printf("  Offset: %" PRIu64 "\n", offset);
+
+                if (mtime != UINT64_MAX) {
+                        char d[128];
+                        time_t t;
+                        struct tm tm;
+
+                        t = (time_t) (mtime / UINT64_C(1000000000));
+                        if (localtime_r(&t, &tm) &&
+                            strftime(d, sizeof(d), "%Y-%m-%d %H:%M:%S", &tm) > 0)
+                                printf("    Time: %s.%09" PRIu64"\n", d, mtime % UINT64_C(1000000000));
+                }
+
+                if (size != UINT64_MAX)
+                        printf("    Size: %" PRIu64 "\n", size);
+
+                if (uid_is_valid(uid) || user) {
+                        printf("    User: ");
+
+                        if (uid == 0)
+                                user = "root";
+
+                        if (user)
+                                if (mtree_escape(user, &escaped) < 0)
+                                        return log_oom();
+
+                        if (uid_is_valid(uid) && user)
+                                printf("%s (" UID_FMT ")\n", escaped, uid);
+                        else if (uid_is_valid(uid))
+                                printf(UID_FMT "\n", uid);
+                        else
+                                printf("%s\n", escaped);
+
+                        escaped = mfree(escaped);
+                }
+
+                if (gid_is_valid(gid) || group) {
+                        printf("   Group: ");
+
+                        if (gid == 0)
+                                group = "root";
+
+                        if (group)
+                                if (mtree_escape(group, &escaped) < 0)
+                                        return log_oom();
+
+                        if (gid_is_valid(gid) && group)
+                                printf("%s (" GID_FMT ")\n", escaped, gid);
+                        else if (gid_is_valid(gid))
+                                printf(GID_FMT "\n", gid);
+                        else
+                                printf("%s\n", escaped);
+
+                        escaped = mfree(escaped);
+                }
+
+                if (target) {
+                        if (mtree_escape(target, &escaped) < 0)
+                                return log_oom();
+
+                        printf("  Target: %s\n", escaped);
+                        escaped = mfree(escaped);
+                }
+
+                if (rdev != (dev_t) -1)
+                        printf("  Device: %lu:%lu\n", (unsigned long) major(rdev), (unsigned long) minor(rdev));
+
+                r = ca_sync_current_xattr(s, CA_ITERATE_FIRST, &xname, &xvalue, &xsize);
+                for (;;) {
+                        _cleanup_free_ char *n = NULL, *v = NULL;
+
+                        if (r < 0) {
+                                fprintf(stderr, "Failed to enumerate extended attributes: %s\n", strerror(-r));
+                                return r;
+                        }
+                        if (r == 0)
+                                break;
+
+                        if (mtree_escape(xname, &n) < 0)
+                                return log_oom();
+
+                        if (mtree_escape_full(xvalue, xsize, &v) < 0)
+                                return log_oom();
+
+                        printf("   XAttr: %s → %s\n", n, v);
+                        r = ca_sync_current_xattr(s, CA_ITERATE_NEXT, &xname, &xvalue, &xsize);
+                }
+
+                if (S_ISDIR(mode))
+                        /* If this is a directory, we are done now. Otherwise, continue
+                         * so that we can show the payload and hardlink digests */
+                        return 0;
+        }
+
+        return 0;
+}
+
 static int verb_list(int argc, char *argv[]) {
 
         typedef enum ListOperation {
@@ -1770,8 +2041,9 @@ static int verb_list(int argc, char *argv[]) {
 
         ListOperation operation = _LIST_OPERATION_INVALID;
         const char *seek_path = NULL;
-        int r, input_fd = -1;
-        char *input = NULL;
+        int r;
+        _cleanup_(safe_close_nonstdp) input_fd = -1;
+        _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
         bool toplevel_shown = false;
 
@@ -1798,7 +2070,7 @@ static int verb_list(int argc, char *argv[]) {
         else if (arg_what == WHAT_DIRECTORY)
                 operation = LIST_DIRECTORY;
         else if (arg_what != _WHAT_INVALID) {
-                fprintf(stderr, "\"list\" operation may only be combined with --what=archive, --what=archive-index or --what=directory.\n");
+                fprintf(stderr, "\"%s\" operation may only be combined with --what=archive, archive-index, or directory.\n", argv[0]);
                 r = -EINVAL;
                 goto finish;
         }
@@ -1884,7 +2156,7 @@ static int verb_list(int argc, char *argv[]) {
                 input = NULL;
 
         if (operation == _LIST_OPERATION_INVALID) {
-                fprintf(stderr, "Failed to determine what to list. Use --what=archive, --what=archive-index or --what=directory.\n");
+                fprintf(stderr, "Failed to determine what to list. Use --what=archive, archive-index, or directory.\n");
                 r = -EINVAL;
                 goto finish;
         }
@@ -2018,306 +2290,9 @@ static int verb_list(int argc, char *argv[]) {
                         goto finish;
 
                 case CA_SYNC_NEXT_FILE: {
-                        char *path;
-                        mode_t mode;
-
-                        r = ca_sync_current_mode(s, &mode);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to query current mode: %s\n", strerror(-r));
+                        r = list_one_file(argv[0], s, &toplevel_shown);
+                        if (r < 0)
                                 goto finish;
-                        }
-
-                        r = ca_sync_current_path(s, &path);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to query current path: %s\n", strerror(-r));
-                                goto finish;
-                        }
-
-                        if (streq(argv[0], "list")) {
-                                char ls_mode[LS_FORMAT_MODE_MAX];
-
-                                printf("%s %s\n", ls_format_mode(mode, ls_mode), path);
-
-                                if (!arg_recursive && toplevel_shown) {
-                                        r = ca_sync_seek_next_sibling(s);
-                                        if (r < 0) {
-                                                fprintf(stderr, "Failed to seek to next sibling: %s\n", strerror(-r));
-                                                free(path);
-                                                goto finish;
-                                        }
-                                }
-
-                                toplevel_shown = true;
-
-                        } else if (streq(argv[0], "mtree")) {
-
-                                const char *target = NULL, *user = NULL, *group = NULL;
-                                uint64_t mtime = UINT64_MAX, size = UINT64_MAX;
-                                uid_t uid = UID_INVALID;
-                                gid_t gid = GID_INVALID;
-                                dev_t rdev = (dev_t) -1;
-                                char *escaped;
-
-                                assert(streq(argv[0], "mtree"));
-
-                                (void) ca_sync_current_target(s, &target);
-                                (void) ca_sync_current_mtime(s, &mtime);
-                                (void) ca_sync_current_size(s, &size);
-                                (void) ca_sync_current_uid(s, &uid);
-                                (void) ca_sync_current_gid(s, &gid);
-                                (void) ca_sync_current_user(s, &user);
-                                (void) ca_sync_current_group(s, &group);
-                                (void) ca_sync_current_rdev(s, &rdev);
-
-                                r = mtree_escape(path, &escaped);
-                                if (r < 0) {
-                                        free(path);
-                                        log_oom();
-                                        goto finish;
-                                }
-
-                                fputs(isempty(escaped) ? "." : escaped, stdout);
-                                free(escaped);
-
-                                if (S_ISLNK(mode))
-                                        fputs(" type=link", stdout);
-                                else if (S_ISDIR(mode))
-                                        fputs(" type=dir", stdout);
-                                else if (S_ISREG(mode))
-                                        fputs(" type=file", stdout);
-                                else if (S_ISSOCK(mode))
-                                        fputs(" type=socket", stdout);
-                                else if (S_ISCHR(mode))
-                                        fputs(" type=char", stdout);
-                                else if (S_ISBLK(mode))
-                                        fputs(" type=block", stdout);
-                                else if (S_ISFIFO(mode))
-                                        fputs(" type=fifo", stdout);
-
-                                printf(" mode=%04o",  mode & 07777);
-
-                                if (size != UINT64_MAX)
-                                        printf(" size=%" PRIu64, size);
-
-                                if (target) {
-                                        r = mtree_escape(target, &escaped);
-                                        if (r < 0) {
-                                                free(path);
-                                                log_oom();
-                                                goto finish;
-                                        }
-
-                                        printf(" link=%s", escaped);
-                                        free(escaped);
-                                }
-
-                                if (rdev != (dev_t) -1)
-                                        printf(" device=linux,%" PRIu32 ",%" PRIu32,
-                                               (uint32_t) major(rdev),
-                                               (uint32_t) minor(rdev));
-
-                                if (uid_is_valid(uid))
-                                        printf(" uid=" UID_FMT, uid);
-                                if (uid_is_valid(gid))
-                                        printf(" gid=" GID_FMT, gid);
-
-                                if (user) {
-                                        r = mtree_escape(user, &escaped);
-                                        if (r < 0) {
-                                                free(path);
-                                                log_oom();
-                                                goto finish;
-                                        }
-
-                                        printf(" uname=%s", escaped);
-                                        free(escaped);
-                                }
-
-                                if (group) {
-                                        r = mtree_escape(group, &escaped);
-                                        if (r < 0) {
-                                                free(path);
-                                                log_oom();
-                                                goto finish;
-                                        }
-
-                                        printf(" gname=%s", escaped);
-                                        free(escaped);
-                                }
-
-                                if (mtime != UINT64_MAX)
-                                        printf(" time=%" PRIu64 ".%09" PRIu64,
-                                               mtime / UINT64_C(1000000000),
-                                               mtime % UINT64_C(1000000000));
-
-                                if (!S_ISREG(mode)) /* End this in a newline — unless this is a regular file, in which case we'll print the payload checksum shortly */
-                                        putchar('\n');
-                        } else {
-                                const char *target = NULL, *user = NULL, *group = NULL;
-                                uint64_t mtime = UINT64_MAX, size = UINT64_MAX, offset = UINT64_MAX;
-                                char ls_mode[LS_FORMAT_MODE_MAX], ls_flags[LS_FORMAT_CHATTR_MAX], ls_fat_attrs[LS_FORMAT_FAT_ATTRS_MAX];
-                                uid_t uid = UID_INVALID;
-                                gid_t gid = GID_INVALID;
-                                dev_t rdev = (dev_t) -1;
-                                unsigned flags = (unsigned) -1;
-                                uint32_t fat_attrs = (uint32_t) -1;
-                                char *escaped = NULL;
-                                const char *xname;
-                                const void *xvalue;
-                                size_t xsize;
-
-                                /* stat */
-
-                                (void) ca_sync_current_target(s, &target);
-                                (void) ca_sync_current_mtime(s, &mtime);
-                                (void) ca_sync_current_size(s, &size);
-                                (void) ca_sync_current_uid(s, &uid);
-                                (void) ca_sync_current_gid(s, &gid);
-                                (void) ca_sync_current_user(s, &user);
-                                (void) ca_sync_current_group(s, &group);
-                                (void) ca_sync_current_rdev(s, &rdev);
-                                (void) ca_sync_current_chattr(s, &flags);
-                                (void) ca_sync_current_fat_attrs(s, &fat_attrs);
-                                (void) ca_sync_current_archive_offset(s, &offset);
-
-                                r = mtree_escape(path, &escaped);
-                                free(path);
-                                if (r < 0) {
-                                        log_oom();
-                                        goto finish;
-                                }
-
-                                printf("    File: %s\n"
-                                       "    Mode: %s\n",
-                                       isempty(escaped) ? "." : escaped,
-                                       strna(ls_format_mode(mode, ls_mode)));
-
-                                escaped = mfree(escaped);
-
-                                if (flags != (unsigned) -1)
-                                        printf("FileAttr: %s\n", strna(ls_format_chattr(flags, ls_flags)));
-
-                                if (fat_attrs != (uint32_t) -1)
-                                        printf(" FATAttr: %s\n", strna(ls_format_fat_attrs(fat_attrs, ls_fat_attrs)));
-
-                                if (offset != UINT64_MAX)
-                                        printf("  Offset: %" PRIu64 "\n", offset);
-
-                                if (mtime != UINT64_MAX) {
-                                        char d[128];
-                                        time_t t;
-                                        struct tm tm;
-
-                                        t = (time_t) (mtime / UINT64_C(1000000000));
-                                        if (localtime_r(&t, &tm) &&
-                                            strftime(d, sizeof(d), "%Y-%m-%d %H:%M:%S", &tm) > 0)
-                                                printf("    Time: %s.%09" PRIu64"\n", d, mtime % UINT64_C(1000000000));
-                                }
-
-                                if (size != UINT64_MAX)
-                                        printf("    Size: %" PRIu64 "\n", size);
-
-                                if (uid_is_valid(uid) || user) {
-                                        printf("    User: ");
-
-                                        if (uid == 0)
-                                                user = "root";
-
-                                        if (user) {
-                                                r = mtree_escape(user, &escaped);
-                                                if (r < 0) {
-                                                        log_oom();
-                                                        goto finish;
-                                                }
-                                        }
-
-                                        if (uid_is_valid(uid) && user)
-                                                printf("%s (" UID_FMT ")\n", escaped, uid);
-                                        else if (uid_is_valid(uid))
-                                                printf(UID_FMT "\n", uid);
-                                        else
-                                                printf("%s\n", escaped);
-
-                                        escaped = mfree(escaped);
-                                }
-
-                                if (gid_is_valid(gid) || group) {
-                                        printf("   Group: ");
-
-                                        if (gid == 0)
-                                                group = "root";
-
-                                        if (group) {
-                                                r = mtree_escape(group, &escaped);
-                                                if (r < 0) {
-                                                        log_oom();
-                                                        goto finish;
-                                                }
-                                        }
-
-                                        if (gid_is_valid(gid) && group)
-                                                printf("%s (" GID_FMT ")\n", escaped, gid);
-                                        else if (gid_is_valid(gid))
-                                                printf(GID_FMT "\n", gid);
-                                        else
-                                                printf("%s\n", escaped);
-
-                                        escaped = mfree(escaped);
-                                }
-
-                                if (target) {
-                                        r = mtree_escape(target, &escaped);
-                                        if (r < 0) {
-                                                log_oom();
-                                                goto finish;
-                                        }
-
-                                        printf("  Target: %s\n", escaped);
-                                        escaped = mfree(escaped);
-                                }
-
-                                if (rdev != (dev_t) -1)
-                                        printf("  Device: %lu:%lu\n", (unsigned long) major(rdev), (unsigned long) minor(rdev));
-
-                                r = ca_sync_current_xattr(s, CA_ITERATE_FIRST, &xname, &xvalue, &xsize);
-                                for (;;) {
-                                        char *n, *v;
-
-                                        if (r < 0) {
-                                                fprintf(stderr, "Failed to enumerate extended attributes: %s\n", strerror(-r));
-                                                goto finish;
-                                        }
-                                        if (r == 0)
-                                                break;
-
-                                        r = mtree_escape(xname, &n);
-                                        if (r < 0) {
-                                                log_oom();
-                                                goto finish;
-                                        }
-
-                                        r = mtree_escape_full(xvalue, xsize, &v);
-                                        if (r < 0) {
-                                                free(n);
-                                                log_oom();
-                                                goto finish;
-                                        }
-
-                                        printf("   XAttr: %s → %s\n", n, v);
-                                        free(n);
-                                        free(v);
-
-                                        r = ca_sync_current_xattr(s, CA_ITERATE_NEXT, &xname, &xvalue, &xsize);
-                                }
-
-                                if (S_ISDIR(mode)) {
-                                        /* If this is a directory, we are done now. Otherwise, continue so that we can show the payload and hardlink digests */
-                                        r = 0;
-                                        goto finish;
-                                }
-                        }
-
-                        free(path);
                         break;
                 }
 
@@ -2393,10 +2368,6 @@ static int verb_list(int argc, char *argv[]) {
 finish:
         ca_sync_unref(s);
 
-        if (input_fd >= 3)
-                (void) close(input_fd);
-
-        free(input);
         return r;
 }
 
@@ -2414,8 +2385,9 @@ static int verb_digest(int argc, char *argv[]) {
         DigestOperation operation = _DIGEST_OPERATION_INVALID;
         bool set_base_mode = false;
         const char *seek_path = NULL;
-        int r, input_fd = -1;
-        char *input = NULL;
+        int r;
+        _cleanup_(safe_close_nonstdp) int input_fd = -1;
+        _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
         bool show_payload_digest = false;
         int seeking = false;
@@ -2756,11 +2728,6 @@ static int verb_digest(int argc, char *argv[]) {
 finish:
         ca_sync_unref(s);
 
-        if (input_fd >= 3)
-                (void) close(input_fd);
-
-        free(input);
-
         return r;
 }
 
@@ -2773,8 +2740,9 @@ static int verb_mount(int argc, char *argv[]) {
         } MountOperation;
         MountOperation operation = _MOUNT_OPERATION_INVALID;
         const char *mount_path = NULL;
-        int r, input_fd = -1;
-        char *input = NULL;
+        int r;
+        _cleanup_(safe_close_nonstdp) input_fd = -1;
+        _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
 
         if (argc > 3 || argc < 2) {
@@ -2877,11 +2845,6 @@ static int verb_mount(int argc, char *argv[]) {
 finish:
         ca_sync_unref(s);
 
-        if (input_fd >= 3)
-                (void) close(input_fd);
-
-        free(input);
-
         return r;
 #else
         fprintf(stderr, "Compiled without support for fuse.\n");
@@ -2901,8 +2864,9 @@ static int verb_mkdev(int argc, char *argv[]) {
         CaBlockDevice *nbd = NULL;
         const char *path = NULL, *name = NULL;
         bool make_symlink = false, rm_symlink = false;
-        int r, input_fd = -1;
-        char *input = NULL;
+        int r;
+        _cleanup_(safe_close_nonstdp) input_fd = -1;
+        _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
 
         if (argc > 3) {
@@ -3308,11 +3272,6 @@ finish:
 
         if (rm_symlink)
                 (void) unlink(name);
-
-        if (input_fd >= 3)
-                (void) close(input_fd);
-
-        free(input);
 
         return r;
 }
@@ -3905,7 +3864,8 @@ static int verb_udev(int argc, char *argv[]) {
         const char *e;
         char pretty[FILENAME_MAX+1];
         const char *p;
-        int fd, r;
+        _cleanup_(safe_closep) int fd = -1;
+        int r;
         ssize_t n;
 
         if (argc != 2) {
@@ -3942,13 +3902,11 @@ static int verb_udev(int argc, char *argv[]) {
 
         } else {
                 /* Uh? We managed to lock this file? in that case casync behind it died, let's ignore this, and quit immediately. */
-                safe_close(fd);
+                fd = safe_close(fd);
                 return 0;
         }
 
         n = read(fd, pretty, sizeof(pretty));
-        safe_close(fd);
-
         if (n < 0) {
                 r = -errno;
                 fprintf(stderr, "Failed to read from %s: %s\n", p, strerror(-r));

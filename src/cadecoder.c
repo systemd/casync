@@ -2416,18 +2416,17 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
                 case CA_DECODER_IN_DIRECTORY:
 
                         if (d->delete && !n->dirents_invalid) {
-                                char *nd;
+                                _cleanup_free_ char *nd = NULL;
 
                                 nd = strdup(filename->name);
                                 if (!nd)
                                         return -ENOMEM;
 
-                                if (!GREEDY_REALLOC(n->dirents, n->n_dirents_allocated, n->n_dirents + 2)) {
-                                        free(nd);
+                                if (!GREEDY_REALLOC(n->dirents, n->n_dirents_allocated, n->n_dirents + 2))
                                         return -ENOMEM;
-                                }
 
                                 n->dirents[n->n_dirents++] = nd;
+                                nd = NULL;
                                 n->dirents[n->n_dirents] = NULL;
                         }
 
@@ -2882,7 +2881,7 @@ static int name_to_uid(CaDecoder *d, const char *name, uid_t *ret) {
 
         for (;;) {
                 struct passwd pwbuf, *pw = NULL;
-                char *buf;
+                _cleanup_free_ char *buf = NULL;
 
                 buf = malloc(bufsize);
                 if (!buf)
@@ -2896,10 +2895,8 @@ static int name_to_uid(CaDecoder *d, const char *name, uid_t *ret) {
                         d->cached_uid = pw->pw_uid;
 
                         *ret = pw->pw_uid;
-                        free(buf);
                         return 1;
                 }
-                free(buf);
                 if (r != ERANGE)
                         return r > 0 ? -r : -ESRCH;
 
@@ -2938,7 +2935,7 @@ static int name_to_gid(CaDecoder *d, const char *name, gid_t *ret) {
 
         for (;;) {
                 struct group grbuf, *gr = NULL;
-                char *buf;
+                _cleanup_free_ char *buf = NULL;
 
                 buf = malloc(bufsize);
                 if (!buf)
@@ -2952,10 +2949,8 @@ static int name_to_gid(CaDecoder *d, const char *name, gid_t *ret) {
                         d->cached_gid = gr->gr_gid;
 
                         *ret = gr->gr_gid;
-                        free(buf);
                         return 1;
                 }
-                free(buf);
                 if (r != ERANGE)
                         return r > 0 ? -r : -ESRCH;
 
@@ -3697,7 +3692,8 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 CaDecoderExtendedAttribute *x;
                 size_t space = 256;
                 ssize_t l;
-                char *p, *q;
+                _cleanup_free_ char *p = NULL;
+                char *q;
 
                 p = new(char, space);
                 if (!p)
@@ -3707,27 +3703,23 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         l = flistxattr(child->fd, p, space);
                         if (l < 0) {
                                 if (IN_SET(errno, EOPNOTSUPP, EBADF)) {
-                                        p = mfree(p);
                                         l = 0;
                                         break;
                                 }
 
-                                if (errno != ERANGE) {
-                                        free(p);
+                                if (errno != ERANGE)
                                         return -errno;
-                                }
                         } else
                                 break;
-
-                        free(p);
 
                         if (space*2 <= space)
                                 return -ENOMEM;
 
                         space *= 2;
-                        p = new(char, space);
-                        if (!p)
+                        q = realloc(p, space);
+                        if (!q)
                                 return -ENOMEM;
+                        p = q;
                 }
 
                 /* Remove xattrs set that don't appear in our list */
@@ -3755,18 +3747,13 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         if (found)
                                 goto next;
 
-                        if (fremovexattr(child->fd, q) < 0) {
-                                r = -errno;
-                                free(p);
-                                return r;
-                        }
+                        if (fremovexattr(child->fd, q) < 0)
+                                return -errno;
 
                 next:
                         q += z + 1;
                         l -= z + 1;
                 }
-
-                free(p);
 
                 for (x = child->xattrs_first; x; x = x->next) {
                         size_t k;
@@ -3807,7 +3794,8 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
         if (d->replay_feature_flags & CA_FORMAT_WITH_SELINUX) {
 #if HAVE_SELINUX
-                char *subpath = NULL, *label = NULL;
+                _cleanup_free_ char *subpath = NULL;
+                char *label = NULL;
                 bool update = false;
 
                 if (child->fd >= 0)
@@ -3819,20 +3807,17 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         r = lgetfilecon(subpath, &label) < 0 ? -errno : 0;
                 }
                 if (r == -EOPNOTSUPP) {
-                        if (child->selinux_label) {
-                                free(subpath);
+                        if (child->selinux_label)
                                 return -EOPNOTSUPP;
-                        }
 
                         /* If the backing file system doesn't support labels, and we are not supposed to set any, then that's fine */
                 } else if (r == -ENODATA)
                         /* If there has been no label assigned so far, then update if we need to set one now */
                         update = !!child->selinux_label;
-                else if (r < 0) {
+                else if (r < 0)
                         /* In all other error cases propagate the error */
-                        free(subpath);
                         return r;
-                } else {
+                else {
                         update = !streq_ptr(child->selinux_label, label);
                         freecon(label);
                 }
@@ -3855,7 +3840,6 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         }
                 } else
                         r = 0;
-                free(subpath);
                 if (r < 0)
                         return r;
 
@@ -4489,7 +4473,7 @@ int ca_decoder_get_payload(CaDecoder *d, const void **ret, size_t *ret_size) {
 }
 
 int ca_decoder_current_path(CaDecoder *d, char **ret) {
-        char *p = NULL;
+        _cleanup_free_ char *p = NULL;
         size_t n = 0, i;
 
         if (!d)
@@ -4512,10 +4496,8 @@ int ca_decoder_current_path(CaDecoder *d, char **ret) {
                 nn = n + (n > 0) + k;
 
                 np = realloc(p, nn+1);
-                if (!np) {
-                        free(p);
+                if (!np)
                         return -ENOMEM;
-                }
 
                 q = np + n;
                 if (n > 0)
@@ -4533,6 +4515,7 @@ int ca_decoder_current_path(CaDecoder *d, char **ret) {
         }
 
         *ret = p;
+        p = NULL;
         return 0;
 }
 
@@ -5052,7 +5035,7 @@ int ca_decoder_seek_path_offset(CaDecoder *d, const char *path, uint64_t offset)
 }
 
 int ca_decoder_seek_next_sibling(CaDecoder *d) {
-        char *p;
+        _cleanup_free_ char *p = NULL;
         int r;
 
         if (!d)
@@ -5062,10 +5045,7 @@ int ca_decoder_seek_next_sibling(CaDecoder *d) {
         if (r < 0)
                 return r;
 
-        r = ca_decoder_seek_path_internal(d, p, true, UINT64_MAX);
-        free(p);
-
-        return r;
+        return ca_decoder_seek_path_internal(d, p, true, UINT64_MAX);
 }
 
 int ca_decoder_get_seek_offset(CaDecoder *d, uint64_t *ret) {
@@ -5462,7 +5442,7 @@ int ca_decoder_try_hardlink(CaDecoder *d, CaFileRoot *root, const char *path) {
                 return dir_fd;
 
         if (linkat(root->fd, path, dir_fd, n->name, 0) < 0) {
-                char *t;
+                _cleanup_free_ char *t = NULL;
 
                 /* NB: If a file system doesn't support hardlinks, it will return EPERM, yuck! */
                 if (IN_SET(errno, EXDEV, EMLINK, EPERM))
@@ -5479,8 +5459,6 @@ int ca_decoder_try_hardlink(CaDecoder *d, CaFileRoot *root, const char *path) {
                         return r;
 
                 if (linkat(root->fd, path, dir_fd, t, 0) < 0) {
-                        free(t);
-
                         if (IN_SET(errno, EXDEV, EMLINK, EPERM))
                                 return 0;
 
@@ -5490,11 +5468,8 @@ int ca_decoder_try_hardlink(CaDecoder *d, CaFileRoot *root, const char *path) {
                 r = ca_decoder_install_file(d, dir_fd, t, n->name);
                 if (r < 0) {
                         (void) unlinkat(dir_fd, t, 0);
-                        free(t);
                         return r;
                 }
-
-                free(t);
         }
 
         /* All good. Let's remove the file we just wrote, we don't need it if we managed to create the hard link */

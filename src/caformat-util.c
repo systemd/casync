@@ -112,6 +112,7 @@ static const struct {
         { "fat-attrs",        CA_FORMAT_WITH_FAT_ATTRS        },
         { "privileged",       CA_FORMAT_WITH_PRIVILEGED       },
         { "fuse",             CA_FORMAT_WITH_FUSE             },
+        { "all",              CA_FORMAT_WITH_MASK             },
 };
 
 int ca_with_feature_flags_parse_one(const char *name, uint64_t *ret) {
