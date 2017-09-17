@@ -15,6 +15,9 @@ enum {
 
 CaBlockDevice *ca_block_device_new(void);
 CaBlockDevice *ca_block_device_unref(CaBlockDevice* d);
+static inline void ca_block_device_unrefp(CaBlockDevice **d) {
+        ca_block_device_unref(*d);
+}
 
 int ca_block_device_set_size(CaBlockDevice *d, uint64_t size);
 int ca_block_device_open(CaBlockDevice *d);

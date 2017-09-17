@@ -11,6 +11,9 @@ CaIndex *ca_index_new_read(void); /* only (cooked) reading */
 CaIndex *ca_index_new_incremental_write(void); /* incremental cooked writing + raw/byte-wise reading (for uploads) */
 CaIndex *ca_index_new_incremental_read(void); /* incremental raw/byte-wise writing + cooked reading (for downloads) */
 CaIndex *ca_index_unref(CaIndex *i);
+static inline void ca_index_unrefp(CaIndex **i) {
+        ca_index_unref(*i);
+}
 
 int ca_index_set_fd(CaIndex *i, int fd);
 int ca_index_set_path(CaIndex *i, const char *path);

@@ -27,6 +27,9 @@ enum {
 CaRemote* ca_remote_new(void);
 CaRemote* ca_remote_ref(CaRemote *rr);
 CaRemote* ca_remote_unref(CaRemote *rr);
+static inline void ca_remote_unrefp(CaRemote **rr) {
+        ca_remote_unref(*rr);
+}
 
 int ca_remote_set_local_feature_flags(CaRemote *rr, uint64_t flags);
 int ca_remote_add_local_feature_flags(CaRemote *rr, uint64_t flags);

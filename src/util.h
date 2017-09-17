@@ -745,6 +745,8 @@ int is_dir(const char* path, bool follow);
 
 #define NSEC_PER_SEC (UINT64_C(1000000000))
 
+/* Cleanup functions */
+
 #define _cleanup_(x) __attribute__((cleanup(x)))
 
 static inline void freep(void *p) {
