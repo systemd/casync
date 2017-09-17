@@ -3177,6 +3177,15 @@ static void free_stores(CaStore **stores, size_t n_stores) {
         free(stores);
 }
 
+typedef struct {
+        CaStore **stores;
+        size_t n_stores;
+} CaStoresCleanup;
+
+static void free_storesp(CaStoresCleanup *stores_cleanup) {
+        free_stores(stores_cleanup->stores, stores_cleanup->n_stores);
+}
+
 static int allocate_stores(
                 const char *wstore_path,
                 char **rstore_paths,
@@ -3184,69 +3193,59 @@ static int allocate_stores(
                 CaStore ***ret,
                 size_t *ret_n) {
 
-        CaStore **stores = NULL;
-        size_t n_stores, n = 0;
+        _cleanup_(free_storesp) CaStoresCleanup stores = {};
+        size_t n = 0;
         char **rstore_path;
         int r;
 
         assert(ret);
         assert(ret_n);
 
-        n_stores = !!wstore_path + n_rstores;
+        stores.n_stores = !!wstore_path + n_rstores;
 
-        if (n_stores > 0) {
-                stores = new0(CaStore*, n_stores);
-                if (!stores) {
-                        r = log_oom();
-                        goto fail;
-                }
+        if (stores.n_stores > 0) {
+                stores.stores = new0(CaStore*, stores.n_stores);
+                if (!stores.stores)
+                        return log_oom();
         }
 
         if (wstore_path) {
-                stores[n] = ca_store_new();
-                if (!stores[n]) {
-                        r = log_oom();
-                        goto fail;
-                }
+                stores.stores[n] = ca_store_new();
+                if (!stores.stores[n])
+                        return log_oom();
                 n++;
 
-                r = ca_store_set_path(stores[n-1], wstore_path);
+                r = ca_store_set_path(stores.stores[n-1], wstore_path);
                 if (r < 0) {
                         fprintf(stderr, "Unable to set store path %s: %s\n", wstore_path, strerror(-r));
-                        goto fail;
+                        return r;
                 }
         }
 
         STRV_FOREACH(rstore_path, rstore_paths) {
-                stores[n] = ca_store_new();
-                if (!stores[n]) {
-                        r = log_oom();
-                        goto fail;
-                }
+                stores.stores[n] = ca_store_new();
+                if (!stores.stores[n])
+                        return log_oom();
                 n++;
 
-                r = ca_store_set_path(stores[n-1], *rstore_path);
+                r = ca_store_set_path(stores.stores[n-1], *rstore_path);
                 if (r < 0) {
                         fprintf(stderr, "Unable to set store path %s: %s\n", *rstore_path, strerror(-r));
-                        goto fail;
+                        return r;
                 }
         }
 
-        *ret = stores;
+        *ret = stores.stores;
         *ret_n = n;
+        stores = (CaStoresCleanup) {}; /* prevent freeing */
 
         return 0;
-
-fail:
-        free_stores(stores, n);
-
-        return r;
 }
 
 static int verb_pull(int argc, char *argv[]) {
         const char *base_path, *archive_path, *index_path, *wstore_path;
-        size_t n_stores = 0, i;
-        CaStore **stores = NULL;
+        size_t i;
+        _cleanup_(free_storesp) CaStoresCleanup stores = {};
         _cleanup_(ca_remote_unrefp) CaRemote *rr = NULL;
         int r;
 
@@ -3260,14 +3259,14 @@ static int verb_pull(int argc, char *argv[]) {
         index_path = empty_or_dash_to_null(argv[3]);
         wstore_path = empty_or_dash_to_null(argv[4]);
 
-        n_stores = !!wstore_path + (argc - 5);
+        stores.n_stores = !!wstore_path + (argc - 5);
 
         if (base_path) {
                 fprintf(stderr, "Pull from base or archive not yet supported.\n");
                 return -EOPNOTSUPP;
         }
 
-        if (!archive_path && !index_path && n_stores == 0) {
+        if (!archive_path && !index_path && stores.n_stores == 0) {
                 fprintf(stderr, "Nothing to do.\n");
                 return -EINVAL;
         }
@@ -3279,7 +3278,7 @@ static int verb_pull(int argc, char *argv[]) {
                 return log_oom();
 
         r = ca_remote_set_local_feature_flags(rr,
-                                              (n_stores > 0 ? CA_PROTOCOL_READABLE_STORE : 0) |
+                                              (stores.n_stores > 0 ? CA_PROTOCOL_READABLE_STORE : 0) |
                                               (index_path ? CA_PROTOCOL_READABLE_INDEX : 0) |
                                               (archive_path ? CA_PROTOCOL_READABLE_ARCHIVE : 0));
         if (r < 0) {
@@ -3305,7 +3304,7 @@ static int verb_pull(int argc, char *argv[]) {
                 r = ca_remote_set_index_path(rr, index_path);
                 if (r < 0) {
                         fprintf(stderr, "Unable to set index file %s: %s\n", index_path, strerror(-r));
-                        goto finish;
+                        return r;
                 }
         }
 
@@ -3313,13 +3312,13 @@ static int verb_pull(int argc, char *argv[]) {
                 r = ca_remote_set_archive_path(rr, archive_path);
                 if (r < 0) {
                         fprintf(stderr, "Unable to set archive file %s: %s\n", archive_path, strerror(-r));
-                        goto finish;
+                        return r;
                 }
         }
 
-        r = allocate_stores(wstore_path, argv + 5, argc - 5, &stores, &n_stores);
+        r = allocate_stores(wstore_path, argv + 5, argc - 5, &stores.stores, &stores.n_stores);
         if (r < 0)
-                goto finish;
+                return r;
 
         for (;;) {
                 unsigned put_count;
@@ -3328,8 +3327,7 @@ static int verb_pull(int argc, char *argv[]) {
 
                 if (quit) {
                         fprintf(stderr, "Got exit signal, quitting.\n");
-                        r = -ESHUTDOWN;
-                        goto finish;
+                        return -ESHUTDOWN;
                 }
 
                 step = ca_remote_step(rr);
@@ -3337,8 +3335,7 @@ static int verb_pull(int argc, char *argv[]) {
                         break;
                 if (step < 0) {
                         fprintf(stderr, "Failed to process remote: %s\n", strerror(-step));
-                        r = step;
-                        goto finish;
+                        return step;
                 }
 
                 put_count = 0;
@@ -3352,7 +3349,7 @@ static int verb_pull(int argc, char *argv[]) {
                         r = ca_remote_can_put_chunk(rr);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to determine whether there's buffer space for sending: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
                         if (r == 0) /* No space to put more */
                                 break;
@@ -3362,18 +3359,18 @@ static int verb_pull(int argc, char *argv[]) {
                                 break;
                         if (r < 0) {
                                 fprintf(stderr, "Failed to determine which chunk to send next: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
 
-                        for (i = 0; i < n_stores; i++) {
-                                r = ca_store_get(stores[i], &id, CA_CHUNK_COMPRESSED, &p, &l, &compression);
+                        for (i = 0; i < stores.n_stores; i++) {
+                                r = ca_store_get(stores.stores[i], &id, CA_CHUNK_COMPRESSED, &p, &l, &compression);
                                 if (r >= 0) {
                                         found = true;
                                         break;
                                 }
                                 if (r != -ENOENT) {
                                         fprintf(stderr, "Failed to query store: %s\n", strerror(-r));
-                                        goto finish;
+                                        return r;
                                 }
                         }
 
@@ -3383,7 +3380,7 @@ static int verb_pull(int argc, char *argv[]) {
                                 r = ca_remote_put_missing(rr, &id);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to enqueue response: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
 
                         put_count ++;
@@ -3409,30 +3406,24 @@ static int verb_pull(int argc, char *argv[]) {
 
                 if (r == -ESHUTDOWN) {
                         fprintf(stderr, "Got exit signal, quitting.\n");
-                        goto finish;
+                        return r;
                 }
                 if (r < 0) {
                         fprintf(stderr, "Failed to poll remoting engine: %s\n", strerror(-r));
-                        goto finish;
+                        return r;
                 }
         }
 
-        r = 0;
-
-finish:
-        free_stores(stores, n_stores);
-
-        return r;
+        return 0;
 }
 
 static int verb_push(int argc, char *argv[]) {
 
         const char *base_path, *archive_path, *index_path, *wstore_path;
         bool index_processed = false, index_written = false, archive_written = false;
-        CaStore **stores = NULL;
         _cleanup_(ca_index_unrefp) CaIndex *index = NULL;
         _cleanup_(ca_remote_unrefp) CaRemote *rr = NULL;
-        size_t n_stores = 0;
+        _cleanup_(free_storesp) CaStoresCleanup stores = {};
         int r;
 
         if (argc < 5) {
@@ -3445,14 +3436,14 @@ static int verb_push(int argc, char *argv[]) {
         index_path = empty_or_dash_to_null(argv[3]);
         wstore_path = empty_or_dash_to_null(argv[4]);
 
-        n_stores = !!wstore_path + (argc - 5);
+        stores.n_stores = !!wstore_path + (argc - 5);
 
         if (base_path) {
                 fprintf(stderr, "Push to base not yet supported.\n");
                 return -EOPNOTSUPP;
         }
 
-        if (!archive_path && !index_path && n_stores == 0) {
+        if (!archive_path && !index_path && stores.n_stores == 0) {
                 fprintf(stderr, "Nothing to do.\n");
                 return -EINVAL;
         }
@@ -3488,21 +3479,19 @@ static int verb_push(int argc, char *argv[]) {
 
         if (index_path) {
                 index = ca_index_new_incremental_read();
-                if (!index) {
-                        r = log_oom();
-                        goto finish;
-                }
+                if (!index)
+                        return log_oom();
 
                 r = ca_index_set_path(index, index_path);
                 if (r < 0) {
                         fprintf(stderr, "Unable to set index file %s: %s\n", index_path, strerror(-r));
-                        goto finish;
+                        return r;
                 }
 
                 r = ca_index_open(index);
                 if (r < 0) {
                         fprintf(stderr, "Failed to open index file %s: %s\n", index_path, strerror(-r));
-                        goto finish;
+                        return r;
                 }
         }
 
@@ -3510,13 +3499,13 @@ static int verb_push(int argc, char *argv[]) {
                 r = ca_remote_set_archive_path(rr, archive_path);
                 if (r < 0) {
                         fprintf(stderr, "Unable to set archive file %s: %s\n", archive_path, strerror(-r));
-                        goto finish;
+                        return r;
                 }
         }
 
-        r = allocate_stores(wstore_path, argv + 5, argc - 5, &stores, &n_stores);
+        r = allocate_stores(wstore_path, argv + 5, argc - 5, &stores.stores, &stores.n_stores);
         if (r < 0)
-                goto finish;
+                return r;
 
         for (;;) {
                 bool finished;
@@ -3524,15 +3513,13 @@ static int verb_push(int argc, char *argv[]) {
 
                 if (quit) {
                         fprintf(stderr, "Got exit signal, quitting.\n");
-                        r = -ESHUTDOWN;
-                        goto finish;
+                        return -ESHUTDOWN;
                 }
 
                 step = ca_remote_step(rr);
                 if (step < 0) {
                         fprintf(stderr, "Failed to process remote: %s\n", strerror(-step));
-                        r = step;
-                        goto finish;
+                        return step;
                 }
 
                 if (step == CA_REMOTE_FINISHED)
@@ -3557,11 +3544,11 @@ static int verb_push(int argc, char *argv[]) {
 
                         if (r == -ESHUTDOWN) {
                                 fprintf(stderr, "Got exit signal, quitting.\n");
-                                goto finish;
+                                return r;
                         }
                         if (r < 0) {
                                 fprintf(stderr, "Failed to run remoting engine: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
 
                         break;
@@ -3582,13 +3569,13 @@ static int verb_push(int argc, char *argv[]) {
                         r = ca_remote_read_index(rr, &p, &n);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to read index data: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
 
                         r = ca_index_incremental_write(index, p, n);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to write index data: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
 
                         break;
@@ -3598,7 +3585,7 @@ static int verb_push(int argc, char *argv[]) {
                         r = ca_index_incremental_eof(index);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to write index EOF: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
 
                         index_written = true;
@@ -3613,19 +3600,19 @@ static int verb_push(int argc, char *argv[]) {
                         r = ca_remote_next_chunk(rr, CA_CHUNK_AS_IS, &id, &p, &n, &compression);
                         if (r < 0) {
                                 fprintf(stderr, "Failed to determine most recent chunk: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
 
-                        r = ca_store_put(stores[0], &id, compression, p, n); /* Write to wstore */
+                        r = ca_store_put(stores.stores[0], &id, compression, p, n); /* Write to wstore */
                         if (r < 0 && r != -EEXIST) {
                                 fprintf(stderr, "Failed to write chunk to store: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
 
                         r = ca_remote_forget_chunk(rr, &id);
                         if (r < 0 && r != -ENOENT) {
                                 fprintf(stderr, "Failed to forget chunk: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
 
                         break;
@@ -3654,7 +3641,7 @@ static int verb_push(int argc, char *argv[]) {
                                 break;
                         if (r < 0) {
                                 fprintf(stderr, "Failed to get remote feature flags: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
 
                         /* Only request chunks if this is requested by the client side */
@@ -3668,7 +3655,7 @@ static int verb_push(int argc, char *argv[]) {
                                 break;
                         if (r < 0) {
                                 fprintf(stderr, "Failed to read index: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
                         if (r == 0) { /* EOF */
                                 index_processed = true;
@@ -3678,11 +3665,11 @@ static int verb_push(int argc, char *argv[]) {
                         /* fprintf(stderr, "Need %s\n", ca_chunk_id_format(&id, ids)); */
 
                         r = 0;
-                        for (i = 0; i < n_stores; i++) {
-                                r = ca_store_has(stores[i], &id);
+                        for (i = 0; i < stores.n_stores; i++) {
+                                r = ca_store_has(stores.stores[i], &id);
                                 if (r < 0) {
                                         fprintf(stderr, "Failed to test whether chunk exists locally already: %s\n", strerror(-r));
-                                        goto finish;
+                                        return r;
                                 }
                                 if (r > 0)
                                         break;
@@ -3697,7 +3684,7 @@ static int verb_push(int argc, char *argv[]) {
                         r = ca_remote_request_async(rr, &id, false);
                         if (r < 0 && r != -EALREADY && r != -EAGAIN) {
                                 fprintf(stderr, "Failed to request chunk: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
 
                         /* if (r > 0) */
@@ -3718,7 +3705,7 @@ static int verb_push(int argc, char *argv[]) {
                 r = ca_remote_has_chunks(rr);
                 if (r < 0) {
                         fprintf(stderr, "Failed to determine if further requests are pending: %s\n", strerror(-r));
-                        goto finish;
+                        return r;
                 }
                 if (r > 0)
                         finished = false;
@@ -3727,7 +3714,7 @@ static int verb_push(int argc, char *argv[]) {
                         r = ca_remote_goodbye(rr);
                         if (r < 0 && r != -EALREADY) {
                                 fprintf(stderr, "Failed to enqueue goodbye: %s\n", strerror(-r));
-                                goto finish;
+                                return r;
                         }
                 }
         }
@@ -3736,16 +3723,11 @@ static int verb_push(int argc, char *argv[]) {
                 r = ca_index_install(index);
                 if (r < 0) {
                         fprintf(stderr, "Failed to install index on location: %s\n", strerror(-r));
-                        goto finish;
+                        return r;
                 }
         }
 
-        r = 0;
-
-finish:
-        free_stores(stores, n_stores);
-
-        return r;
+        return 0;
 }
 
 static int verb_udev(int argc, char *argv[]) {
