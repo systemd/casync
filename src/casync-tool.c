@@ -800,7 +800,7 @@ static int load_chunk_size(CaSync *s) {
 static int verbose_print_feature_flags(CaSync *s) {
         static bool printed = false;
         uint64_t flags;
-        char *t;
+        _cleanup_free_ char *t = NULL;
         int r;
 
         assert(s);
@@ -829,15 +829,13 @@ static int verbose_print_feature_flags(CaSync *s) {
         fprintf(stderr, "Excluding submounts: %s\n", yes_no(flags & CA_FORMAT_EXCLUDE_SUBMOUNTS));
         fprintf(stderr, "Digest algorithm: %s\n", ca_digest_type_to_string(ca_feature_flags_to_digest_type(flags)));
 
-        free(t);
-
         printed = true;
 
         return 0;
 }
 
 static int verbose_print_path(CaSync *s, const char *verb) {
-        char *path;
+        _cleanup_free_ char *path = NULL;
         int r;
 
         if (!arg_verbose)
@@ -846,7 +844,6 @@ static int verbose_print_path(CaSync *s, const char *verb) {
         r = ca_sync_current_path(s, &path);
         if (r == -ENOTDIR) /* Root isn't a directory */
                 return 0;
-
         if (r < 0) {
                 fprintf(stderr, "Failed to query current path: %s\n", strerror(-r));
                 return r;
@@ -858,7 +855,6 @@ static int verbose_print_path(CaSync *s, const char *verb) {
         }
 
         fprintf(stderr, "%s\n", isempty(path) ? "./" : path);
-        free(path);
 
         return 1;
 }
@@ -890,7 +886,7 @@ static int verbose_print_done_make(CaSync *s) {
 
                 too_much = selected & ~covering;
                 if (too_much != 0) {
-                        char *t;
+                        _cleanup_free_ char *t = NULL;
 
                         r = ca_with_feature_flags_format(too_much, &t);
                         if (r < 0) {
@@ -899,7 +895,6 @@ static int verbose_print_done_make(CaSync *s) {
                         }
 
                         fprintf(stderr, "Selected feature flags not actually applicable to backing file systems: %s\n", strnone(t));
-                        free(t);
                 }
         }
 
@@ -1093,8 +1088,9 @@ static int verb_make(int argc, char *argv[]) {
         } MakeOperation;
 
         MakeOperation operation = _MAKE_OPERATION_INVALID;
-        char *input = NULL, *output = NULL;
-        int r, input_fd = -1;
+        _cleanup_free_ char *input = NULL, *output = NULL;
+        _cleanup_(safe_close_nonstdp) int input_fd = -1;
+        int r;
         CaSync *s = NULL;
         struct stat st;
 
@@ -1212,7 +1208,7 @@ static int verb_make(int argc, char *argv[]) {
         }
 
         if (streq_ptr(output, "-"))
-                output = NULL;
+                output = mfree(output);
 
         if (operation == _MAKE_OPERATION_INVALID) {
                 fprintf(stderr, "Failed to determine what to make. Use --what=archive, --what=archive-index or --what=blob-index.\n");
@@ -1364,12 +1360,6 @@ static int verb_make(int argc, char *argv[]) {
 
 finish:
         ca_sync_unref(s);
-
-        if (input_fd >= 3)
-                (void) close(input_fd);
-
-        free(input);
-        free(output);
 
         return r;
 }
@@ -2153,7 +2143,7 @@ static int verb_list(int argc, char *argv[]) {
         }
 
         if (streq_ptr(input, "-"))
-                input = NULL;
+                input = mfree(input);
 
         if (operation == _LIST_OPERATION_INVALID) {
                 fprintf(stderr, "Failed to determine what to list. Use --what=archive, archive-index, or directory.\n");
@@ -2506,7 +2496,7 @@ static int verb_digest(int argc, char *argv[]) {
         }
 
         if (streq_ptr(input, "-"))
-                input = NULL;
+                input = mfree(input);
 
         if (operation == _DIGEST_OPERATION_INVALID) {
                 fprintf(stderr, "Failed to determine what to calculate digest of. Use --what=archive, --what=blob, --what=archive-index, --what=blob-index or --what=directory.\n");
