@@ -16,6 +16,7 @@ Synopsis
 | **casync** [*OPTIONS*...] digest [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*]
 | **casync** [*OPTIONS*...] mount [*ARCHIVE* | *ARCHIVE_INDEX*] *PATH*
 | **casync** [*OPTIONS*...] mkdev [*BLOB* | *BLOB_INDEX*] [*NODE*]
+| **casync** [*OPTIONS*...] gc *BLOB_INDEX* | *ARCHIVE_INDEX* ...
 
 Description
 -----------
@@ -42,8 +43,8 @@ The metadata included in the archive is controlled by the ``--with-*`` and
 ``--without-*`` options.
 
 |
-| **casync** extract [*ARCHIVE* | *ARCHIVE_INDEX*] [*DIRECTORY*]
-| **casync** extract *BLOB_INDEX* *FILE* | *DEVICE*
+| **casync** **extract** [*ARCHIVE* | *ARCHIVE_INDEX*] [*DIRECTORY*]
+| **casync** **extract** *BLOB_INDEX* *FILE* | *DEVICE*
 
 This will extract the contents of a .catar archive or .caidx index
 into the specified *DIRECTORY*, or the contents specified by *BLOB_INDEX*
@@ -54,7 +55,7 @@ The metadata replayed from the archive is controlled by the ``--with-*`` and
 ``--without-*`` options.
 
 |
-| **casync** list [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
+| **casync** **list** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
 
 This will list all the files and directories in the specified .catar
 archive or .caidx index, or the directory. The argument is optional,
@@ -68,7 +69,7 @@ The output includes the permission mask and file names::
   -rw-r--r-- TODO
 
 |
-| **casync** mtree [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
+| **casync** **mtree** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
 
 This is similar to **list**, but includes information about each entry in the
 key=value format defined by BSD mtree(5)::
@@ -79,7 +80,7 @@ key=value format defined by BSD mtree(5)::
   TODO type=file mode=0644 size=2395 uid=0 gid=0 time=1498175562.000000000 sha256digest=316f11a03c08ec39f0328ab1f7446bd048507d3fbeafffe7c32fad4942244b7d
 
 |
-| **casync** stat [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
+| **casync** **stat** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 
 This will show detailed information about a file or directory *PATH*, as found
 in either *ARCHIVE* or *ARCHIVE_INDEX* or underneath *DIRECTORY*. Both arguments
@@ -99,7 +100,7 @@ Example output::
      Group: zbyszek (1000)
 
 |
-| **casync** digest [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*]
+| **casync** **digest** [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*]
 
 This will compute and print the checksum of the argument.
 The argument is optional and defaults to the current directory::
@@ -111,13 +112,13 @@ The argument is optional and defaults to the current directory::
   d1698b0c4c27163284abea5d1e369b92e89dd07cb74378638849800e0406baf7
 
 |
-| **casync** mount [*ARCHIVE* | *ARCHIVE_INDEX*] *PATH*
+| **casync** **mount** [*ARCHIVE* | *ARCHIVE_INDEX*] *PATH*
 
 This will mount the specified .catar archive or .caidx index at the
 specified *PATH*, using the FUSE protocol.
 
 |
-| **casync** mkdev [*BLOB* | *BLOB_INDEX*] [*NODE*]
+| **casync** **mkdev** [*BLOB* | *BLOB_INDEX*] [*NODE*]
 
 This will create a block device *NODE* with the contents specified
 by the .caibx *BLOB_INDEX* or just the file or block device *BLOB*,
@@ -134,6 +135,16 @@ Example::
 
 When ``casync mkdev`` is killed, the device is destroyed.
 
+|
+| **casync** **gc** *ARCHIVE_INDEX* | *BLOB_INDEX* ...
+
+This will remove all chunks that are not used by one of the specified indices
+(one or more blob and archive indices can be given). If ``--store`` is not
+given, the default store for the first index will be used.
+
+This command can be used to prune unused chunks from a shared chunk
+store.
+
 Options
 -------
 
@@ -141,6 +152,7 @@ General options:
 
 --help, -h                      Show terse help output
 --verbose, -v                   Show terse status information during runtime
+--dry-run, -n                   Only print what would be removed with **gc**
 --store=PATH                    The primary chunk store to use
 --extra-store=<PATH>            Additional chunk store to look for chunks in
 --chunk-size=<[MIN:]AVG[:MAX]>  The minimal/average/maximum number of bytes in a chunk

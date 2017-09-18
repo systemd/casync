@@ -51,6 +51,8 @@ libshared_sources = files('''
         dirent-util.h
         fssize.c
         fssize.h
+        gc.c
+        gc.h
         hash-funcs.c
         hash-funcs.h
         hashmap.c

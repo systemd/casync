@@ -21,6 +21,7 @@
 #include "caremote.h"
 #include "castore.h"
 #include "casync.h"
+#include "gc.h"
 #include "notify.h"
 #include "parse-util.h"
 #include "signal-handler.h"
@@ -35,6 +36,7 @@ static enum arg_what {
         _WHAT_INVALID = -1,
 } arg_what = _WHAT_INVALID;
 static bool arg_verbose = false;
+static bool arg_dry_run = false;
 static bool arg_exclude_nodump = true;
 static bool arg_exclude_submounts = false;
 static bool arg_reflink = true;
@@ -74,6 +76,8 @@ static void help(void) {
                "  -h --help                  Show this help\n"
                "     --version               Show brief version information\n"
                "  -v --verbose               Show terse status information during runtime\n"
+               "  -n --dry-run               When garbage collecting, only print what would\n"
+               "                             be done\n"
                "     --store=PATH            The primary chunk store to use\n"
                "     --extra-store=PATH      Additional chunk store to look for chunks in\n"
                "     --chunk-size=[MIN:]AVG[:MAX]\n"
@@ -312,6 +316,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "help",              no_argument,       NULL, 'h'                   },
                 { "version",           no_argument,       NULL, ARG_VERSION           },
                 { "verbose",           no_argument,       NULL, 'v'                   },
+                { "dry-run",           no_argument,       NULL, 'n'                   },
                 { "store",             required_argument, NULL, ARG_STORE             },
                 { "extra-store",       required_argument, NULL, ARG_EXTRA_STORE       },
                 { "chunk-size",        required_argument, NULL, ARG_CHUNK_SIZE        },
@@ -345,7 +350,7 @@ static int parse_argv(int argc, char *argv[]) {
         if (getenv_bool("CASYNC_VERBOSE") > 0)
                 arg_verbose = true;
 
-        while ((c = getopt_long(argc, argv, "hv", options, NULL)) >= 0) {
+        while ((c = getopt_long(argc, argv, "hvn", options, NULL)) >= 0) {
 
                 switch (c) {
 
@@ -359,6 +364,10 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case 'v':
                         arg_verbose = true;
+                        break;
+
+                case 'n':
+                        arg_dry_run = true;
                         break;
 
                 case ARG_STORE: {
@@ -3807,6 +3816,67 @@ static int verb_udev(int argc, char *argv[]) {
         return 0;
 }
 
+static int verb_gc(int argc, char *argv[]) {
+        int i, r;
+        _cleanup_(ca_chunk_collection_unrefp) CaChunkCollection *coll = NULL;
+        _cleanup_(ca_store_unrefp) CaStore *store = NULL;
+
+        if (argc < 2) {
+                fprintf(stderr, "Expected at least one argument.\n");
+                return -EINVAL;
+        }
+
+        coll = ca_chunk_collection_new();
+        if (!coll)
+                return log_oom();
+
+        /* This sets the same store for all indices, based on the first index. */
+        r = set_default_store(argv[1]);
+        if (r < 0)
+                return r;
+
+        if (!arg_store) {
+                fprintf(stderr, "Failed to determine store, use --store= to set store.\n");
+                return -EINVAL;
+        }
+
+        store = ca_store_new();
+        if (!store)
+                return log_oom();
+
+        r = ca_store_set_path(store, arg_store);
+        if (r < 0) {
+                fprintf(stderr, "Set to set store to \"%s\": %s", arg_store, strerror(-r));
+                return r;
+        }
+
+        for (i = 1; i < argc; i++) {
+                const char *path = argv[i];
+
+                r = ca_chunk_collection_add_index(coll, path);
+                if (r < 0)
+                        return r;
+        }
+
+        {
+                size_t usage, size;
+
+                assert_se(ca_chunk_collection_usage(coll, &usage) == 0);
+                assert_se(ca_chunk_collection_size(coll, &size) == 0);
+                if (arg_verbose)
+                        printf("Chunk store usage: %zu references, %zu chunks\n", usage, size);
+        }
+
+        r = ca_gc_cleanup_unused(store, coll,
+                                 arg_verbose * CA_GC_VERBOSE |
+                                 arg_dry_run * CA_GC_DRY_RUN);
+        if (r < 0)
+                fprintf(stderr, "Chunk cleanup failed: %s\n", strerror(-r));
+
+        return r;
+}
+
+
 static int dispatch_verb(int argc, char *argv[]) {
         int r;
 
@@ -3836,6 +3906,8 @@ static int dispatch_verb(int argc, char *argv[]) {
                 r = verb_push(argc, argv);
         else if (streq(argv[0], "udev")) /* "Secret" verb, only to be called by the udev nbd rules */
                 r = verb_udev(argc, argv);
+        else if (streq(argv[0], "gc"))
+                r = verb_gc(argc, argv);
         else {
                 fprintf(stderr, "Unknown verb '%s'. (Invoke '%s --help' for a list of available verbs.)\n", argv[0], program_invocation_short_name);
                 r = -EINVAL;
