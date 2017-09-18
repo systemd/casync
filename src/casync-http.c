@@ -347,10 +347,10 @@ static int acquire_file(CaRemote *rr,
 static int run(int argc, char *argv[]) {
         const char *base_url, *archive_url, *index_url, *wstore_url;
         size_t n_stores = 0, current_store = 0;
-        char *url_buffer = NULL;
         CURL *curl = NULL;
-        ReallocBuffer chunk_buffer = {};
-        CaRemote *rr = NULL;
+        _cleanup_(ca_remote_unrefp) CaRemote *rr = NULL;
+        _cleanup_(realloc_buffer_free) ReallocBuffer chunk_buffer = {};
+        _cleanup_free_ char *url_buffer = NULL;
         long protocol_status;
         int r;
 
@@ -595,11 +595,6 @@ flush:
 finish:
         if (curl)
                 curl_easy_cleanup(curl);
-
-        free(url_buffer);
-        realloc_buffer_free(&chunk_buffer);
-
-        ca_remote_unref(rr);
 
         return r;
 }

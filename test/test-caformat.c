@@ -7,9 +7,10 @@
 #include "util.h"
 
 int main(int argc, char *argv[]) {
-        ReallocBuffer buffer = {};
+        _cleanup_(realloc_buffer_free) ReallocBuffer buffer = {};
         uint64_t frame_size = 0, skip_size = 0;
-        int fd = -1, r;
+        _cleanup_(safe_closep) int fd = -1;
+        int r;
 
         if (argc != 2) {
                 fprintf(stderr, "Expected single filename parameter.\n");
@@ -205,10 +206,6 @@ int main(int argc, char *argv[]) {
                 }
         }
 
-finish:
-
-        safe_close(fd);
-        realloc_buffer_free(&buffer);
-
+ finish:
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

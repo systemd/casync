@@ -2754,7 +2754,7 @@ static int verb_mkdev(int argc, char *argv[]) {
                 _MKDEV_OPERATION_INVALID = -1,
         } MkDevOperation;
         MkDevOperation operation = _MKDEV_OPERATION_INVALID;
-        ReallocBuffer buffer = {};
+        _cleanup_(realloc_buffer_free) ReallocBuffer buffer = {};
         _cleanup_(ca_block_device_unrefp) CaBlockDevice *nbd = NULL;
         const char *path = NULL, *name = NULL;
         bool make_symlink = false, rm_symlink = false;
@@ -3159,8 +3159,6 @@ static int verb_mkdev(int argc, char *argv[]) {
         }
 
 finish:
-        realloc_buffer_free(&buffer);
-
         if (rm_symlink)
                 (void) unlink(name);
 
