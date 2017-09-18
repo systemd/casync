@@ -6,7 +6,7 @@
 #include "caindex.h"
 
 int main(int argc, char*argv[]) {
-        CaIndex* index;
+        _cleanup_(ca_index_unrefp) CaIndex* index = NULL;
         int r;
 
         if (argc != 2) {
@@ -33,8 +33,5 @@ int main(int argc, char*argv[]) {
         }
 
         printf("EOF\n");
-
-        ca_index_unref(index);
-
         return 0;
 }
