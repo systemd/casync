@@ -1401,7 +1401,7 @@ static int verb_extract(int argc, char *argv[]) {
 
         ExtractOperation operation = _EXTRACT_OPERATION_INVALID;
         int r;
-        _cleanup_(safe_close_nonstdp) output_fd = -1, input_fd = -1;
+        _cleanup_(safe_close_nonstdp) int output_fd = -1, input_fd = -1;
         _cleanup_free_ char *input = NULL, *output = NULL;
         const char *seek_path = NULL;
         CaSync *s = NULL;
@@ -2042,7 +2042,7 @@ static int verb_list(int argc, char *argv[]) {
         ListOperation operation = _LIST_OPERATION_INVALID;
         const char *seek_path = NULL;
         int r;
-        _cleanup_(safe_close_nonstdp) input_fd = -1;
+        _cleanup_(safe_close_nonstdp) int input_fd = -1;
         _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
         bool toplevel_shown = false;
@@ -2741,7 +2741,7 @@ static int verb_mount(int argc, char *argv[]) {
         MountOperation operation = _MOUNT_OPERATION_INVALID;
         const char *mount_path = NULL;
         int r;
-        _cleanup_(safe_close_nonstdp) input_fd = -1;
+        _cleanup_(safe_close_nonstdp) int input_fd = -1;
         _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
 
@@ -2865,7 +2865,7 @@ static int verb_mkdev(int argc, char *argv[]) {
         const char *path = NULL, *name = NULL;
         bool make_symlink = false, rm_symlink = false;
         int r;
-        _cleanup_(safe_close_nonstdp) input_fd = -1;
+        _cleanup_(safe_close_nonstdp) int input_fd = -1;
         _cleanup_free_ char *input = NULL;
         CaSync *s = NULL;
 
