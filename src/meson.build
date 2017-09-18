@@ -47,6 +47,8 @@ libshared_sources = files('''
         compressor.c
         compressor.h
         def.h
+        dirent-util.c
+        dirent-util.h
         fssize.c
         fssize.h
         hash-funcs.c
