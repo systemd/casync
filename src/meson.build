@@ -49,6 +49,12 @@ libshared_sources = files('''
         def.h
         fssize.c
         fssize.h
+        hash-funcs.c
+        hash-funcs.h
+        hashmap.c
+        hashmap.h
+        mempool.c
+        mempool.h
         notify.c
         notify.h
         parse-util.c
@@ -59,6 +65,7 @@ libshared_sources = files('''
         reflink.h
         rm-rf.c
         rm-rf.h
+        set.h
         siphash24.c
         siphash24.h
         util.c

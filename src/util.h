@@ -219,6 +219,8 @@ static inline uint64_t random_u64(void) {
         return u;
 }
 
+#define random_bytes(p, n) dev_urandom(p, n);
+
 #define _sentinel_ __attribute__ ((sentinel))
 #define _unused_ __attribute__ ((unused))
 #define _likely_(x) (__builtin_expect(!!(x),1))
@@ -226,11 +228,14 @@ static inline uint64_t random_u64(void) {
 #define _malloc_ __attribute__ ((malloc))
 #define _pure_ __attribute__ ((pure))
 #define _packed_ __attribute__ ((packed))
+#define _const_ __attribute__ ((const))
 #ifdef __clang__
 #  define _alloc_(...)
 #else
 #  define _alloc_(...) __attribute__ ((alloc_size(__VA_ARGS__)))
 #endif
+
+#define assert_cc(expr) static_assert(expr, #expr);
 
 #define CASE_F(X) case X:
 #define CASE_F_1(CASE, X) CASE_F(X)
@@ -588,6 +593,11 @@ size_t page_size(void);
 static inline size_t ALIGN_TO(size_t l, size_t ali) {
         return ((l + ali - 1) & ~(ali - 1));
 }
+#define PAGE_ALIGN(l) ALIGN_TO((l), page_size())
+
+/* We align a bit more than necessary on 32bit arches */
+#define ALIGN8(l) (((l) + 7) & ~7)
+#define ALIGN(l) ALIGN8(l)
 
 int parse_boolean(const char *v);
 
@@ -684,6 +694,12 @@ void* greedy_realloc0(void **p, size_t *allocated, size_t need, size_t size);
 
 #define memzero(x,l) (memset((x), 0, (l)))
 #define zero(x) (memzero(&(x), sizeof(x)))
+#define malloc0(n) (calloc(1, (n)))
+
+static inline void *mempset(void *s, int c, size_t n) {
+        memset(s, c, n);
+        return (uint8_t*)s + n;
+}
 
 #define DECIMAL_STR_MAX(type)                                           \
         (1+(sizeof(type) <= 1 ? 3 :                                     \
@@ -712,6 +728,21 @@ static inline uint32_t rol32(uint32_t x, size_t i) {
                 return x;
 
         return ((x) << (i)) | ((x) >> (32 - i));
+}
+
+static inline unsigned log2u(unsigned x) {
+        assert(x > 0);
+
+        return sizeof(unsigned) * 8 - __builtin_clz(x) - 1;
+}
+
+static inline unsigned log2u_round_up(unsigned x) {
+        assert(x > 0);
+
+        if (x == 1)
+                return 0;
+
+        return log2u(x - 1) + 1;
 }
 
 #ifndef FS_PROJINHERIT_FL
@@ -750,6 +781,12 @@ int is_dir(const char* path, bool follow);
 /* Cleanup functions */
 
 #define _cleanup_(x) __attribute__((cleanup(x)))
+
+#define DEFINE_TRIVIAL_CLEANUP_FUNC(type, func)                 \
+        static inline void func##p(type *p) {                   \
+                func(*p);                                       \
+        }                                                       \
+        struct __useless_struct_to_allow_trailing_semicolon__
 
 static inline void freep(void *p) {
         free(*(void**) p);
