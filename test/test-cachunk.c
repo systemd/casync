@@ -6,10 +6,11 @@
 
 static void test_chunk_file(void) {
         uint8_t buffer[BUFFER_SIZE*4];
-        ReallocBuffer rb = {}, rb2 = {};
+        _cleanup_(realloc_buffer_free) ReallocBuffer rb = {}, rb2 = {};
         const char *d;
         char *path;
-        int fd, r;
+        _cleanup_(safe_closep) int fd = -1;
+        int r;
 
         assert(var_tmp_dir(&d) >= 0);
         path = strjoina(d, "/chunk-test.XXXXXX");
@@ -54,11 +55,6 @@ static void test_chunk_file(void) {
 
         assert_se(realloc_buffer_size(&rb2) == sizeof(buffer));
         assert_se(memcmp(realloc_buffer_data(&rb2), buffer, sizeof(buffer)) == 0);
-
-        realloc_buffer_free(&rb);
-        realloc_buffer_free(&rb2);
-
-        safe_close(fd);
 }
 
 int main(int argc, char *argv[]) {
