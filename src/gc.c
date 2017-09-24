@@ -94,16 +94,12 @@ int ca_chunk_collection_add_index(CaChunkCollection *coll, const char *path) {
                 return log_oom();
 
         r = ca_index_set_path(index, path);
-        if (r < 0) {
-                fprintf(stderr, "Failed to set index path to \"%s\": %s\n", path, strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set index path to \"%s\": %m", path);
 
         r = ca_index_open(index);
-        if (r < 0) {
-                fprintf(stderr, "Failed to open index \"%s\": %s\n", path, strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to open index \"%s\": %m", path);
 
         for (;;) {
                 CaChunkID id;
@@ -113,21 +109,15 @@ int ca_chunk_collection_add_index(CaChunkCollection *coll, const char *path) {
                 if (r < 0)
 
                 assert_se(r >= 0);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to open index \"%s\": %s\n", path, strerror(-r));
-                        return r;
-                }
-
+                if (r < 0)
+                        return log_error_errno(r, "Failed to open index \"%s\": %m", path);
                 if (r == 0)
                         break;
 
                 r = gc_add_chunk_id(coll, &id);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to add chunk ID %s: %s\n",
-                                ca_chunk_id_format(&id, ids),
-                                strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to add chunk ID %s: %m",
+                                                  ca_chunk_id_format(&id, ids));
         }
 
         return 0;
@@ -153,10 +143,8 @@ int ca_gc_cleanup_unused(CaStore *store, CaChunkCollection *coll, unsigned flags
                 CaChunkID id;
 
                 r = ca_store_iterator_next(iter, &rootdir_fd, &subdir, &subdir_fd, &chunk);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to iterate over store: %s", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to iterate over store: %m");
                 if (r == 0)
                         break;
 
@@ -169,7 +157,7 @@ int ca_gc_cleanup_unused(CaStore *store, CaChunkCollection *coll, unsigned flags
                 strncpy(ids, chunk, dot - chunk);
                 ids[dot - chunk] = '\0';
                 if (!ca_chunk_id_parse(ids, &id)) {
-                        fprintf(stderr, "Failed to parse chunk ID \"%s\", ignoring.\n", ids);
+                        log_error("Failed to parse chunk ID \"%s\", ignoring.", ids);
                         continue;
                 }
 
@@ -183,7 +171,8 @@ int ca_gc_cleanup_unused(CaStore *store, CaChunkCollection *coll, unsigned flags
 
                 if (!(flags & CA_GC_DRY_RUN)) {
                         if (unlinkat(subdir_fd, chunk, 0) < 0) {
-                                fprintf(stderr, "Failed to unlink chunk file \"%s\", ignoring.\n", chunk);
+                                log_error_errno(errno,
+                                                "Failed to unlink chunk file \"%s\", ignoring: %m", chunk);
                                 continue;
                         }
 

@@ -2652,11 +2652,11 @@ int ca_sync_get_local(
 
                 r = ca_seed_get(s->seeds[i], chunk_id, &p, &l, ret_origin ? &origin : NULL);
                 if (r == -ESTALE) {
-                        fprintf(stderr, "Chunk cache is not up-to-date, ignoring.\n");
+                        log_info("Chunk cache is not up-to-date, ignoring.");
                         continue;
                 }
                 if (r == -ENOLINK) {
-                        fprintf(stderr, "Can't reproduce name table for GOODBYE record, ignoring.\n");
+                        log_info("Can't reproduce name table for GOODBYE record, ignoring.");
                         continue;
                 }
                 if (r == -ENOENT)

@@ -44,10 +44,8 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
                         r = ca_remote_can_put_chunk(rr);
                         if (r == -EPIPE)
                                 return r;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to determine whether we can add a chunk to the buffer: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to determine whether we can add a chunk to the buffer: %m");
                         if (r > 0)
                                 return 0;
 
@@ -58,10 +56,8 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
                         r = ca_remote_can_put_index(rr);
                         if (r == -EPIPE)
                                 return r;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to determine whether we can add an index fragment to the buffer: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to determine whether we can add an index fragment to the buffer: %m");
                         if (r > 0)
                                 return 0;
 
@@ -72,10 +68,8 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
                         r = ca_remote_can_put_archive(rr);
                         if (r == -EPIPE)
                                 return r;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to determine whether we can add an archive fragment to the buffer: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to determine whether we can add an archive fragment to the buffer: %m");
                         if (r > 0)
                                 return 0;
 
@@ -86,10 +80,8 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
                         r = ca_remote_has_pending_requests(rr);
                         if (r == -EPIPE)
                                 return r;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to determine whether there are pending requests.\n");
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to determine whether there are pending requests.");
                         if (r > 0)
                                 return 0;
 
@@ -99,10 +91,8 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
                         r = ca_remote_has_unwritten(rr);
                         if (r == -EPIPE)
                                 return r;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to determine whether there's more data to write.\n");
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to determine whether there's more data to write.");
                         if (r > 0)
                                 return 0;
 
@@ -123,19 +113,15 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
 
                         return -EPIPE;
                 }
-                if (r < 0) {
-                        fprintf(stderr, "Failed to process remoting engine: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to process remoting engine: %m");
 
                 if (r != CA_REMOTE_POLL)
                         continue;
 
                 r = ca_remote_poll(rr, UINT64_MAX, NULL);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to poll remoting engine: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to poll remoting engine: %m");
         }
 }
 
@@ -152,7 +138,7 @@ static size_t write_index(const void *buffer, size_t size, size_t nmemb, void *u
 
         r = ca_remote_put_index(rr, buffer, product);
         if (r < 0) {
-                fprintf(stderr, "Failed to put index: %s\n", strerror(-r));
+                log_error("Failed to put index: %m");
                 return 0;
         }
 
@@ -169,10 +155,8 @@ static int write_index_eof(CaRemote *rr) {
                 return r;
 
         r = ca_remote_put_index_eof(rr);
-        if (r < 0) {
-                fprintf(stderr, "Failed to put index EOF: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to put index EOF: %m");
 
         return 0;
 }
@@ -190,7 +174,7 @@ static size_t write_archive(const void *buffer, size_t size, size_t nmemb, void 
 
         r = ca_remote_put_archive(rr, buffer, product);
         if (r < 0) {
-                fprintf(stderr, "Failed to put archive: %s\n", strerror(-r));
+                log_error("Failed to put archive: %m");
                 return 0;
         }
 
@@ -207,10 +191,8 @@ static int write_archive_eof(CaRemote *rr) {
                 return r;
 
         r = ca_remote_put_archive_eof(rr);
-        if (r < 0) {
-                fprintf(stderr, "Failed to put archive EOF: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to put archive EOF: %m");
 
         return 0;
 }
@@ -223,12 +205,12 @@ static size_t write_chunk(const void *buffer, size_t size, size_t nmemb, void *u
 
         z = realloc_buffer_size(chunk_buffer) + product;
         if (z < realloc_buffer_size(chunk_buffer)) {
-                fprintf(stderr, "Overflow\n");
+                log_error("Overflow");
                 return 0;
         }
 
         if (z > (CA_PROTOCOL_SIZE_MAX - offsetof(CaProtocolChunk, data))) {
-                fprintf(stderr, "Chunk too large\n");
+                log_error("Chunk too large");
                 return 0;
         }
 
@@ -276,30 +258,30 @@ static int acquire_file(CaRemote *rr,
         assert(callback);
 
         if (curl_easy_setopt(curl, CURLOPT_URL, url) != CURLE_OK) {
-                fprintf(stderr, "Failed to set CURL URL to: %s\n", url);
+                log_error("Failed to set CURL URL to: %s", url);
                 return -EIO;
         }
 
         if (curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback) != CURLE_OK) {
-                fprintf(stderr, "Failed to set CURL callback function.\n");
+                log_error("Failed to set CURL callback function.");
                 return -EIO;
         }
 
         if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, rr) != CURLE_OK) {
-                fprintf(stderr, "Failed to set CURL private data.\n");
+                log_error("Failed to set CURL private data.");
                 return -EIO;
         }
 
         if (arg_verbose)
-                fprintf(stderr, "Acquiring %s...\n", url);
+                log_error("Acquiring %s...", url);
 
         if (curl_easy_perform(curl) != CURLE_OK) {
-                fprintf(stderr, "Failed to acquire %s\n", url);
+                log_error("Failed to acquire %s", url);
                 return -EIO;
         }
 
         if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK) {
-                fprintf(stderr, "Failed to query response code\n");
+                log_error("Failed to query response code");
                 return -EIO;
         }
 
@@ -307,7 +289,7 @@ static int acquire_file(CaRemote *rr,
                 char *m;
 
                 if (arg_verbose)
-                        fprintf(stderr, "HTTP server failure %li while requesting %s.\n", protocol_status, url);
+                        log_error("HTTP server failure %li while requesting %s.", protocol_status, url);
 
                 if (asprintf(&m, "HTTP request on %s failed with status %li", url, protocol_status) < 0)
                         return log_oom();
@@ -321,7 +303,7 @@ static int acquire_file(CaRemote *rr,
                 char *m;
 
                 if (arg_verbose)
-                        fprintf(stderr, "FTP server failure %li while requesting %s.\n", protocol_status, url);
+                        log_error("FTP server failure %li while requesting %s.", protocol_status, url);
 
                 if (asprintf(&m, "FTP request on %s failed with status %li", url, protocol_status) < 0)
                         return log_oom();
@@ -333,7 +315,7 @@ static int acquire_file(CaRemote *rr,
                 char *m;
 
                 if (arg_verbose)
-                        fprintf(stderr, "SFTP server failure %li while requesting %s.\n", protocol_status, url);
+                        log_error("SFTP server failure %li while requesting %s.", protocol_status, url);
 
                 if (asprintf(&m, "SFTP request on %s failed with status %li", url, protocol_status) < 0)
                         return log_oom();
@@ -357,7 +339,7 @@ static int run(int argc, char *argv[]) {
         int r;
 
         if (argc < 5) {
-                fprintf(stderr, "Expected at least 5 arguments.\n");
+                log_error("Expected at least 5 arguments.");
                 return -EINVAL;
         }
 
@@ -371,12 +353,12 @@ static int run(int argc, char *argv[]) {
         n_stores = !!wstore_url + (argc - 5);
 
         if (base_url) {
-                fprintf(stderr, "Pushing/pulling to base via HTTP not yet supported.\n");
+                log_error("Pushing/pulling to base via HTTP not yet supported.");
                 return -EOPNOTSUPP;
         }
 
         if (!archive_url && !index_url && n_stores == 0) {
-                fprintf(stderr, "Nothing to do.\n");
+                log_error("Nothing to do.");
                 return -EINVAL;
         }
 
@@ -391,13 +373,13 @@ static int run(int argc, char *argv[]) {
                                               (index_url ? CA_PROTOCOL_READABLE_INDEX : 0) |
                                               (archive_url ? CA_PROTOCOL_READABLE_ARCHIVE : 0));
         if (r < 0) {
-                fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
+                log_error("Failed to set feature flags: %m");
                 goto finish;
         }
 
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);
         if (r < 0) {
-                fprintf(stderr, "Failed to set I/O file descriptors: %s\n", strerror(-r));
+                log_error("Failed to set I/O file descriptors: %m");
                 goto finish;
         }
 
@@ -408,14 +390,14 @@ static int run(int argc, char *argv[]) {
         }
 
         if (curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L) != CURLE_OK) {
-                fprintf(stderr, "Failed to turn on location following.\n");
+                log_error("Failed to turn on location following.");
                 r = -EIO;
                 goto finish;
         }
 
         if (curl_easy_setopt(curl, CURLOPT_PROTOCOLS, arg_protocol == ARG_PROTOCOL_FTP ? CURLPROTO_FTP :
                                                       arg_protocol == ARG_PROTOCOL_SFTP? CURLPROTO_SFTP: CURLPROTO_HTTP|CURLPROTO_HTTPS) != CURLE_OK) {
-                fprintf(stderr, "Failed to limit protocols to HTTP/HTTPS/FTP/SFTP.\n");
+                log_error("Failed to limit protocols to HTTP/HTTPS/FTP/SFTP.");
                 r = -EIO;
                 goto finish;
         }
@@ -424,18 +406,18 @@ static int run(int argc, char *argv[]) {
                 /* activate the ssh agent. For this to work you need
                    to have ssh-agent running (type set | grep SSH_AGENT to check) */
                 if (curl_easy_setopt(curl, CURLOPT_SSH_AUTH_TYPES, CURLSSH_AUTH_AGENT) != CURLE_OK)
-                        fprintf(stderr, "Failed to turn on ssh agent support, ignoring.\n");
+                        log_error("Failed to turn on ssh agent support, ignoring.");
         }
 
         if (arg_rate_limit_bps > 0) {
                 if (curl_easy_setopt(curl, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                        fprintf(stderr, "Failed to set CURL send speed limit.\n");
+                        log_error("Failed to set CURL send speed limit.");
                         r = -EIO;
                         goto finish;
                 }
 
                 if (curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                        fprintf(stderr, "Failed to set CURL receive speed limit.\n");
+                        log_error("Failed to set CURL receive speed limit.");
                         r = -EIO;
                         goto finish;
                 }
@@ -486,7 +468,7 @@ static int run(int argc, char *argv[]) {
                 if (r == -ENODATA)
                         continue;
                 if (r < 0) {
-                        fprintf(stderr, "Failed to determine next chunk to get: %s\n", strerror(-r));
+                        log_error_errno(r, "Failed to determine next chunk to get: %m");
                         goto finish;
                 }
 
@@ -505,48 +487,48 @@ static int run(int argc, char *argv[]) {
                 }
 
                 if (curl_easy_setopt(curl, CURLOPT_URL, url_buffer) != CURLE_OK) {
-                        fprintf(stderr, "Failed to set CURL URL to: %s\n", index_url);
+                        log_error("Failed to set CURL URL to: %s", index_url);
                         r = -EIO;
                         goto finish;
                 }
 
                 if (curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_chunk) != CURLE_OK) {
-                        fprintf(stderr, "Failed to set CURL callback function.\n");
+                        log_error("Failed to set CURL callback function.");
                         r = -EIO;
                         goto finish;
                 }
 
                 if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk_buffer) != CURLE_OK) {
-                        fprintf(stderr, "Failed to set CURL private data.\n");
+                        log_error("Failed to set CURL private data.");
                         r = -EIO;
                         goto finish;
                 }
 
                 if (arg_rate_limit_bps > 0) {
                         if (curl_easy_setopt(curl, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                                fprintf(stderr, "Failed to set CURL send speed limit.\n");
+                                log_error("Failed to set CURL send speed limit.");
                                 r = -EIO;
                                 goto finish;
                         }
 
                         if (curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                                fprintf(stderr, "Failed to set CURL receive speed limit.\n");
+                                log_error("Failed to set CURL receive speed limit.");
                                 r = -EIO;
                                 goto finish;
                         }
                 }
 
                 if (arg_verbose)
-                        fprintf(stderr, "Acquiring %s...\n", url_buffer);
+                        log_info("Acquiring %s...", url_buffer);
 
                 if (curl_easy_perform(curl) != CURLE_OK) {
-                        fprintf(stderr, "Failed to acquire %s\n", url_buffer);
+                        log_error("Failed to acquire %s", url_buffer);
                         r = -EIO;
                         goto finish;
                 }
 
                 if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK) {
-                        fprintf(stderr, "Failed to query response code\n");
+                        log_error("Failed to query response code");
                         r = -EIO;
                         goto finish;
                 }
@@ -565,17 +547,17 @@ static int run(int argc, char *argv[]) {
 
                         r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
                         if (r < 0) {
-                                fprintf(stderr, "Failed to write chunk: %s\n", strerror(-r));
+                                log_error_errno(r, "Failed to write chunk: %m");
                                 goto finish;
                         }
 
                 } else {
                         if (arg_verbose)
-                                fprintf(stderr, "HTTP/FTP/SFTP server failure %li while requesting %s.\n", protocol_status, url_buffer);
+                                log_error("HTTP/FTP/SFTP server failure %li while requesting %s.", protocol_status, url_buffer);
 
                         r = ca_remote_put_missing(rr, &id);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to write missing message: %s\n", strerror(-r));
+                                log_error_errno(r, "Failed to write missing message: %m");
                                 goto finish;
                         }
                 }
@@ -628,7 +610,7 @@ static int parse_argv(int argc, char *argv[]) {
         else if (strstr(argv[0], "ftp"))
                 arg_protocol = ARG_PROTOCOL_FTP;
         else {
-                fprintf(stderr, "Failed to determine set of protocols to use, refusing.\n");
+                log_error("Failed to determine set of protocols to use, refusing.");
                 return -EINVAL;
         }
 
@@ -677,7 +659,7 @@ int main(int argc, char* argv[]) {
                 goto finish;
 
         if (optind >= argc) {
-                fprintf(stderr, "Verb expected.\n");
+                log_error("Verb expected.");
                 r = -EINVAL;
                 goto finish;
         }
@@ -685,7 +667,7 @@ int main(int argc, char* argv[]) {
         if (streq(argv[optind], "pull"))
                 r = run(argc - optind, argv + optind);
         else {
-                fprintf(stderr, "Unknown verb: %s\n", argv[optind]);
+                log_error("Unknown verb: %s", argv[optind]);
                 r = -EINVAL;
         }
 

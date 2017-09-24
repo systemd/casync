@@ -245,7 +245,7 @@ int main(int argc, char *argv[]) {
 
         do_unlink = true;
 
-        fprintf(stderr, "Writing to: %s\n", t);
+        log_error("Writing to: %s", t);
 
         r = encode(dfd, fd);
         dfd = fd = -1;
@@ -262,7 +262,7 @@ int main(int argc, char *argv[]) {
         fd = -1;
 
 finish:
-        fprintf(stderr, "Done: %s\n", strerror(-r));
+        log_error("Done: %m");
 
         if (fd >= 0)
                 (void) close(fd);

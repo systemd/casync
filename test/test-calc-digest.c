@@ -19,7 +19,7 @@ int main(int argc, char *argv[]) {
         char *p = NULL;
 
         if (argc > 3) {
-                fprintf(stderr, "Expected a two arguments: digest and file name.\n");
+                log_error("Expected a two arguments: digest and file name.");
                 r = -EINVAL;
                 goto finish;
         }
@@ -30,7 +30,7 @@ int main(int argc, char *argv[]) {
         if (dt) {
                 type = ca_digest_type_from_string(dt);
                 if (type < 0) {
-                        fprintf(stderr, "Failed to parse digest name: %s\n", dt);
+                        log_error("Failed to parse digest name: %s", dt);
                         r = -EINVAL;
                         goto finish;
                 }
@@ -39,15 +39,14 @@ int main(int argc, char *argv[]) {
 
         r = ca_digest_new(type, &digest);
         if (r < 0) {
-                fprintf(stderr, "Failed to set up digest %s: %s\n", dt, strerror(-r));
+                log_error("Failed to set up digest %s: %m", dt);
                 goto finish;
         }
 
         if (path) {
                 fd = open(path, O_RDONLY|O_CLOEXEC|O_NOCTTY);
                 if (fd < 0) {
-                        r = -errno;
-                        fprintf(stderr, "Failed to open %s: %s\n", path, strerror(-r));
+                        log_error_errno(errno, "Failed to open %s: %m", path);
                         goto finish;
                 }
         } else
@@ -59,8 +58,7 @@ int main(int argc, char *argv[]) {
 
                 n = read(fd, buffer, sizeof(buffer));
                 if (n < 0) {
-                        r = -errno;
-                        fprintf(stderr, "Failed to read: %s\n", strerror(-r));
+                        log_error_errno(errno, "Failed to read: %m");
                         goto finish;
                 }
                 if (n == 0) /* EOF */
