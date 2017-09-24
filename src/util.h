@@ -21,6 +21,8 @@
 #include <linux/fs.h>
 #include <linux/btrfs.h>
 
+#include "log.h"
+
 #define new(t, n) ((t*) malloc((n) * sizeof(t)))
 #define new0(t, n) ((t*) calloc((n), sizeof(t)))
 
@@ -98,11 +100,6 @@ static inline uint64_t now(clockid_t id) {
         return timespec_to_nsec(ts);
 }
 
-static inline int log_oom(void) {
-        fprintf(stderr, "Out of memory\n");
-        return -ENOMEM;
-}
-
 int loop_write(int fd, const void *p, size_t l);
 int loop_write_block(int fd, const void *p, size_t l);
 ssize_t loop_read(int fd, void *p, size_t l);
@@ -118,22 +115,6 @@ static inline void* mfree(void* p) {
         free(p);
         return NULL;
 }
-
-#define assert_se(x)                                                      \
-        do {                                                              \
-                if (!(x)) {                                               \
-                        fprintf(stderr, "%s:%d (%s): assertion failed:" #x "\n", \
-                                __FILE__, __LINE__, __PRETTY_FUNCTION__); \
-                        abort();                                          \
-                }                                                         \
-        } while(false)
-
-#define assert_not_reached(x) \
-        do {                  \
-                fprintf(stderr, "%s:%d (%s): unreachable code reached:" x "\n", \
-                        __FILE__, __LINE__, __PRETTY_FUNCTION__);       \
-                abort();                                                \
-        } while(false)                                                  \
 
 static inline int safe_close_above(int above, int fd) {
         if (fd >= above) {
