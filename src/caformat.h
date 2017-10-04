@@ -148,7 +148,9 @@ enum {
                 CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_XATTRS|
                 CA_FORMAT_WITH_ACL|
+#if HAVE_SELINUX
                 CA_FORMAT_WITH_SELINUX|
+#endif
                 CA_FORMAT_WITH_FCAPS,
 
         CA_FORMAT_WITH_UNIX = /* Conservative UNIX file properties */
@@ -195,7 +197,9 @@ enum {
                 CA_FORMAT_WITH_SUBVOLUME|
                 CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_ACL|
+#if HAVE_SELINUX
                 CA_FORMAT_WITH_SELINUX|
+#endif
                 CA_FORMAT_WITH_FCAPS,
 
         CA_FORMAT_WITH_FUSE = /* All bits that may also be exposed via fuse */
@@ -246,7 +250,9 @@ enum {
                 CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_XATTRS|
                 CA_FORMAT_WITH_ACL|
+#if HAVE_SELINUX
                 CA_FORMAT_WITH_SELINUX|
+#endif
                 CA_FORMAT_WITH_FCAPS,
 
         CA_FORMAT_DEFAULT = /* The default set of flags */
