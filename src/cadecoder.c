@@ -4400,9 +4400,6 @@ int ca_decoder_put_data(CaDecoder *d, const void *p, size_t size, CaOrigin *orig
         if (d->eof)
                 return -EBUSY;
 
-        if (origin && origin->n_bytes != size)
-                return -EINVAL;
-
         if (size == 0)
                 return 0;
 
