@@ -674,7 +674,7 @@ int main(int argc, char* argv[]) {
         if (r <= 0)
                 goto finish;
 
-        if (argc < optind) {
+        if (optind >= argc) {
                 fprintf(stderr, "Verb expected.\n");
                 r = -EINVAL;
                 goto finish;
