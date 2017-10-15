@@ -741,6 +741,12 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
                 return r;
         }
 
+        r = ca_sync_set_delete(s, arg_delete);
+        if (r < 0 && r != -ENOTTY) {
+                fprintf(stderr, "Failed to set deletion flag: %s\n", strerror(-r));
+                return r;
+        }
+
         return 0;
 }
 
