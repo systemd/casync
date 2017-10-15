@@ -147,7 +147,7 @@ subdir('doc')
 
 ############################################################
 
-executable(
+casync = executable(
         'casync',
         casync_sources,
         link_with : libshared,
@@ -162,7 +162,7 @@ executable(
                 openssl],
         install : true)
 
-executable(
+casync_http = executable(
         'casync-http',
         casync_http_sources,
         link_with : libshared,
@@ -310,6 +310,17 @@ foreach test_name : test_sources + non_test_sources
                 test(test_name, exe,
                      timeout : 3 * 60)
         endif
+endforeach
+
+############################################################
+
+meson_check_help = find_program('test/meson-check-help.sh')
+
+foreach exec : [casync, casync_http]
+        name = exec.full_path().split('/')[-1]
+        test('check-help-' + name,
+             meson_check_help,
+             args : [exec.full_path()])
 endforeach
 
 ############################################################
