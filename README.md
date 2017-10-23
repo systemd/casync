@@ -60,8 +60,8 @@ files and directories beyond file boundaries, and makes sure our chunk
 sizes are pretty evenly distributed, without the file boundaries
 affecting them.
 
-The "chunking" algorithm is based on a the buzhash rolling hash
-function. SHA512/256 is used as strong hash function to generate digests of the
+The "chunking" algorithm is based on the buzhash rolling hash
+function. SHA512/256 is used as a strong hash function to generate digests of the
 chunks (alternatively: SHA256). zstd is used to compress the individual chunks
 (alternatively xz or gzip).
 
