@@ -107,7 +107,8 @@ openssl = dependency('openssl',
 
 libz = dependency('zlib')
 
-libzstd = dependency('libzstd')
+libzstd = dependency('libzstd',
+                      version : '>= 0.8.1')
 
 libacl = cc.find_library('acl')
 
