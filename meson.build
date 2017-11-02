@@ -141,8 +141,8 @@ subdir('test')
 
 includes = include_directories('src')
 
-udevlibexecdir = join_paths(prefixdir, 'lib/udev')
-udevrulesdir = join_paths(udevlibexecdir, 'rules.d')
+udevdir = dependency('udev').get_pkgconfig_variable('udevdir')
+udevrulesdir = join_paths(udevdir, 'rules.d')
 
 subdir('doc')
 
