@@ -119,7 +119,7 @@ but there are other systems that use similar algorithms, in particular:
 # casync extract --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart
 # casync list --store=/var/lib/backup.castr /home/lennart.caidx
 # casync digest --store=/var/lib/backup.castr /home/lennart.caidx
-# casync mtree -pool=/var/lib/backup.castr /home/lennart.caidx
+# casync mtree --store=/var/lib/backup.castr /home/lennart.caidx
 # casync mount --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart
 # casync verify --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart (NOT IMPLEMENTED YET)
 # casync diff --store=/var/lib/backup.castr /home/lennart.caidx /home/lennart (NOT IMPLEMENTED YET)
