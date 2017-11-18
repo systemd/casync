@@ -338,19 +338,19 @@ static int run(int argc, char *argv[]) {
         long protocol_status;
         int r;
 
-        if (argc < 5) {
-                log_error("Expected at least 5 arguments.");
+        if (argc < _CA_REMOTE_ARG_MAX) {
+                log_error("Expected at least %d arguments.", _CA_REMOTE_ARG_MAX);
                 return -EINVAL;
         }
 
         /* fprintf(stderr, "base=%s archive=%s index=%s wstore=%s\n", argv[1], argv[2], argv[3], argv[4]); */
 
-        base_url = empty_or_dash_to_null(argv[1]);
-        archive_url = empty_or_dash_to_null(argv[2]);
-        index_url = empty_or_dash_to_null(argv[3]);
-        wstore_url = empty_or_dash_to_null(argv[4]);
+        base_url = empty_or_dash_to_null(argv[CA_REMOTE_ARG_BASE_URL]);
+        archive_url = empty_or_dash_to_null(argv[CA_REMOTE_ARG_ARCHIVE_URL]);
+        index_url = empty_or_dash_to_null(argv[CA_REMOTE_ARG_INDEX_URL]);
+        wstore_url = empty_or_dash_to_null(argv[CA_REMOTE_ARG_WSTORE_URL]);
 
-        n_stores = !!wstore_url + (argc - 5);
+        n_stores = !!wstore_url + (argc - _CA_REMOTE_ARG_MAX);
 
         if (base_url) {
                 log_error("Pushing/pulling to base via HTTP not yet supported.");
@@ -474,9 +474,9 @@ static int run(int argc, char *argv[]) {
 
                 current_store = current_store % n_stores;
                 if (wstore_url)
-                        store_url = current_store == 0 ? wstore_url : argv[current_store + 5 - 1];
+                        store_url = current_store == 0 ? wstore_url : argv[current_store + _CA_REMOTE_ARG_MAX - 1];
                 else
-                        store_url = argv[current_store + 5];
+                        store_url = argv[current_store + _CA_REMOTE_ARG_MAX];
                 /* current_store++; */
 
                 free(url_buffer);
