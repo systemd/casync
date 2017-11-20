@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LGPL-2.1+
+
 project('casync', 'c',
         version : '2',
         license : 'LGPLv2+',

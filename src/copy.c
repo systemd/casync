@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: LGPL-2.1+ */
+
 #include "copy.h"
 
 #if !HAVE_COPY_FILE_RANGE

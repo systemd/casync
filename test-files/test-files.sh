@@ -1,4 +1,5 @@
 #!/bin/sh -ex
+# SPDX-License-Identifier: LGPL-2.1+
 
 cd "$(dirname "$0")"
 if [ "$1" != "clean" ]; then

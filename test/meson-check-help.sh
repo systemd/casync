@@ -1,4 +1,5 @@
 #!/bin/sh -eu
+# SPDX-License-Identifier: LGPL-2.1+
 
 # output width
 if "$1"  --help | grep -v 'default:' | grep -E -q '.{80}.'; then

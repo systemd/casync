@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LGPL-2.1+
+
 libshared_sources = files('''
         cachunk.c
         cachunk.h

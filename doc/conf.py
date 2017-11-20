@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# SPDX-License-Identifier: LGPL-2.1+
 #
 # casync documentation build configuration file, created by
 # sphinx-quickstart on Tue Jun 20 16:46:39 2017.
