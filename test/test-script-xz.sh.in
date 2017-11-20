@@ -1,4 +1,5 @@
 #!/bin/bash -ex
+# SPDX-License-Identifier: LGPL-2.1+
 
 # This is the same as test-script.sh, except that we force the compression
 # algorithm to be xz.

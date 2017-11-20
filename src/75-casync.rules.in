@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: LGPL-2.1+
+
 ACTION=="remove", GOTO="casync_end"
 
 SUBSYSTEM=="block", KERNEL=="nbd*", IMPORT{program}="@bindir_unquoted@/casync udev %N"

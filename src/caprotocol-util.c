@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: LGPL-2.1+ */
+
 #include "caprotocol-util.h"
 #include "caprotocol.h"
 

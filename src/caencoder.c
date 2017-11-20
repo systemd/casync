@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: LGPL-2.1+ */
+
 #include <acl/libacl.h>
 #include <assert.h>
 #include <dirent.h>

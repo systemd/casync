@@ -1,4 +1,5 @@
 # -*- mode: meson -*-
+# SPDX-License-Identifier: LGPL-2.1+
 
 option('fuse', type : 'boolean', value : true,
        description : 'build the FUSE integration (requires fuse-devel)')

@@ -1,4 +1,6 @@
 /*
+   SPDX-License-Identifier: CC0-1.0
+
    SipHash reference C implementation
 
    Written in 2012 by

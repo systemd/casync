@@ -1,4 +1,5 @@
 #!/bin/bash -ex
+# SPDX-License-Identifier: LGPL-2.1+
 
 if [ -z "$1" ] ; then
     DIGEST=sha512-256

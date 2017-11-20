@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: CC0-1.0 */
+
 #ifndef foosiphash24hfoo
 
 #include <inttypes.h>
