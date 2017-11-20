@@ -361,7 +361,7 @@ int ca_store_iterator_next(
                         return -errno;
         }
 
-        while (true) {
+        for (;;) {
                 if (!iter->subdir) {
                         int fd;
 
