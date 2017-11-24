@@ -966,14 +966,14 @@ static int ca_remote_start(CaRemote *rr) {
                         safe_close(pair2[1]);
 
                         if (dup3(pair2[0], STDIN_FILENO, 0) < 0) {
-                                fprintf(stderr, "Failed to duplicate to STDIN: %s\n", strerror(errno));
+                                log_error("Failed to duplicate to STDIN: %m");
                                 goto child_fail;
                         }
 
                         safe_close(pair2[0]);
 
                         if (dup3(pair1[1], STDOUT_FILENO, 0) < 0) {
-                                fprintf(stderr, "Failed to duplicate to STDOUT: %s\n", strerror(errno));
+                                log_error("Failed to duplicate to STDOUT: %m");
                                 goto child_fail;
                         }
 
@@ -1039,7 +1039,7 @@ static int ca_remote_start(CaRemote *rr) {
                         else
                                 execvp(args[0], args);
 
-                        fprintf(stderr, "Failed to execute %s: %s\n", args[0], strerror(errno));
+                        log_error("Failed to execute %s: %m", args[0]);
                 child_fail:
                         _exit(EXIT_FAILURE);
                 }

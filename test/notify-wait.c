@@ -48,27 +48,27 @@ int main(int argc, char *argv[]) {
 
         if (argc < 2) {
                 r = -EINVAL;
-                fprintf(stderr, "Command line to execute required as argument.\n");
+                log_error("Command line to execute required as argument.");
                 goto finish;
         }
 
         fd = socket(AF_UNIX, SOCK_DGRAM|SOCK_CLOEXEC|SOCK_NONBLOCK, 0);
         if (fd < 0) {
                 r = -errno;
-                fprintf(stderr, "Failed to create notification socket: %s\n", strerror(-r));
+                log_error("Failed to create notification socket: %m");
                 goto finish;
         }
 
         /* Bind the socket using the kernel's autobind functionality. */
         if (bind(fd, &sa.sa, sizeof(sa_family_t)) < 0) {
                 r = -errno;
-                fprintf(stderr, "Failed to bind notification socket: %s\n", strerror(-r));
+                log_error("Failed to bind notification socket: %m");
                 goto finish;
         }
 
         if (getsockname(fd, &sa.sa, &salen) < 0) {
                 r = -errno;
-                fprintf(stderr, "Failed to determine bound socket address: %s\n", strerror(-r));
+                log_error("Failed to determine bound socket address: %m");
                 goto finish;
         }
 
@@ -101,7 +101,7 @@ int main(int argc, char *argv[]) {
         pid = fork();
         if (pid < 0) {
                 r = -errno;
-                fprintf(stderr, "Failed to to fork(): %s\n", strerror(-r));
+                log_error("Failed to to fork(): %m");
                 goto finish;
         }
 
@@ -120,7 +120,7 @@ int main(int argc, char *argv[]) {
                         /* If that didn't work (which it won't if we are being run from "ninja test"), then let's use /dev/null */
                         new_stdout = open("/dev/null", O_WRONLY);
                         if (new_stdout < 0) {
-                                fprintf(stderr, "Failed to open new STDOUT: %s\n", strerror(-r));
+                                log_error("Failed to open new STDOUT: %m");
                                 goto inner_fail;
                         }
                 }
@@ -129,7 +129,7 @@ int main(int argc, char *argv[]) {
 
                         if (dup2(new_stdout, STDOUT_FILENO) < 0) {
                                 r = -errno;
-                                fprintf(stderr, "Failed to duplicate STDOUT: %s\n", strerror(-r));
+                                log_error("Failed to duplicate STDOUT: %m");
                                 goto inner_fail;
                         }
 
@@ -138,13 +138,13 @@ int main(int argc, char *argv[]) {
 
                 if (setenv("NOTIFY_SOCKET", e, 1) < 0) {
                         r = -errno;
-                        fprintf(stderr, "Failed to set $NOTIFY_SOCKET: %s\n", strerror(-r));
+                        log_error("Failed to set $NOTIFY_SOCKET: %m");
                         goto inner_fail;
                 }
 
                 execv(argv[1], argv + 1);
                 r = -errno;
-                fprintf(stderr, "Failed to execute child process: %s\n", strerror(-r));
+                log_error("Failed to execute child process: %m");
 
         inner_fail:
                 _exit(EXIT_FAILURE);
@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
 
                 if (waitid(P_PID, pid, &si, WEXITED|WNOHANG) < 0) {
                         r = -errno;
-                        fprintf(stderr, "Failed to wait for children: %s\n", strerror(-r));
+                        log_error("Failed to wait for children: %m");
                         goto finish;
                 }
 
@@ -172,14 +172,14 @@ int main(int argc, char *argv[]) {
                         switch (si.si_code) {
 
                         case CLD_EXITED:
-                                fprintf(stderr, "Process exited prematurely with status %i.\n", si.si_status);
+                                log_error("Process exited prematurely with status %i.", si.si_status);
                                 r = -EPIPE;
                                 pid = 0;
                                 goto finish;
 
                         case CLD_KILLED:
                         case CLD_DUMPED:
-                                fprintf(stderr, "Process killed with signal %i (%s).\n", si.si_status, strsignal(si.si_status));
+                                log_error("Process killed with signal %i (%s).", si.si_status, strsignal(si.si_status));
                                 r = -EPIPE;
                                 pid = 0;
                                 goto finish;
@@ -209,8 +209,8 @@ int main(int argc, char *argv[]) {
                                 if (errno == EAGAIN)
                                         goto wait_for_event;
 
-                                r = -errno;
-                                fprintf(stderr, "Failed to read notification datagram: %s\n", strerror(-r));
+                                r = log_error_errno(errno,
+                                                    "Failed to read notification datagram: %m");
                                 goto finish;
                         }
                         if ((size_t) n > buffer_size) {
@@ -221,13 +221,13 @@ int main(int argc, char *argv[]) {
                         /* Now we know the message fit in the buffer, now read it properly. */
                         k = recv(fd, buffer, buffer_size, 0);
                         if (k < 0) {
-                                r = -errno;
-                                fprintf(stderr, "Failed to consume notification datagram: %s\n", strerror(-r));
+                                r = log_error_errno(errno,
+                                                    "Failed to consume notification datagram: %m");
                                 goto finish;
                         }
                         if (k != n) {
-                                r = -EIO;
-                                fprintf(stderr, "Consumed notification datagram has different size than original: %s\n", strerror(-r));
+                                r = log_error_errno(EIO,
+                                                    "Consumed notification datagram has different size than original: %m");
                                 goto finish;
                         }
 
@@ -258,7 +258,7 @@ int main(int argc, char *argv[]) {
 wait_for_event:
                 if (quit) {
                         /* Got SIGINT or SIGTERM */
-                        fprintf(stderr, "Exiting due to signal.\n");
+                        log_error("Exiting due to signal.");
                         break;
                 }
 
@@ -270,13 +270,12 @@ wait_for_event:
                         if (errno == EINTR) /* got a SIGCHLD or a SIGTERM/SIGINT? */
                                 continue;
 
-                        r = -errno;
-                        fprintf(stderr, "Failed to ppoll(): %s\n", strerror(-r));
+                        r = log_error_errno(errno, "Failed to ppoll(): %m");
                         goto finish;
                 }
 
                 if (r == 0) { /* timeout */
-                        fprintf(stderr, "Timeout.\n");
+                        log_error("Timeout.");
                         r = -ETIMEDOUT;
                         goto finish;
                 }

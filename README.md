@@ -158,7 +158,9 @@ but there are other systems that use similar algorithms, in particular:
 ## Maintenance
 
 ```
-# casync gc /var/lib/backup.castr /home/lennart.caidx /home/foobar.caidx ... (NOT IMPLEMENTED YET)
+# casync gc /home/lennart-20170101.caidx /home/lennart-20170102.caidx /home/lennart-20170103.caidx
+# casync gc --backup /var/lib/backup/backup.castr /home/lennart-*.caidx
+
 # casync make /home/lennart.catab /home/lennart (NOT IMPLEMENTED)
 ```
 

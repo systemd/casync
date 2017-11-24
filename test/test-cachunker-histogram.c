@@ -104,12 +104,11 @@ static void run(size_t pick, size_t *ret_avg) {
         histogram = new0(unsigned, chunker.chunk_size_max+1);
         assert_se(histogram);
 
-        fprintf(stderr,
-                "Min/Avg/Max = %zu/%zu/%zu (discriminator=%zu)\n",
-                chunker.chunk_size_min,
-                chunker.chunk_size_avg,
-                chunker.chunk_size_max,
-                chunker.discriminator);
+        log_info("Min/Avg/Max = %zu/%zu/%zu (discriminator=%zu)",
+                 chunker.chunk_size_min,
+                 chunker.chunk_size_avg,
+                 chunker.chunk_size_max,
+                 chunker.discriminator);
 
         fd = open("/dev/urandom", O_CLOEXEC|O_RDONLY);
         assert_se(fd >= 0);
@@ -145,8 +144,8 @@ static void run(size_t pick, size_t *ret_avg) {
                 free(threads[i].histogram);
         }
 
-        fprintf(stderr, "Generated %u chunks.\n", n_chunks);
-        fprintf(stderr, "Effective average is %" PRIu64 ".\n", sum / n_chunks);
+        log_info("Generated %u chunks.", n_chunks);
+        log_info("Effective average is %" PRIu64 ".", sum / n_chunks);
 
         *ret_avg = sum / n_chunks;
 
@@ -181,7 +180,7 @@ int main(int argc, char* argv[]) {
                 factor = (double) effective_avg  / (double) avg;
 
                 printf("%zu\t%zu\t%g\n", avg, effective_avg, factor);
-                fprintf(stderr, "Asked for average: %zu — Got average: %zu — Factor: %g\n", avg, effective_avg, factor);
+                log_error("Asked for average: %zu — Got average: %zu — Factor: %g", avg, effective_avg, factor);
         }
 
         return 0;

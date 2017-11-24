@@ -35,15 +35,13 @@ static int iterate_until_file(CaSync *s) {
                 int step;
 
                 step = ca_sync_step(s);
-                if (step < 0) {
-                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-step));
-                        return step;
-                }
+                if (step < 0)
+                        return log_error_errno(step, "Failed to run synchronizer: %m");
 
                 switch (step) {
 
                 case CA_SYNC_FINISHED:
-                        fprintf(stderr, "Premature end of file.\n");
+                        log_error("Premature end of file.");
                         return -EIO;
 
                 case CA_SYNC_NEXT_FILE:
@@ -61,10 +59,8 @@ static int iterate_until_file(CaSync *s) {
                         r = sync_poll_sigset(s);
                         if (r == -ESHUTDOWN) /* Quit */
                                 return r;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to poll: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to poll: %m");
 
                         break;
 
@@ -82,10 +78,8 @@ static int seek_to_path(CaSync *s, const char *path) {
         assert(path);
 
         r = ca_sync_seek_path(s, path);
-        if (r < 0) {
-                fprintf(stderr, "Failed to seek for stat to %s: %s\n", path, strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to seek for stat to %s: %m", path);
 
         return iterate_until_file(s);
 }
@@ -103,10 +97,8 @@ static int fill_stat(CaSync *s, struct stat *stbuf) {
         assert(stbuf);
 
         r = ca_sync_current_mode(s, &mode);
-        if (r < 0) {
-                fprintf(stderr, "Failed to get current mode: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to get current mode: %m");
 
         (void) ca_sync_current_uid(s, &uid);
         (void) ca_sync_current_gid(s, &gid);
@@ -180,10 +172,8 @@ static int casync_readlink(
                 return r;
 
         r = ca_sync_current_target(instance, &target);
-        if (r < 0) {
-                fprintf(stderr, "failed to get symlink target: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "failed to get symlink target: %m");
 
         strncpy(ret, target, size);
 
@@ -211,25 +201,19 @@ static int casync_readdir(
                 return -ENOBUFS;
 
         r = ca_sync_set_payload(instance, false);
-        if (r < 0) {
-                fprintf(stderr, "Failed to turn off payload: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to turn off payload: %m");
 
         r = ca_sync_seek_path(instance, path);
-        if (r < 0) {
-                fprintf(stderr, "Failed to seek to path %s: %s\n", path, strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to seek to path %s: %m", path);
 
         for (;;) {
                 int step;
 
                 step = ca_sync_step(instance);
-                if (step < 0) {
-                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-step));
-                        return step;
-                }
+                if (step < 0)
+                        return log_error_errno(step, "Failed to run synchronizer: %m");
 
                 switch (step) {
 
@@ -246,10 +230,8 @@ static int casync_readdir(
                         }
 
                         r = ca_sync_current_path(instance, &name);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to get current path: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to get current path: %m");
 
                         r = fill_stat(instance, &stbuf);
                         if (r < 0) {
@@ -265,10 +247,8 @@ static int casync_readdir(
                         free(name);
 
                         r = ca_sync_seek_next_sibling(instance);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to seek to next sibling: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to seek to next sibling: %m");
 
                         break;
                 }
@@ -285,10 +265,8 @@ static int casync_readdir(
                         r = sync_poll_sigset(instance);
                         if (r == -ESHUTDOWN) /* Quit */
                                 return r;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to poll: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to poll: %m");
 
                         break;
 
@@ -334,16 +312,12 @@ static int casync_read(const char *path, char *buf, size_t size, off_t offset, s
         /* fprintf(stderr, "Got request for read(%s@%" PRIu64 ").\n", path, (uint64_t) offset); */
 
         r = ca_sync_set_payload(instance, true);
-        if (r < 0) {
-                fprintf(stderr, "Failed to turn on payload: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to turn on payload: %m");
 
         r = ca_sync_seek_path_offset(instance, path, offset);
-        if (r < 0) {
-                fprintf(stderr, "Failed to seek to path %s@%" PRIu64 ": %s\n", path, (uint64_t) offset, strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to seek to path %s@%" PRIu64 ": %m", path, (uint64_t)offset);
 
         for (;;) {
                 bool eof = false;
@@ -353,10 +327,8 @@ static int casync_read(const char *path, char *buf, size_t size, off_t offset, s
                         break;
 
                 step = ca_sync_step(instance);
-                if (step < 0) {
-                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-step));
-                        return step;
-                }
+                if (step < 0)
+                        return log_error_errno(step, "Failed to run synchronizer: %m");
 
                 switch (step) {
 
@@ -369,10 +341,8 @@ static int casync_read(const char *path, char *buf, size_t size, off_t offset, s
                         size_t n;
 
                         r = ca_sync_get_payload(instance, &p, &n);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to acquire payload: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to acquire payload: %m");
 
                         if (n > size)
                                 n = size;
@@ -398,10 +368,8 @@ static int casync_read(const char *path, char *buf, size_t size, off_t offset, s
                         r = sync_poll_sigset(instance);
                         if (r == -ESHUTDOWN) /* Quit */
                                 return r;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to poll: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to poll: %m");
 
                         break;
 
@@ -431,21 +399,17 @@ static int casync_statfs(const char *path, struct statvfs *sfs) {
                 r = ca_sync_get_archive_size(instance, &size);
                 if (r >= 0)
                         break;
-                if (r != -EAGAIN) {
-                        fprintf(stderr, "Failed to acquire archive size: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r != -EAGAIN)
+                        return log_error_errno(r, "Failed to acquire archive size: %m");
 
                 step = ca_sync_step(instance);
-                if (step < 0) {
-                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-step));
-                        return step;
-                }
+                if (step < 0)
+                        return log_error_errno(step, "Failed to run synchronizer: %m");
 
                 switch (step) {
 
                 case CA_SYNC_FINISHED:
-                        fprintf(stderr, "Premature end of file.\n");
+                        log_error("Premature end of file.");
                         return -EIO;
 
                 case CA_SYNC_STEP:
@@ -462,10 +426,8 @@ static int casync_statfs(const char *path, struct statvfs *sfs) {
                         r = sync_poll_sigset(instance);
                         if (r == -ESHUTDOWN) /* Quit */
                                 return r;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to poll: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to poll: %m");
                         break;
 
                 default:
@@ -643,21 +605,17 @@ static int feature_flags_warning(CaSync *s) {
                 r = ca_sync_get_feature_flags(s, &ff);
                 if (r >= 0)
                         break;
-                if (r != -ENODATA) {
-                        fprintf(stderr, "Failed to retrieve feature flags: %m\n");
-                        return r;
-                }
+                if (r != -ENODATA)
+                        return log_error_errno(r, "Failed to retrieve feature flags: %m");
 
                 step = ca_sync_step(instance);
-                if (step < 0) {
-                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-step));
-                        return step;
-                }
+                if (step < 0)
+                        return log_error_errno(step, "Failed to run synchronizer: %m");
 
                 switch (step) {
 
                 case CA_SYNC_FINISHED:
-                        fprintf(stderr, "Premature end of file.\n");
+                        log_error("Premature end of file.");
                         return -EIO;
 
                 case CA_SYNC_STEP:
@@ -674,10 +632,8 @@ static int feature_flags_warning(CaSync *s) {
                         r = sync_poll_sigset(s);
                         if (r == -ESHUTDOWN) /* Quit */
                                 return r;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to poll: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to poll: %m");
                         break;
 
                 default:
@@ -690,12 +646,10 @@ static int feature_flags_warning(CaSync *s) {
                 return 0;
 
         r = ca_with_feature_flags_format(unsupported, &t);
-        if (r < 0) {
-                fprintf(stderr, "Failed to format feature flags: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to format feature flags: %m");
 
-        fprintf(stderr, "The following feature flags are not exposed in the mounted file system: %s\n", t);
+        log_error("The following feature flags are not exposed in the mounted file system: %s", t);
         free(t);
 
         return 0;
@@ -740,7 +694,7 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
                 if (r == -ENOENT && do_mkdir) {
                         if (mkdir(where, 0777) < 0) {
                                 r = -errno;
-                                fprintf(stderr, "Failed to create mount directory %s: %s\n", where, strerror(-r));
+                                log_error("Failed to create mount directory %s: %m", where);
                                 goto finish;
                         }
 
@@ -750,7 +704,7 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
                 }
 
                 if (r < 0) {
-                        fprintf(stderr, "Failed to establish FUSE mount: %s\n", strerror(-r));
+                        log_error("Failed to establish FUSE mount: %m");
                         goto finish;
                 }
         }
@@ -759,7 +713,7 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
         fuse = fuse_new(fc, NULL, &ops, sizeof(ops), s);
         if (!fuse) {
                 r = errno != 0 ? -abs(errno) : -ENOMEM;
-                fprintf(stderr, "Failed to allocate FUSE object: %s\n", strerror(-r));
+                log_error("Failed to allocate FUSE object: %m");
                 goto finish;
         }
 
@@ -782,7 +736,7 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
 
         r = fuse_loop(fuse);
         if (r < 0) {
-                fprintf(stderr, "Failed to run FUSE loop: %s\n", strerror(-r));
+                log_error("Failed to run FUSE loop: %m");
                 goto finish;
         }
 

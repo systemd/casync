@@ -15,15 +15,14 @@ int main(int argc, char *argv[]) {
         int r;
 
         if (argc != 2) {
-                fprintf(stderr, "Expected single filename parameter.\n");
+                log_error("Expected single filename parameter.");
                 r = -EINVAL;
                 goto finish;
         }
 
         fd = open(argv[1], O_RDONLY|O_CLOEXEC|O_NOCTTY);
         if (fd < 0) {
-                r = -errno;
-                fprintf(stderr, "Failed to open %s: %s\n", argv[1], strerror(errno));
+                log_error_errno(errno, "Failed to open %s: %m", argv[1]);
                 goto finish;
         }
 
@@ -50,7 +49,7 @@ int main(int argc, char *argv[]) {
                 if (skip_size > 0 || sz < frame_size) {
                         r = realloc_buffer_read(&buffer, fd);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to read: %s\n", strerror(-r));
+                                log_error_errno(r, "Failed to read: %m");
                                 goto finish;
                         }
                         if (r == 0) {
@@ -60,7 +59,7 @@ int main(int argc, char *argv[]) {
                                         goto finish;
                                 }
 
-                                fprintf(stderr, "Premature end of file.\n");
+                                log_error("Premature end of file.");
                                 r = -EBADMSG;
                                 goto finish;
                         }
@@ -202,7 +201,7 @@ int main(int argc, char *argv[]) {
                         break;
 
                 default:
-                        fprintf(stderr, "Unknown record.\n");
+                        log_error("Unknown record type.");
                         r = -EBADMSG;
                         goto finish;
                 }

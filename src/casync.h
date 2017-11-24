@@ -29,9 +29,7 @@ enum {
 CaSync *ca_sync_new_encode(void);
 CaSync *ca_sync_new_decode(void);
 CaSync *ca_sync_unref(CaSync *sync);
-static inline void ca_sync_unrefp(CaSync **sync) {
-        ca_sync_unref(*sync);
-};
+DEFINE_TRIVIAL_CLEANUP_FUNC(CaSync *, ca_sync_unref);
 
 int ca_sync_set_rate_limit_bps(CaSync *s, uint64_t rate_limit_bps);
 

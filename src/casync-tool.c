@@ -21,6 +21,7 @@
 #include "caremote.h"
 #include "castore.h"
 #include "casync.h"
+#include "gc.h"
 #include "notify.h"
 #include "parse-util.h"
 #include "signal-handler.h"
@@ -35,6 +36,7 @@ static enum arg_what {
         _WHAT_INVALID = -1,
 } arg_what = _WHAT_INVALID;
 static bool arg_verbose = false;
+static bool arg_dry_run = false;
 static bool arg_exclude_nodump = true;
 static bool arg_exclude_submounts = false;
 static bool arg_reflink = true;
@@ -74,6 +76,8 @@ static void help(void) {
                "  -h --help                  Show this help\n"
                "     --version               Show brief version information\n"
                "  -v --verbose               Show terse status information during runtime\n"
+               "  -n --dry-run               When garbage collecting, only print what would\n"
+               "                             be done\n"
                "     --store=PATH            The primary chunk store to use\n"
                "     --extra-store=PATH      Additional chunk store to look for chunks in\n"
                "     --chunk-size=[MIN:]AVG[:MAX]\n"
@@ -188,58 +192,50 @@ static int parse_chunk_sizes(const char *v, size_t *ret_min, size_t *ret_avg, si
 
                 j = strchr(k+1, ':');
                 if (!j) {
-                        fprintf(stderr, "--chunk-size= requires either a single average chunk size or a triplet of minimum, average and maximum chunk size.\n");
+                        log_error("--chunk-size= requires either a single average chunk size or a triplet of minimum, average and maximum chunk size.");
                         return -EINVAL;
                 }
 
                 p = strndupa(v, k - v);
                 r = parse_size(p, &a);
-                if (r < 0) {
-                        fprintf(stderr, "Can't parse minimum chunk size: %s\n", v);
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Can't parse minimum chunk size: %s", v);
                 if (a < CA_CHUNK_SIZE_LIMIT_MIN) {
-                        fprintf(stderr, "Minimum chunk size must be >= %zu.\n", CA_CHUNK_SIZE_LIMIT_MIN);
+                        log_error("Minimum chunk size must be >= %zu.", CA_CHUNK_SIZE_LIMIT_MIN);
                         return -ERANGE;
                 }
 
                 p = strndupa(k + 1, j - k - 1);
                 r = parse_size(p, &b);
-                if (r < 0) {
-                        fprintf(stderr, "Can't parse average chunk size: %s\n", v);
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Can't parse average chunk size: %s", v);
                 if (b < a) {
-                        fprintf(stderr, "Average chunk size must be larger than minimum chunk size.\n");
+                        log_error("Average chunk size must be larger than minimum chunk size.");
                         return -EINVAL;
                 }
 
                 r = parse_size(j + 1, &c);
-                if (r < 0) {
-                        fprintf(stderr, "Can't parse maximum chunk size: %s\n", v);
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Can't parse maximum chunk size: %s", v);
                 if (c < b) {
-                        fprintf(stderr, "Average chunk size must be smaller than maximum chunk size.\n");
+                        log_error("Average chunk size must be smaller than maximum chunk size.");
                         return -EINVAL;
                 }
                 if (c > CA_CHUNK_SIZE_LIMIT_MAX) {
-                        fprintf(stderr, "Maximum chunk size must be <= %zu.\n", CA_CHUNK_SIZE_LIMIT_MAX);
+                        log_error("Maximum chunk size must be <= %zu.", CA_CHUNK_SIZE_LIMIT_MAX);
                         return -ERANGE;
                 }
         } else {
 
                 r = parse_size(v, &b);
-                if (r < 0) {
-                        fprintf(stderr, "Can't parse average chunk size: %s\n", v);
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Can't parse average chunk size: %s", v);
                 if (b < CA_CHUNK_SIZE_LIMIT_MIN) {
-                        fprintf(stderr, "Average chunk size must be >= %zu.\n", CA_CHUNK_SIZE_LIMIT_MIN);
+                        log_error("Average chunk size must be >= %zu.", CA_CHUNK_SIZE_LIMIT_MIN);
                         return -ERANGE;
                 }
                 if (b > CA_CHUNK_SIZE_LIMIT_MAX) {
-                        fprintf(stderr, "Average chunk size must be <= %zu.\n", CA_CHUNK_SIZE_LIMIT_MAX);
+                        log_error("Average chunk size must be <= %zu.", CA_CHUNK_SIZE_LIMIT_MAX);
                         return -ERANGE;
                 }
 
@@ -273,7 +269,7 @@ static int parse_what_selector(const char *arg, enum arg_what *what) {
                        "directory\n");
                 return 0;
         } else {
-                fprintf(stderr, "Failed to parse --what= selector: %s\n", arg);
+                log_error("Failed to parse --what= selector: %s", arg);
                 return -EINVAL;
         }
 
@@ -312,6 +308,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "help",              no_argument,       NULL, 'h'                   },
                 { "version",           no_argument,       NULL, ARG_VERSION           },
                 { "verbose",           no_argument,       NULL, 'v'                   },
+                { "dry-run",           no_argument,       NULL, 'n'                   },
                 { "store",             required_argument, NULL, ARG_STORE             },
                 { "extra-store",       required_argument, NULL, ARG_EXTRA_STORE       },
                 { "chunk-size",        required_argument, NULL, ARG_CHUNK_SIZE        },
@@ -345,7 +342,7 @@ static int parse_argv(int argc, char *argv[]) {
         if (getenv_bool("CASYNC_VERBOSE") > 0)
                 arg_verbose = true;
 
-        while ((c = getopt_long(argc, argv, "hv", options, NULL)) >= 0) {
+        while ((c = getopt_long(argc, argv, "hvn", options, NULL)) >= 0) {
 
                 switch (c) {
 
@@ -359,6 +356,10 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case 'v':
                         arg_verbose = true;
+                        break;
+
+                case 'n':
+                        arg_dry_run = true;
                         break;
 
                 case ARG_STORE: {
@@ -401,12 +402,10 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_RATE_LIMIT_BPS:
                         r = parse_size(optarg, &arg_rate_limit_bps);
-                        if (r < 0) {
-                                fprintf(stderr, "Unable to parse rate limit %s: %s\n", optarg, strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Unable to parse rate limit %s: %m", optarg);
                         if (arg_rate_limit_bps == 0) {
-                                fprintf(stderr, "Rate limit size cannot be zero.\n");
+                                log_error("Rate limit size cannot be zero.");
                                 return -EINVAL;
                         }
 
@@ -417,7 +416,7 @@ static int parse_argv(int argc, char *argv[]) {
 
                         r = ca_with_feature_flags_parse_one(optarg, &u);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to parse --with= feature flag: %s\n", optarg);
+                                log_error("Failed to parse --with= feature flag: %s", optarg);
                                 return -EINVAL;
                         }
 
@@ -430,7 +429,7 @@ static int parse_argv(int argc, char *argv[]) {
 
                         r = ca_with_feature_flags_parse_one(optarg, &u);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to parse --without= feature flag: %s\n", optarg);
+                                log_error("Failed to parse --without= feature flag: %s", optarg);
                                 return -EINVAL;
                         }
 
@@ -447,7 +446,7 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_EXCLUDE_NODUMP:
                         r = parse_boolean(optarg);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to parse --exclude-nodump= parameter: %s\n", optarg);
+                                log_error("Failed to parse --exclude-nodump= parameter: %s", optarg);
                                 return r;
                         }
 
@@ -457,7 +456,7 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_EXCLUDE_SUBMOUNTS:
                         r = parse_boolean(optarg);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to parse --exclude-submounts= parameter: %s\n", optarg);
+                                log_error("Failed to parse --exclude-submounts= parameter: %s", optarg);
                                 return r;
                         }
 
@@ -467,7 +466,7 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_UNDO_IMMUTABLE:
                         r = parse_boolean(optarg);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to parse --undo-immutable= parameter: %s\n", optarg);
+                                log_error("Failed to parse --undo-immutable= parameter: %s", optarg);
                                 return r;
                         }
 
@@ -477,7 +476,7 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_PUNCH_HOLES:
                         r = parse_boolean(optarg);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to parse --punch-holes= parameter: %s\n", optarg);
+                                log_error("Failed to parse --punch-holes= parameter: %s", optarg);
                                 return r;
                         }
 
@@ -487,7 +486,7 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_REFLINK:
                         r = parse_boolean(optarg);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to parse --reflink= parameter: %s\n", optarg);
+                                log_error("Failed to parse --reflink= parameter: %s", optarg);
                                 return r;
                         }
 
@@ -497,7 +496,7 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_HARDLINK:
                         r = parse_boolean(optarg);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to parse --hardlink= parameter: %s\n", optarg);
+                                log_error("Failed to parse --hardlink= parameter: %s", optarg);
                                 return r;
                         }
 
@@ -507,7 +506,7 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_DELETE:
                         r = parse_boolean(optarg);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to parse --delete= parameter: %s\n", optarg);
+                                log_error("Failed to parse --delete= parameter: %s", optarg);
                                 return r;
                         }
 
@@ -517,7 +516,7 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_SEED_OUTPUT:
                         r = parse_boolean(optarg);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to parse --seed-output= parameter: %s\n", optarg);
+                                log_error("Failed to parse --seed-output= parameter: %s", optarg);
                                 return r;
                         }
 
@@ -526,10 +525,8 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_MKDIR:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to parse --mkdir= parameter: %s\n", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --mkdir= parameter: %s", optarg);
 
                         arg_mkdir = r;
                         break;
@@ -540,10 +537,8 @@ static int parse_argv(int argc, char *argv[]) {
                         r = parse_uid(optarg, &uid);
                         if (r < 0) {
                                 r = parse_boolean(optarg);
-                                if (r < 0) {
-                                        fprintf(stderr, "Failed to parse --uid-shift= parameter: %s\n", optarg);
-                                        return r;
-                                }
+                                if (r < 0)
+                                        return log_error_errno(r, "Failed to parse --uid-shift= parameter: %s", optarg);
 
                                 arg_uid_shift_apply = r;
                         } else {
@@ -562,10 +557,8 @@ static int parse_argv(int argc, char *argv[]) {
                         r = safe_atou64(optarg, &u);
                         if (r < 0 || u == 0 || u > UINT64_C(0x100000000)) {
                                 r = parse_boolean(optarg);
-                                if (r < 0) {
-                                        fprintf(stderr, "Failed to parse --uid-range= parameter: %s\n", optarg);
-                                        return r;
-                                }
+                                if (r < 0)
+                                        return log_error_errno(r, "Failed to parse --uid-range= parameter: %s", optarg);
 
                                 arg_uid_shift_apply = r;
 
@@ -584,10 +577,8 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_RECURSIVE:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to parse --recursive= parameter: %s\n", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --recursive= parameter: %s", optarg);
 
                         arg_recursive = r;
                         break;
@@ -596,10 +587,8 @@ static int parse_argv(int argc, char *argv[]) {
                         CaDigestType t;
 
                         t = ca_digest_type_from_string(optarg);
-                        if (t < 0) {
-                                fprintf(stderr, "Failed to parse --digest= parameter: %s\n", optarg);
-                                return r;
-                        }
+                        if (t < 0)
+                                return log_error_errno(t, "Failed to parse --digest= parameter: %s", optarg);
 
                         arg_digest = t;
                         break;
@@ -609,10 +598,8 @@ static int parse_argv(int argc, char *argv[]) {
                         CaCompressionType cc;
 
                         cc = ca_compression_type_from_string(optarg);
-                        if (cc < 0) {
-                                fprintf(stderr, "Failed to parse --compression= parameter: %s\n", optarg);
-                                return r;
-                        }
+                        if (cc < 0)
+                                return log_error_errno(cc, "Failed to parse --compression= parameter: %s", optarg);
 
                         arg_compression = cc;
                         break;
@@ -651,10 +638,8 @@ static int set_default_store(const char *index_path) {
                 /* Otherwise, derive it from the index file path */
 
                 r = ca_locator_patch_last_component(index_path, "default.castr", &arg_store);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to automatically derive store location from index: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to automatically derive store location from index: %m");
         } else
                 /* And if we don't know any, then place it in the current directory */
                 arg_store = strdup("default.castr");
@@ -674,13 +659,13 @@ static int load_seeds_and_extra_stores(CaSync *s) {
         STRV_FOREACH(i, arg_extra_stores) {
                 r = ca_sync_add_store_auto(s, *i);
                 if (r < 0)
-                        fprintf(stderr, "Failed to add extra store %s, ignoring: %s\n", *i, strerror(-r));
+                        log_error("Failed to add extra store %s, ignoring: %m", *i);
         }
 
         STRV_FOREACH(i, arg_seeds) {
                 r = ca_sync_add_seed_path(s, *i);
                 if (r < 0)
-                        fprintf(stderr, "Failed to add seed %s, ignoring: %s\n", *i, strerror(-r));
+                        log_error("Failed to add seed %s, ignoring: %m", *i);
         }
 
         return 0;
@@ -706,42 +691,30 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
         flags |= ca_feature_flags_from_digest_type(arg_digest);
 
         r = ca_sync_set_feature_flags(s, flags);
-        if (r < 0 && r != -ENOTTY) { /* only encoder syncs have a feature flags field */
-                fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0 && r != -ENOTTY) /* only encoder syncs have a feature flags field */
+                return log_error_errno(r, "Failed to set feature flags: %m");
 
         r = ca_sync_set_feature_flags_mask(s, flags);
-        if (r < 0 && r != -ENOTTY) { /* only decoder syncs have a feature flags mask field */
-                fprintf(stderr, "Failed to set feature flags mask: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0 && r != -ENOTTY) /* only decoder syncs have a feature flags mask field */
+                return log_error_errno(r, "Failed to set feature flags mask: %m");
 
         if (arg_uid_shift_apply) {
                 r = ca_sync_set_uid_shift(s, arg_uid_shift);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set UID shift: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set UID shift: %m");
 
                 r = ca_sync_set_uid_range(s, arg_uid_range);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set UID range: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set UID range: %m");
         }
 
         r = ca_sync_set_undo_immutable(s, arg_undo_immutable);
-        if (r < 0 && r != -ENOTTY) {
-                fprintf(stderr, "Failed to set undo immutable flag: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0 && r != -ENOTTY)
+                return log_error_errno(r, "Failed to set undo immutable flag: %m");
 
         r = ca_sync_set_compression_type(s, arg_compression);
-        if (r < 0 && r != -ENOTTY) {
-                fprintf(stderr, "Failed to set compression: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0 && r != -ENOTTY)
+                return log_error_errno(r, "Failed to set compression: %m");
 
         r = ca_sync_set_delete(s, arg_delete);
         if (r < 0 && r != -ENOTTY) {
@@ -758,50 +731,38 @@ static int load_chunk_size(CaSync *s) {
 
         if (arg_chunk_size_avg != 0) {
                 r = ca_sync_set_chunk_size_avg(s, arg_chunk_size_avg);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set average chunk size to %zu: %s\n", arg_chunk_size_avg, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set average chunk size to %zu: %m", arg_chunk_size_avg);
         }
 
         if (arg_chunk_size_min != 0) {
                 r = ca_sync_set_chunk_size_min(s, arg_chunk_size_min);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set minimum chunk size to %zu: %s\n", arg_chunk_size_min, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set minimum chunk size to %zu: %m", arg_chunk_size_min);
         }
 
         if (arg_chunk_size_max != 0) {
                 r = ca_sync_set_chunk_size_max(s, arg_chunk_size_max);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set minimum chunk size to %zu: %s\n", arg_chunk_size_min, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set minimum chunk size to %zu: %m", arg_chunk_size_min);
         }
 
         if (!arg_verbose)
                 return 1;
 
         r = ca_sync_get_chunk_size_avg(s, &cavg);
-        if (r < 0) {
-                fprintf(stderr, "Failed to read average chunk size: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to read average chunk size: %m");
 
         r = ca_sync_get_chunk_size_min(s, &cmin);
-        if (r < 0) {
-                fprintf(stderr, "Failed to read minimum chunk size: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to read minimum chunk size: %m");
 
         r = ca_sync_get_chunk_size_max(s, &cmax);
-        if (r < 0) {
-                fprintf(stderr, "Failed to read maximum chunk size: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to read maximum chunk size: %m");
 
-        fprintf(stderr, "Selected chunk sizes: min=%"PRIu64"..avg=%"PRIu64"..max=%"PRIu64"\n", cmin, cavg, cmax);
+        log_error("Selected chunk sizes: min=%" PRIu64 "..avg=%" PRIu64 "..max=%" PRIu64, cmin, cavg, cmax);
         return 1;
 }
 
@@ -821,21 +782,17 @@ static int verbose_print_feature_flags(CaSync *s) {
         r = ca_sync_get_feature_flags(s, &flags);
         if (r == -ENODATA) /* we don't know them yet? */
                 return 0;
-        if (r < 0) {
-                fprintf(stderr, "Failed to query feature flags: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to query feature flags: %m");
 
         r = ca_with_feature_flags_format(flags, &t);
-        if (r < 0) {
-                fprintf(stderr, "Failed to format feature flags: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to format feature flags: %m");
 
-        fprintf(stderr, "Using feature flags: %s\n", strnone(t));
-        fprintf(stderr, "Excluding files with chattr(1) -d flag: %s\n", yes_no(flags & CA_FORMAT_EXCLUDE_NODUMP));
-        fprintf(stderr, "Excluding submounts: %s\n", yes_no(flags & CA_FORMAT_EXCLUDE_SUBMOUNTS));
-        fprintf(stderr, "Digest algorithm: %s\n", ca_digest_type_to_string(ca_feature_flags_to_digest_type(flags)));
+        log_info("Using feature flags: %s", strnone(t));
+        log_info("Excluding files with chattr(1) -d flag: %s", yes_no(flags & CA_FORMAT_EXCLUDE_NODUMP));
+        log_info("Excluding submounts: %s", yes_no(flags & CA_FORMAT_EXCLUDE_SUBMOUNTS));
+        log_info("Digest algorithm: %s", ca_digest_type_to_string(ca_feature_flags_to_digest_type(flags)));
 
         printed = true;
 
@@ -852,18 +809,10 @@ static int verbose_print_path(CaSync *s, const char *verb) {
         r = ca_sync_current_path(s, &path);
         if (r == -ENOTDIR) /* Root isn't a directory */
                 return 0;
-        if (r < 0) {
-                fprintf(stderr, "Failed to query current path: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to query current path: %m");
 
-        if (verb) {
-                fputs(verb, stderr);
-                fputc(' ', stderr);
-        }
-
-        fprintf(stderr, "%s\n", isempty(path) ? "./" : path);
-
+        log_info("%s%s%s", verb ?: "", verb ? " " : "", isempty(path) ? "./" : path);
         return 1;
 }
 
@@ -881,63 +830,51 @@ static int verbose_print_done_make(CaSync *s) {
         if (r != -ENODATA) {
                 uint64_t selected, too_much;
 
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine covering flags: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine covering flags: %m");
 
                 r = ca_sync_get_feature_flags(s, &selected);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine used flags: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine used flags: %m");
 
                 too_much = selected & ~covering;
                 if (too_much != 0) {
                         _cleanup_free_ char *t = NULL;
 
                         r = ca_with_feature_flags_format(too_much, &t);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to format feature flags: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to format feature flags: %m");
 
-                        fprintf(stderr, "Selected feature flags not actually applicable to backing file systems: %s\n", strnone(t));
+                        log_error("Selected feature flags not actually applicable to backing file systems: %s", strnone(t));
                 }
         }
 
         r = ca_sync_current_archive_chunks(s, &n_chunks);
-        if (r < 0 && r != -ENODATA) {
-                fprintf(stderr, "Failed to determine number of chunks: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0 && r != -ENODATA)
+                return log_error_errno(r, "Failed to determine number of chunks: %m");
 
         r = ca_sync_current_archive_reused_chunks(s, &n_reused);
-        if (r < 0 && r != -ENODATA) {
-                fprintf(stderr, "Failed to determine number of reused chunks: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0 && r != -ENODATA)
+                return log_error_errno(r, "Failed to determine number of reused chunks: %m");
 
         r = ca_sync_current_archive_offset(s, &size);
-        if (r < 0 && r != -ENODATA) {
-                fprintf(stderr, "Failed to determine archive size: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0 && r != -ENODATA)
+                return log_error_errno(r, "Failed to determine archive size: %m");
 
         if (size != UINT64_MAX)
-                fprintf(stderr, "Archive size: %s\n", format_bytes(buffer, sizeof(buffer), size));
+                log_info("Archive size: %s", format_bytes(buffer, sizeof(buffer), size));
         if (n_chunks != UINT64_MAX)
-                fprintf(stderr, "Number of chunks: %" PRIu64 "\n", n_chunks);
+                log_info("Number of chunks: %" PRIu64, n_chunks);
         if (n_reused != UINT64_MAX) {
-                fprintf(stderr, "Reused chunks: %" PRIu64, n_reused);
                 if (n_chunks != UINT64_MAX && n_chunks > 0)
-                        fprintf(stderr, " (%" PRIu64 "%%)\n", (n_reused*100U/n_chunks));
+                        log_info("Reused chunks: %"PRIu64 " (%"PRIu64 "%%)",
+                                 n_reused, n_reused * 100U / n_chunks);
                 else
-                        fputc('\n', stderr);
+                        log_info("Reused chunks: %" PRIu64, n_reused);
         }
 
         if (size != UINT64_MAX && n_chunks != UINT64_MAX)
-                fprintf(stderr, "Effective average chunk size: %s\n", format_bytes(buffer, sizeof(buffer), size/n_chunks));
+                log_error("Effective average chunk size: %s", format_bytes(buffer, sizeof(buffer), size / n_chunks));
 
         return 1;
 }
@@ -952,92 +889,74 @@ static int verbose_print_done_extract(CaSync *s) {
 
         r = ca_sync_get_punch_holes_bytes(s, &n_bytes);
         if (!IN_SET(r, -ENODATA, -ENOTTY)) {
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine number of punch holes bytes: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine number of punch holes bytes: %m");
 
-                fprintf(stderr, "Zero bytes written as sparse files: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_error("Zero bytes written as sparse files: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_reflink_bytes(s, &n_bytes);
         if (!IN_SET(r, -ENODATA, -ENOTTY)) {
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine number of reflink bytes: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine number of reflink bytes: %m");
 
-                fprintf(stderr, "Bytes cloned through reflinks: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_error("Bytes cloned through reflinks: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_hardlink_bytes(s, &n_bytes);
         if (!IN_SET(r, -ENODATA, -ENOTTY)) {
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine number of hardlink bytes: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine number of hardlink bytes: %m");
 
-                fprintf(stderr, "Bytes cloned through hardlinks: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_error("Bytes cloned through hardlinks: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_local_requests(s, &n_requests);
         if (!IN_SET(r, -ENODATA, -ENOTTY)) {
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine number of successful local store requests: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine number of successful local store requests: %m");
 
-                fprintf(stderr, "Chunk requests fulfilled from local store: %" PRIu64 "\n", n_requests);
+                log_error("Chunk requests fulfilled from local store: %" PRIu64, n_requests);
         }
 
         r = ca_sync_get_local_request_bytes(s, &n_bytes);
         if (!IN_SET(r, -ENODATA, -ENOTTY)) {
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine size of successful local store requests: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine size of successful local store requests: %m");
 
-                fprintf(stderr, "Bytes used from local store: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_error("Bytes used from local store: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_seed_requests(s, &n_requests);
         if (!IN_SET(r, -ENODATA, -ENOTTY)) {
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine number of successful local seed requests: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine number of successful local seed requests: %m");
 
-                fprintf(stderr, "Chunk requests fulfilled from local seed: %" PRIu64 "\n", n_requests);
+                log_error("Chunk requests fulfilled from local seed: %" PRIu64, n_requests);
         }
 
         r = ca_sync_get_seed_request_bytes(s, &n_bytes);
         if (!IN_SET(r, -ENODATA, -ENOTTY)) {
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine size of successful local seed requests: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine size of successful local seed requests: %m");
 
-                fprintf(stderr, "Bytes used from local seed: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_error("Bytes used from local seed: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_remote_requests(s, &n_requests);
         if (!IN_SET(r, -ENODATA, -ENOTTY)) {
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine number of successful remote store requests: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine number of successful remote store requests: %m");
 
-                fprintf(stderr, "Chunk requests fulfilled from remote store: %" PRIu64 "\n", n_requests);
+                log_error("Chunk requests fulfilled from remote store: %" PRIu64, n_requests);
         }
 
         r = ca_sync_get_remote_request_bytes(s, &n_bytes);
         if (!IN_SET(r, -ENODATA, -ENOTTY)) {
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine size of successful remote store requests: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine size of successful remote store requests: %m");
 
-                fprintf(stderr, "Bytes used from remote store: %s\n", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_error("Bytes used from remote store: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         return 1;
@@ -1072,14 +991,14 @@ static int process_step_generic(CaSync *s, int step, bool quit_ok) {
                 r = sync_poll_sigset(s);
                 if (r == -ESHUTDOWN) {
                         if (!quit_ok)
-                                fprintf(stderr, "Got exit signal, quitting.\n");
+                                log_error("Got exit signal, quitting.");
                 } else if (r < 0)
-                        fprintf(stderr, "Failed to poll synchronizer: %s\n", strerror(-r));
+                        log_error_errno(r, "Failed to poll synchronizer: %m");
 
                 return r;
 
         case CA_SYNC_NOT_FOUND:
-                fprintf(stderr, "Seek path not available in archive.\n");
+                log_error("Seek path not available in archive.");
                 return -ENOENT;
         }
 
@@ -1103,7 +1022,7 @@ static int verb_make(int argc, char *argv[]) {
         struct stat st;
 
         if (argc > 3) {
-                fprintf(stderr, "A pair of output and input path/URL expected.\n");
+                log_error("A pair of output and input path/URL expected.");
                 return -EINVAL;
         }
 
@@ -1126,7 +1045,7 @@ static int verb_make(int argc, char *argv[]) {
         else if (arg_what == WHAT_BLOB_INDEX)
                 operation = MAKE_BLOB_INDEX;
         else if (arg_what != _WHAT_INVALID) {
-                fprintf(stderr, "\"make\" operation may only be combined with --what=archive, --what=archive-index or --what=blob-index.\n");
+                log_error("\"make\" operation may only be combined with --what=archive, --what=archive-index or --what=blob-index.");
                 return -EINVAL;
         }
 
@@ -1138,7 +1057,7 @@ static int verb_make(int argc, char *argv[]) {
                 else if (ca_locator_has_suffix(output, ".caibx"))
                         operation = MAKE_BLOB_INDEX;
                 else {
-                        fprintf(stderr, "File to create does not have valid suffix, refusing. (May be one of: .catar, .caidx, .caibx)\n");
+                        log_error("File to create does not have valid suffix, refusing. (May be one of: .catar, .caidx, .caibx)");
                         return -EINVAL;
                 }
         }
@@ -1156,35 +1075,29 @@ static int verb_make(int argc, char *argv[]) {
 
                 input_class = ca_classify_locator(input);
                 if (input_class < 0) {
-                        fprintf(stderr, "Failed to determine class of locator: %s\n", input);
+                        log_error("Failed to determine class of locator: %s", input);
                         return -EINVAL;
                 }
 
                 if (input_class != CA_LOCATOR_PATH) {
-                        fprintf(stderr, "Input must be local path: %s\n", input);
+                        log_error("Input must be local path: %s", input);
                         return -EINVAL;
                 }
 
                 input_fd = open(input, O_CLOEXEC|O_RDONLY|O_NOCTTY);
-                if (input_fd < 0) {
-                        r = -errno;
-                        fprintf(stderr, "Failed to open %s: %s\n", input, strerror(-r));
-                        return r;
-                }
+                if (input_fd < 0)
+                        return log_error_errno(errno, "Failed to open %s: %m", input);
         }
 
-        if (fstat(input_fd, &st) < 0) {
-                r = -errno;
-                fprintf(stderr, "Failed to stat input: %s\n", strerror(-r));
-                return r;
-        }
+        if (fstat(input_fd, &st) < 0)
+                return log_error_errno(errno, "Failed to stat input: %m");
 
         if (S_ISDIR(st.st_mode)) {
 
                 if (operation == _MAKE_OPERATION_INVALID)
                         operation = MAKE_ARCHIVE;
                 else if (!IN_SET(operation, MAKE_ARCHIVE, MAKE_ARCHIVE_INDEX)) {
-                        fprintf(stderr, "Input is a directory, but attempted to make blob index. Refusing.\n");
+                        log_error("Input is a directory, but attempted to make blob index. Refusing.");
                         return -EINVAL;
                 }
 
@@ -1193,11 +1106,11 @@ static int verb_make(int argc, char *argv[]) {
                 if (operation == _MAKE_OPERATION_INVALID)
                         operation = MAKE_BLOB_INDEX;
                 else if (operation != MAKE_BLOB_INDEX) {
-                        fprintf(stderr, "Input is a regular file or block device, but attempted to make a directory archive. Refusing.\n");
+                        log_error("Input is a regular file or block device, but attempted to make a directory archive. Refusing.");
                         return -EINVAL;
                 }
         } else {
-                fprintf(stderr, "Input is a neither a directory, a regular file, nor a block device. Refusing.\n");
+                log_error("Input is a neither a directory, a regular file, nor a block device. Refusing.");
                 return -EINVAL;
         }
 
@@ -1205,7 +1118,7 @@ static int verb_make(int argc, char *argv[]) {
                 output = mfree(output);
 
         if (operation == _MAKE_OPERATION_INVALID) {
-                fprintf(stderr, "Failed to determine what to make. Use --what=archive, --what=archive-index or --what=blob-index.\n");
+                log_error("Failed to determine what to make. Use --what=archive, --what=archive-index or --what=blob-index.");
                 return -EINVAL;
         }
 
@@ -1225,25 +1138,19 @@ static int verb_make(int argc, char *argv[]) {
 
         if (arg_rate_limit_bps != UINT64_MAX) {
                 r = ca_sync_set_rate_limit_bps(s, arg_rate_limit_bps);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set rate limit: %m");
         }
 
         r = ca_sync_set_base_fd(s, input_fd);
-        if (r < 0) {
-                fprintf(stderr, "Failed to set sync base: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set sync base: %m");
         input_fd = -1;
 
         if (output) {
                 r = ca_sync_set_make_mode(s, st.st_mode & 0666);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set make permission mode: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set make permission mode: %m");
         }
 
         if (operation == MAKE_ARCHIVE) {
@@ -1251,27 +1158,21 @@ static int verb_make(int argc, char *argv[]) {
                         r = ca_sync_set_archive_auto(s, output);
                 else
                         r = ca_sync_set_archive_fd(s, STDOUT_FILENO);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set sync archive: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set sync archive: %m");
         } else {
                 if (output)
                         r = ca_sync_set_index_auto(s, output);
                 else
                         r = ca_sync_set_index_fd(s, STDOUT_FILENO);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set sync index: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set sync index: %m");
         }
 
         if (arg_store) {
                 r = ca_sync_set_store_auto(s, arg_store);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set store: %m");
         }
 
         r = load_feature_flags(s, operation == MAKE_BLOB_INDEX ? 0 : CA_FORMAT_WITH_MASK);
@@ -1279,24 +1180,20 @@ static int verb_make(int argc, char *argv[]) {
                 return r;
 
         r = ca_sync_enable_archive_digest(s, true);
-        if (r < 0) {
-                fprintf(stderr, "Failed to enable archive digest: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to enable archive digest: %m");
 
         (void) send_notify("READY=1");
 
         for (;;) {
                 if (quit) {
-                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        log_info("Got exit signal, quitting.");
                         return -ESHUTDOWN;
                 }
 
                 r = ca_sync_step(s);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to run synchronizer: %m");
 
                 switch (r) {
 
@@ -1382,7 +1279,7 @@ static int verb_extract(int argc, char *argv[]) {
         _cleanup_(ca_sync_unrefp) CaSync *s = NULL;
 
         if (argc > 4) {
-                fprintf(stderr, "Input path/URL, output path, and subtree path expected.\n");
+                log_error("Input path/URL, output path, and subtree path expected.");
                 return -EINVAL;
         }
 
@@ -1408,7 +1305,7 @@ static int verb_extract(int argc, char *argv[]) {
         else if (arg_what == WHAT_BLOB_INDEX)
                 operation = EXTRACT_BLOB_INDEX;
         else if (arg_what != _WHAT_INVALID) {
-                fprintf(stderr, "\"extract\" operation may only be combined with --what=archive, --what=archive-index, --what=blob-index.\n");
+                log_error("\"extract\" operation may only be combined with --what=archive, --what=archive-index, --what=blob-index.");
                 return -EINVAL;
         }
 
@@ -1421,7 +1318,7 @@ static int verb_extract(int argc, char *argv[]) {
                 else if (ca_locator_has_suffix(input, ".caibx"))
                         operation = EXTRACT_BLOB_INDEX;
                 else {
-                        fprintf(stderr, "File to read from does not have valid suffix, refusing. (May be one of: .catar, .caidx, .caibx)\n");
+                        log_error("File to read from does not have valid suffix, refusing. (May be one of: .catar, .caidx, .caibx)");
                         return -EINVAL;
                 }
         }
@@ -1443,43 +1340,35 @@ static int verb_extract(int argc, char *argv[]) {
 
                 output_class = ca_classify_locator(output);
                 if (output_class < 0) {
-                        fprintf(stderr, "Failed to determine locator class: %s\n", output);
-                        r = -EINVAL;
-                        return r;
+                        log_error("Failed to determine locator class: %s", output);
+                        return -EINVAL;
                 }
 
                 if (output_class != CA_LOCATOR_PATH) {
-                        fprintf(stderr, "Output must be local path: %s\n", output);
-                        r = -EINVAL;
-                        return r;
+                        log_error("Output must be local path: %s", output);
+                        return -EINVAL;
                 }
 
                 output_fd = open(output, O_CLOEXEC|O_WRONLY|O_NOCTTY);
                 if (output_fd < 0 && errno == EISDIR)
                         output_fd = open(output, O_CLOEXEC|O_RDONLY|O_NOCTTY|O_DIRECTORY);
 
-                if (output_fd < 0 && errno != ENOENT) {
-                        r = -errno;
-                        fprintf(stderr, "Failed to open %s: %s\n", output, strerror(-r));
-                        return r;
-                }
+                if (output_fd < 0 && errno != ENOENT)
+                        return log_error_errno(errno, "Failed to open %s: %m", output);
         }
 
         if (output_fd >= 0) {
                 struct stat st;
 
-                if (fstat(output_fd, &st) < 0) {
-                        r = -errno;
-                        fprintf(stderr, "Failed to stat output: %s\n", strerror(-r));
-                        return r;
-                }
+                if (fstat(output_fd, &st) < 0)
+                        return log_error_errno(errno, "Failed to stat output: %m");
 
                 if (S_ISDIR(st.st_mode)) {
 
                         if (operation == _EXTRACT_OPERATION_INVALID)
                                 operation = EXTRACT_ARCHIVE_INDEX;
                         else if (!IN_SET(operation, EXTRACT_ARCHIVE, EXTRACT_ARCHIVE_INDEX)) {
-                                fprintf(stderr, "Output is a directory, but attempted to extract blob index. Refusing.\n");
+                                log_error("Output is a directory, but attempted to extract blob index. Refusing.");
                                 return -EINVAL;
                         }
 
@@ -1488,22 +1377,22 @@ static int verb_extract(int argc, char *argv[]) {
                         if (operation == _EXTRACT_OPERATION_INVALID)
                                 operation = EXTRACT_BLOB_INDEX;
                         else if (operation != EXTRACT_BLOB_INDEX) {
-                                fprintf(stderr, "Output is a regular file or block device, but attempted to extract an archive.\n");
+                                log_error("Output is a regular file or block device, but attempted to extract an archive.");
                                 return -EINVAL;
                         }
                 } else {
-                        fprintf(stderr, "Output is neither a directory, a regular file, nor a block device. Refusing.\n");
+                        log_error("Output is neither a directory, a regular file, nor a block device. Refusing.");
                         return -EINVAL;
                 }
         }
 
         if (operation == _EXTRACT_OPERATION_INVALID) {
-                fprintf(stderr, "Couldn't figure out what to extract. Refusing. Use --what=archive, --what=archive-index or --what=blob-index.\n");
+                log_error("Couldn't figure out what to extract. Refusing. Use --what=archive, --what=archive-index or --what=blob-index.");
                 return -EINVAL;
         }
 
         if (!IN_SET(operation, EXTRACT_ARCHIVE, EXTRACT_ARCHIVE_INDEX) && seek_path) {
-                fprintf(stderr, "Subtree path only supported when extracting archive or archive index.\n");
+                log_error("Subtree path only supported when extracting archive or archive index.");
                 return -EINVAL;
         }
 
@@ -1521,16 +1410,14 @@ static int verb_extract(int argc, char *argv[]) {
                 if (arg_seed_output) {
                         r = ca_sync_add_seed_path(s, output);
                         if (r < 0 && r != -ENOENT)
-                                fprintf(stderr, "Failed to add existing file as seed %s, ignoring: %s\n", output, strerror(-r));
+                                log_error_errno(r, "Failed to add existing file as seed %s, ignoring: %m", output);
                 }
         }
 
         if (arg_rate_limit_bps != UINT64_MAX) {
                 r = ca_sync_set_rate_limit_bps(s, arg_rate_limit_bps);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set rate limit: %m");
         }
 
         if (seek_path) {
@@ -1543,18 +1430,14 @@ static int verb_extract(int argc, char *argv[]) {
                         r = ca_sync_set_base_fd(s, output_fd);
                 else {
                         r = ca_sync_set_base_mode(s, IN_SET(operation, EXTRACT_ARCHIVE, EXTRACT_ARCHIVE_INDEX) ? S_IFDIR : S_IFREG);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to set base mode to directory: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to set base mode to directory: %m");
 
                         r = ca_sync_set_base_path(s, output);
                 }
         }
-        if (r < 0) {
-                fprintf(stderr, "Failed to set sync base: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set sync base: %m");
 
         output_fd = -1;
 
@@ -1563,29 +1446,23 @@ static int verb_extract(int argc, char *argv[]) {
                         r = ca_sync_set_archive_fd(s, input_fd);
                 else
                         r = ca_sync_set_archive_auto(s, input);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set sync archive: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set sync archive: %m");
 
         } else {
                 if (input_fd >= 0)
                         r = ca_sync_set_index_fd(s, input_fd);
                 else
                         r = ca_sync_set_index_auto(s, input);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set sync index: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set sync index: %m");
         }
         input_fd = -1;
 
         if (arg_store) {
                 r = ca_sync_set_store_auto(s, arg_store);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set store: %m");
         }
 
         r = load_seeds_and_extra_stores(s);
@@ -1597,48 +1474,36 @@ static int verb_extract(int argc, char *argv[]) {
                 return r;
 
         r = ca_sync_set_punch_holes(s, arg_punch_holes);
-        if (r < 0) {
-                fprintf(stderr, "Failed to configure hole punching: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to configure hole punching: %m");
 
         r = ca_sync_set_reflink(s, arg_reflink);
-        if (r < 0) {
-                fprintf(stderr, "Failed to configure reflinking: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to configure reflinking: %m");
 
         r = ca_sync_set_hardlink(s, arg_hardlink);
-        if (r < 0) {
-                fprintf(stderr, "Failed to configure hardlinking: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to configure hardlinking: %m");
 
         if (seek_path) {
                 r = ca_sync_seek_path(s, seek_path);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to seek to %s: %s\n", seek_path, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to seek to %s: %m", seek_path);
         }
 
         (void) send_notify("READY=1");
 
         for (;;) {
                 if (quit) {
-                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        log_error("Got exit signal, quitting.");
                         return -ESHUTDOWN;
                 }
 
                 r = ca_sync_step(s);
-                if (r == -ENOMEDIUM) {
-                        fprintf(stderr, "File, URL or resource not found.\n");
-                        return r;
-                }
-                if (r < 0) {
-                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r == -ENOMEDIUM)
+                        return log_error_errno(r, "File, URL or resource not found.");
+                if (r < 0)
+                        return log_error_errno(r, "Failed to run synchronizer: %m");
 
                 switch (r) {
 
@@ -1727,16 +1592,12 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
         int r;
 
         r = ca_sync_current_mode(s, &mode);
-        if (r < 0) {
-                fprintf(stderr, "Failed to query current mode: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to query current mode: %m");
 
         r = ca_sync_current_path(s, &path);
-        if (r < 0) {
-                fprintf(stderr, "Failed to query current path: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to query current path: %m");
 
         if (streq(arg0, "list")) {
                 char ls_mode[LS_FORMAT_MODE_MAX];
@@ -1745,10 +1606,8 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
 
                 if (!arg_recursive && *toplevel_shown) {
                         r = ca_sync_seek_next_sibling(s);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to seek to next sibling: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to seek to next sibling: %m");
                 }
 
                 *toplevel_shown = true;
@@ -1957,10 +1816,8 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 for (;;) {
                         _cleanup_free_ char *n = NULL, *v = NULL;
 
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to enumerate extended attributes: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to enumerate extended attributes: %m");
                         if (r == 0)
                                 break;
 
@@ -2001,7 +1858,7 @@ static int verb_list(int argc, char *argv[]) {
         bool toplevel_shown = false;
 
         if (argc > 3) {
-                fprintf(stderr, "Input path/URL and subtree path expected.\n");
+                log_error("Input path/URL and subtree path expected.");
                 return -EINVAL;
         }
 
@@ -2021,7 +1878,7 @@ static int verb_list(int argc, char *argv[]) {
         else if (arg_what == WHAT_DIRECTORY)
                 operation = LIST_DIRECTORY;
         else if (arg_what != _WHAT_INVALID) {
-                fprintf(stderr, "\"%s\" operation may only be combined with --what=archive, archive-index, or directory.\n", argv[0]);
+                log_error("\"%s\" operation may only be combined with --what=archive, archive-index, or directory.", argv[0]);
                 return -EINVAL;
         }
 
@@ -2045,39 +1902,33 @@ static int verb_list(int argc, char *argv[]) {
 
                 input_class = ca_classify_locator(input);
                 if (input_class < 0) {
-                        fprintf(stderr, "Failed to determine type of locator: %s\n", input);
+                        log_error("Failed to determine type of locator: %s", input);
                         return -EINVAL;
                 }
 
                 if (operation == LIST_DIRECTORY && input_class != CA_LOCATOR_PATH) {
-                        fprintf(stderr, "Input must be local path: %s\n", input);
+                        log_error("Input must be local path: %s", input);
                         return -EINVAL;
                 }
 
                 if (input_class == CA_LOCATOR_PATH) {
                         input_fd = open(input, O_CLOEXEC|O_RDONLY|O_NOCTTY);
-                        if (input_fd < 0) {
-                                r = -errno;
-                                fprintf(stderr, "Failed to open %s: %s\n", input, strerror(-r));
-                                return r;
-                        }
+                        if (input_fd < 0)
+                                return log_error_errno(errno, "Failed to open \"%s\": %m", input);
                 }
         }
 
         if (input_fd >= 0) {
                 struct stat st;
 
-                if (fstat(input_fd, &st) < 0) {
-                        r = -errno;
-                        fprintf(stderr, "Failed to stat input: %s\n", strerror(-r));
-                        return r;
-                }
+                if (fstat(input_fd, &st) < 0)
+                        return log_error_errno(errno, "Failed to stat input: %m");
 
                 if (S_ISDIR(st.st_mode)) {
                         if (operation == _LIST_OPERATION_INVALID)
                                 operation = LIST_DIRECTORY;
                         else if (operation != LIST_DIRECTORY) {
-                                fprintf(stderr, "Input is a directory, but attempted to list archive or index.\n");
+                                log_error("Input is a directory, but attempted to list archive or index.");
                                 return -EINVAL;
                         }
 
@@ -2086,11 +1937,11 @@ static int verb_list(int argc, char *argv[]) {
                         if (operation == _LIST_OPERATION_INVALID)
                                 operation = LIST_ARCHIVE;
                         else if (!IN_SET(operation, LIST_ARCHIVE, LIST_ARCHIVE_INDEX)) {
-                                fprintf(stderr, "Input is a regular file, but attempted to list it as directory.\n");
+                                log_error("Input is a regular file, but attempted to list it as directory.");
                                 return -EINVAL;
                         }
                 } else {
-                        fprintf(stderr, "Input is neither a file or directory. Refusing.\n");
+                        log_error("Input is neither a file or directory. Refusing.");
                         return -EINVAL;
                 }
         }
@@ -2099,12 +1950,12 @@ static int verb_list(int argc, char *argv[]) {
                 input = mfree(input);
 
         if (operation == _LIST_OPERATION_INVALID) {
-                fprintf(stderr, "Failed to determine what to list. Use --what=archive, archive-index, or directory.\n");
+                log_error("Failed to determine what to list. Use --what=archive, archive-index, or directory.");
                 return -EINVAL;
         }
 
         if (!IN_SET(operation, LIST_ARCHIVE, LIST_ARCHIVE_INDEX) && seek_path) {
-                fprintf(stderr, "Subtree path only supported when listing archive or archive index.\n");
+                log_error("Subtree path only supported when listing archive or archive index.");
                 return -EINVAL;
         }
 
@@ -2141,26 +1992,20 @@ static int verb_list(int argc, char *argv[]) {
                 r = ca_sync_set_base_fd(s, input_fd);
         else
                 assert(false);
-        if (r < 0) {
-                fprintf(stderr, "Failed to set sync input: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set sync input: %m");
         input_fd = -1;
 
         if (operation != LIST_DIRECTORY) {
                 r = ca_sync_set_base_mode(s, S_IFDIR);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set base mode to directory: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set base mode to directory: %m");
         }
 
         if (arg_store) {
                 r = ca_sync_set_store_auto(s, arg_store);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set store: %m");
         }
 
         r = load_seeds_and_extra_stores(s);
@@ -2173,53 +2018,41 @@ static int verb_list(int argc, char *argv[]) {
 
         if (operation != LIST_DIRECTORY) {
                 r = ca_sync_set_payload(s, false);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to enable skipping over payload: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to enable skipping over payload: %m");
         }
 
         if (seek_path) {
                 r = ca_sync_seek_path(s, seek_path);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to seek to %s: %s\n", seek_path, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to seek to %s: %m", seek_path);
         }
 
         if (STR_IN_SET(argv[0], "mtree", "stat")) {
                 r = ca_sync_enable_payload_digest(s, true);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to enable payload digest: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to enable payload digest: %m");
         }
 
         if (streq(argv[0], "stat")) {
                 r = ca_sync_enable_hardlink_digest(s, true);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to enable hardlink digest: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to enable hardlink digest: %m");
         }
 
         (void) send_notify("READY=1");
 
         for (;;) {
                 if (quit) {
-                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        log_info("Got exit signal, quitting.");
                         return -ESHUTDOWN;
                 }
 
                 r = ca_sync_step(s);
-                if (r == -ENOMEDIUM) {
-                        fprintf(stderr, "File, URL or resource not found.\n");
-                        return r;
-                }
-                if (r < 0) {
-                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r == -ENOMEDIUM)
+                        return log_error_errno(r, "File, URL or resource not found.");
+                if (r < 0)
+                        return log_error_errno(r, "Failed to run synchronizer: %m");
 
                 switch (r) {
 
@@ -2237,10 +2070,8 @@ static int verb_list(int argc, char *argv[]) {
                         mode_t mode;
 
                         r = ca_sync_current_mode(s, &mode);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to query current mode: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to query current mode: %m");
 
                         if (streq(argv[0], "mtree") && S_ISREG(mode)) {
                                 static const char * const table[_CA_DIGEST_TYPE_MAX] = {
@@ -2253,7 +2084,7 @@ static int verb_list(int argc, char *argv[]) {
 
                                 r = ca_sync_get_payload_digest(s, &digest);
                                 if (r < 0) {
-                                        fprintf(stderr, "Failed to read digest.\n");
+                                        log_error("Failed to read digest.");
                                         return -EINVAL;
                                 }
 
@@ -2326,7 +2157,7 @@ static int verb_digest(int argc, char *argv[]) {
         int seeking = false;
 
         if (argc > 3) {
-                fprintf(stderr, "Input path/URL and subtree path expected.\n");
+                log_error("Input path/URL and subtree path expected.");
                 return -EINVAL;
         }
 
@@ -2350,7 +2181,7 @@ static int verb_digest(int argc, char *argv[]) {
         else if (arg_what == WHAT_DIRECTORY)
                 operation = DIGEST_DIRECTORY;
         else if (arg_what != _WHAT_INVALID) {
-                fprintf(stderr, "\"make\" operation may only be combined with --what=archive, --what=blob, --what=archive-index, --what=blob-index or --what=directory.\n");
+                log_error("\"make\" operation may only be combined with --what=archive, --what=blob, --what=archive-index, --what=blob-index or --what=directory.");
                 return -EINVAL;
         }
 
@@ -2377,40 +2208,34 @@ static int verb_digest(int argc, char *argv[]) {
 
                 input_class = ca_classify_locator(input);
                 if (input_class < 0) {
-                        fprintf(stderr, "Failed to determine class of locator: %s\n", input);
+                        log_error("Failed to determine class of locator: %s", input);
                         return -EINVAL;
                 }
 
                 if (operation == DIGEST_DIRECTORY && input_class != CA_LOCATOR_PATH) {
-                        fprintf(stderr, "Input must be local path: %s\n", input);
+                        log_error("Input must be local path: %s", input);
                         return -EINVAL;
                 }
 
                 if (input_class == CA_LOCATOR_PATH) {
                         input_fd = open(input, O_CLOEXEC|O_RDONLY|O_NOCTTY);
-                        if (input_fd < 0) {
-                                r = -errno;
-                                fprintf(stderr, "Failed to open %s: %s\n", input, strerror(-r));
-                                return r;
-                        }
+                        if (input_fd < 0)
+                                return log_error_errno(errno, "Failed to open %s: %m", input);
                 }
         }
 
         if (input_fd >= 0) {
                 struct stat st;
 
-                if (fstat(input_fd, &st) < 0) {
-                        r = -errno;
-                        fprintf(stderr, "Failed to stat input: %s\n", strerror(-r));
-                        return r;
-                }
+                if (fstat(input_fd, &st) < 0)
+                        return log_error_errno(errno, "Failed to stat input: %m");
 
                 if (S_ISDIR(st.st_mode)) {
 
                         if (operation == _DIGEST_OPERATION_INVALID)
                                 operation = DIGEST_DIRECTORY;
                         else if (operation != DIGEST_DIRECTORY) {
-                                fprintf(stderr, "Input is a directory, but attempted to list as blob. Refusing.\n");
+                                log_error("Input is a directory, but attempted to list as blob. Refusing.");
                                 return -EINVAL;
                         }
 
@@ -2419,11 +2244,11 @@ static int verb_digest(int argc, char *argv[]) {
                         if (operation == _DIGEST_OPERATION_INVALID)
                                 operation = seek_path ? DIGEST_ARCHIVE : DIGEST_BLOB;
                         else if (!IN_SET(operation, DIGEST_ARCHIVE, DIGEST_BLOB, DIGEST_ARCHIVE_INDEX, DIGEST_BLOB_INDEX)) {
-                                fprintf(stderr, "Input is not a regular file or block device, but attempted to list as one. Refusing.\n");
+                                log_error("Input is not a regular file or block device, but attempted to list as one. Refusing.");
                                 return -EINVAL;
                         }
                 } else {
-                        fprintf(stderr, "Input is a neither a directory, a regular file, nor a block device. Refusing.\n");
+                        log_error("Input is a neither a directory, a regular file, nor a block device. Refusing.");
                         return -EINVAL;
                 }
         }
@@ -2432,12 +2257,12 @@ static int verb_digest(int argc, char *argv[]) {
                 input = mfree(input);
 
         if (operation == _DIGEST_OPERATION_INVALID) {
-                fprintf(stderr, "Failed to determine what to calculate digest of. Use --what=archive, --what=blob, --what=archive-index, --what=blob-index or --what=directory.\n");
+                log_error("Failed to determine what to calculate digest of. Use --what=archive, --what=blob, --what=archive-index, --what=blob-index or --what=directory.");
                 return -EINVAL;
         }
 
         if (!IN_SET(operation, DIGEST_ARCHIVE, DIGEST_ARCHIVE_INDEX) && seek_path) {
-                fprintf(stderr, "Subtree path only supported when calculating message digest of archive or archive index.\n");
+                log_error("Subtree path only supported when calculating message digest of archive or archive index.");
                 return -EINVAL;
         }
 
@@ -2476,26 +2301,20 @@ static int verb_digest(int argc, char *argv[]) {
 
                 r = ca_sync_set_archive_auto(s, input);
         }
-        if (r < 0) {
-                fprintf(stderr, "Failed to set sync input: %s", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set sync input: %s", strerror(-r));
         input_fd = -1;
 
         if (set_base_mode) {
                 r = ca_sync_set_base_mode(s, IN_SET(operation, DIGEST_ARCHIVE, DIGEST_ARCHIVE_INDEX) ? S_IFDIR : S_IFREG);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set base mode to regular file: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set base mode to regular file: %m");
         }
 
         if (arg_store) {
                 r = ca_sync_set_store_auto(s, arg_store);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set store: %m");
         }
 
         r = load_seeds_and_extra_stores(s);
@@ -2507,17 +2326,13 @@ static int verb_digest(int argc, char *argv[]) {
                 return r;
 
         r = ca_sync_enable_archive_digest(s, true);
-        if (r < 0) {
-                fprintf(stderr, "Failed to enable archive digest: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to enable archive digest: %m");
 
         if (seek_path) {
                 r = ca_sync_seek_path(s, seek_path);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to seek to %s: %s\n", seek_path, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to seek to %s: %m", seek_path);
 
                 seeking = true;
         }
@@ -2526,19 +2341,15 @@ static int verb_digest(int argc, char *argv[]) {
 
         for (;;) {
                 if (quit) {
-                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        log_error("Got exit signal, quitting.");
                         return -ESHUTDOWN;
                 }
 
                 r = ca_sync_step(s);
-                if (r == -ENOMEDIUM) {
-                        fprintf(stderr, "File, URL or resource not found.\n");
-                        return r;
-                }
-                if (r < 0) {
-                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r == -ENOMEDIUM)
+                        return log_error_errno(r, "File, URL or resource not found.");
+                if (r < 0)
+                        return log_error_errno(r, "Failed to run synchronizer: %m");
 
                 switch (r) {
 
@@ -2549,10 +2360,8 @@ static int verb_digest(int argc, char *argv[]) {
                                 char t[CA_CHUNK_ID_FORMAT_MAX];
 
                                 r = ca_sync_get_archive_digest(s, &digest);
-                                if (r < 0) {
-                                        fprintf(stderr, "Failed to get archive digest: %s\n", strerror(-r));
-                                        return r;
-                                }
+                                if (r < 0)
+                                        return log_error_errno(r, "Failed to get archive digest: %m");
 
                                 printf("%s\n", ca_chunk_id_format(&digest, t));
                                 return 0;
@@ -2570,24 +2379,20 @@ static int verb_digest(int argc, char *argv[]) {
                                  * archive checksum from here. If it is neither, we return failure. */
 
                                 r = ca_sync_current_mode(s, &mode);
-                                if (r < 0) {
-                                        fprintf(stderr, "Failed to get current mode: %s\n", strerror(-r));
-                                        return r;
-                                }
+                                if (r < 0)
+                                        return log_error_errno(r, "Failed to get current mode: %m");
 
                                 if (S_ISREG(mode)) {
                                         show_payload_digest = true;
 
                                         r = ca_sync_enable_payload_digest(s, true);
-                                        if (r < 0) {
-                                                fprintf(stderr, "Failed to enable payload digest: %s\n", strerror(-r));
-                                                return r;
-                                        }
+                                        if (r < 0)
+                                                return log_error_errno(r, "Failed to enable payload digest: %m");
 
                                 } else if (S_ISDIR(mode))
                                         show_payload_digest = false;
                                 else {
-                                        fprintf(stderr, "Path %s does not refer to a file or directory: %s\n", seek_path, strerror(-r));
+                                        log_error("Path %s does not refer to a file or directory: %m", seek_path);
                                         return -ENOTTY;
                                 }
 
@@ -2607,10 +2412,8 @@ static int verb_digest(int argc, char *argv[]) {
                                 char t[CA_CHUNK_ID_FORMAT_MAX];
 
                                 r = ca_sync_get_payload_digest(s, &digest);
-                                if (r < 0) {
-                                        fprintf(stderr, "Failed to get payload digest: %s\n", strerror(-r));
-                                        return r;
-                                }
+                                if (r < 0)
+                                        return log_error_errno(r, "Failed to get payload digest: %m");
 
                                 printf("%s\n", ca_chunk_id_format(&digest, t));
                                 return 0;
@@ -2658,7 +2461,7 @@ static int verb_mount(int argc, char *argv[]) {
         _cleanup_(ca_sync_unrefp) CaSync *s = NULL;
 
         if (argc > 3 || argc < 2) {
-                fprintf(stderr, "An archive path/URL expected, followed by a mount path.\n");
+                log_error("An archive path/URL expected, followed by a mount path.");
                 return -EINVAL;
         }
 
@@ -2676,7 +2479,7 @@ static int verb_mount(int argc, char *argv[]) {
         else if (arg_what == WHAT_ARCHIVE_INDEX)
                 operation = MOUNT_ARCHIVE_INDEX;
         else if (arg_what != _WHAT_INVALID) {
-                fprintf(stderr, "\"mount\" operation may only be combined with --what=archive and --what=archive-index.\n");
+                log_error("\"mount\" operation may only be combined with --what=archive and --what=archive-index.");
                 return -EINVAL;
         }
 
@@ -2703,10 +2506,8 @@ static int verb_mount(int argc, char *argv[]) {
 
         if (arg_rate_limit_bps != UINT64_MAX) {
                 r = ca_sync_set_rate_limit_bps(s, arg_rate_limit_bps);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set rate limit: %m");
         }
 
         if (operation == MOUNT_ARCHIVE) {
@@ -2722,25 +2523,19 @@ static int verb_mount(int argc, char *argv[]) {
                         r = ca_sync_set_index_auto(s, input);
         } else
                 assert(false);
-        if (r < 0) {
-                fprintf(stderr, "Failed to set sync input: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set sync input: %m");
 
         input_fd = -1;
 
         r = ca_sync_set_base_mode(s, S_IFDIR);
-        if (r < 0) {
-                fprintf(stderr, "Failed to set base mode to directory: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set base mode to directory: %m");
 
         if (arg_store) {
                 r = ca_sync_set_store_auto(s, arg_store);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set store: %m");
         }
 
         r = load_seeds_and_extra_stores(s);
@@ -2749,7 +2544,7 @@ static int verb_mount(int argc, char *argv[]) {
 
         return ca_fuse_run(s, input, mount_path, arg_mkdir);
 #else
-        fprintf(stderr, "Compiled without support for fuse.\n");
+        log_error("Compiled without support for fuse.");
         return -ENOSYS;
 #endif
 }
@@ -2772,7 +2567,7 @@ static int verb_mkdev(int argc, char *argv[]) {
         _cleanup_(ca_sync_unrefp) CaSync *s = NULL;
 
         if (argc > 3) {
-                fprintf(stderr, "An blob path/URL expected, possibly followed by a device or symlink name.\n");
+                log_error("An blob path/URL expected, possibly followed by a device or symlink name.");
                 return -EINVAL;
         }
 
@@ -2792,7 +2587,7 @@ static int verb_mkdev(int argc, char *argv[]) {
         else if (arg_what == WHAT_BLOB_INDEX)
                 operation = MKDEV_BLOB_INDEX;
         else if (arg_what != _WHAT_INVALID) {
-                fprintf(stderr, "\"mkdev\" operation may only be combined with --what=blob and --what=blob-index.\n");
+                log_error("\"mkdev\" operation may only be combined with --what=blob and --what=blob-index.");
                 r = -EINVAL;
                 goto finish;
         }
@@ -2822,10 +2617,8 @@ static int verb_mkdev(int argc, char *argv[]) {
 
         if (arg_rate_limit_bps != UINT64_MAX) {
                 r = ca_sync_set_rate_limit_bps(s, arg_rate_limit_bps);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
-                        goto finish;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set rate limit: %m");
         }
 
         if (operation == MKDEV_BLOB) {
@@ -2842,7 +2635,7 @@ static int verb_mkdev(int argc, char *argv[]) {
         } else
                 assert(false);
         if (r < 0) {
-                fprintf(stderr, "Failed to set sync input: %s\n", strerror(-r));
+                log_error_errno(r, "Failed to set sync input: %m");
                 goto finish;
         }
 
@@ -2850,14 +2643,14 @@ static int verb_mkdev(int argc, char *argv[]) {
 
         r = ca_sync_set_base_mode(s, S_IFREG);
         if (r < 0) {
-                fprintf(stderr, "Failed to set base mode to regular file: %s\n", strerror(-r));
+                log_error_errno(r, "Failed to set base mode to regular file: %m");
                 goto finish;
         }
 
         if (arg_store) {
                 r = ca_sync_set_store_auto(s, arg_store);
                 if (r < 0) {
-                        fprintf(stderr, "Failed to set store: %s\n", strerror(-r));
+                        log_error_errno(r, "Failed to set store: %m");
                         goto finish;
                 }
         }
@@ -2875,12 +2668,12 @@ static int verb_mkdev(int argc, char *argv[]) {
         if (name) {
                 r = ca_block_device_test_nbd(name);
                 if (r < 0) {
-                        fprintf(stderr, "Failed to test whether %s is an nbd device: %s\n", name, strerror(-r));
+                        log_error_errno(r, "Failed to test whether %s is an nbd device: %m", name);
                         goto finish;
                 } else if (r > 0) {
                         r = ca_block_device_set_path(nbd, name);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to set device path to %s: %s\n", name, strerror(-r));
+                                log_error_errno(r, "Failed to set device path to %s: %m", name);
                                 goto finish;
                         }
                 } else {
@@ -2890,7 +2683,7 @@ static int verb_mkdev(int argc, char *argv[]) {
                         if (k) {
                                 r = ca_block_device_set_friendly_name(nbd, k);
                                 if (r < 0) {
-                                        fprintf(stderr, "Failed to set friendly name to %s: %s\n", k, strerror(-r));
+                                        log_error("Failed to set friendly name to %s: %m", k);
                                         goto finish;
                                 }
                         } else
@@ -2911,34 +2704,34 @@ static int verb_mkdev(int argc, char *argv[]) {
                 if (r >= 0) {
                         r = ca_block_device_set_size(nbd, (size + 511) & ~511);
                         if (r < 0) {
-                                fprintf(stderr, "Failed to set NBD size: %s\n", strerror(-r));
+                                log_error_errno(r, "Failed to set NBD size: %m");
                                 goto finish;
                         }
                         break;
                 }
                 if (r == -ESPIPE) {
-                        fprintf(stderr, "Seekable archive required.\n");
+                        log_error_errno(r, "Seekable archive required.");
                         goto finish;
                 }
                 if (r != -EAGAIN) {
-                        fprintf(stderr, "Failed to determine archive size: %s\n", strerror(-r));
+                        log_error_errno(r, "Failed to determine archive size: %m");
                         goto finish;
                 }
 
                 r = ca_sync_step(s);
                 if (r == -ENOMEDIUM) {
-                        fprintf(stderr, "File, URL or resource not found.\n");
+                        log_error_errno(r, "File, URL or resource not found.");
                         goto finish;
                 }
                 if (r < 0) {
-                        fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
+                        log_error_errno(r, "Failed to run synchronizer: %m");
                         goto finish;
                 }
 
                 switch (r) {
 
                 case CA_SYNC_FINISHED:
-                        fprintf(stderr, "Premature end of archive.\n");
+                        log_error("Premature end of archive.");
                         r = -EBADMSG;
                         goto finish;
 
@@ -2959,20 +2752,19 @@ static int verb_mkdev(int argc, char *argv[]) {
 
         r = ca_block_device_open(nbd);
         if (r < 0) {
-                fprintf(stderr, "Failed to open NBD device: %s\n", strerror(-r));
+                log_error_errno(r, "Failed to open NBD device: %m");
                 goto finish;
         }
 
         r = ca_block_device_get_path(nbd, &path);
         if (r < 0) {
-                fprintf(stderr, "Failed to determine NBD device path: %s\n", strerror(-r));
+                log_error_errno(r, "Failed to determine NBD device path: %m");
                 goto finish;
         }
 
         if (make_symlink) {
                 if (symlink(path, name) < 0) {
-                        r = -errno;
-                        fprintf(stderr, "Failed to create symlink %s → %s: %s\n", name, path, strerror(-r));
+                        r = log_error_errno(errno, "Failed to create symlink %s → %s: %m", name, path);
                         goto finish;
                 }
 
@@ -2993,7 +2785,7 @@ static int verb_mkdev(int argc, char *argv[]) {
 
                 r = ca_block_device_step(nbd);
                 if (r < 0) {
-                        fprintf(stderr, "Failed to read NBD request: %s\n", strerror(-r));
+                        log_error_errno(r, "Failed to read NBD request: %m");
                         goto finish;
                 }
 
@@ -3019,7 +2811,7 @@ static int verb_mkdev(int argc, char *argv[]) {
                                 r = 0;
                                 goto finish;
                         } else if (r < 0) {
-                                fprintf(stderr, "Failed to poll for NBD requests: %s\n", strerror(-r));
+                                log_error_errno(r, "Failed to poll for NBD requests: %m");
                                 goto finish;
                         }
 
@@ -3030,19 +2822,19 @@ static int verb_mkdev(int argc, char *argv[]) {
 
                 r = ca_block_device_get_request_offset(nbd, &req_offset);
                 if (r < 0) {
-                        fprintf(stderr, "Failed to get NBD request offset: %s\n", strerror(-r));
+                        log_error_errno(r, "Failed to get NBD request offset: %m");
                         goto finish;
                 }
 
                 r = ca_block_device_get_request_size(nbd, &req_size);
                 if (r < 0) {
-                        fprintf(stderr, "Failed to get NBD request size: %s\n", strerror(-r));
+                        log_error_errno(r, "Failed to get NBD request size: %m");
                         goto finish;
                 }
 
                 r = ca_sync_seek_offset(s, req_offset);
                 if (r < 0) {
-                        fprintf(stderr, "Failed to seek: %s\n", strerror(-r));
+                        log_error_errno(r, "Failed to seek: %m");
                         goto finish;
                 }
 
@@ -3058,11 +2850,11 @@ static int verb_mkdev(int argc, char *argv[]) {
 
                         r = ca_sync_step(s);
                         if (r == -ENOMEDIUM) {
-                                fprintf(stderr, "File, URL or resource not found.\n");
+                                log_error_errno(r, "File, URL or resource not found.");
                                 goto finish;
                         }
                         if (r < 0) {
-                                fprintf(stderr, "Failed to run synchronizer: %s\n", strerror(-r));
+                                log_error_errno(r, "Failed to run synchronizer: %m");
                                 goto finish;
                         }
 
@@ -3080,13 +2872,13 @@ static int verb_mkdev(int argc, char *argv[]) {
 
                                 r = ca_block_device_put_data(nbd, req_offset, realloc_buffer_data(&buffer), req_size);
                                 if (r < 0) {
-                                        fprintf(stderr, "Failed to send reply: %s\n", strerror(-r));
+                                        log_error_errno(r, "Failed to send reply: %m");
                                         goto finish;
                                 }
 
                                 r = realloc_buffer_advance(&buffer, req_size);
                                 if (r < 0) {
-                                        fprintf(stderr, "Failed to advance buffer: %s\n", strerror(-r));
+                                        log_error_errno(r, "Failed to advance buffer: %m");
                                         goto finish;
                                 }
 
@@ -3099,7 +2891,7 @@ static int verb_mkdev(int argc, char *argv[]) {
 
                                 r = ca_sync_get_payload(s, &p, &sz);
                                 if (r < 0) {
-                                        fprintf(stderr, "Failed to retrieve synchronizer payload: %s\n", strerror(-r));
+                                        log_error_errno(r, "Failed to retrieve synchronizer payload: %m");
                                         goto finish;
                                 }
 
@@ -3108,7 +2900,7 @@ static int verb_mkdev(int argc, char *argv[]) {
 
                                         r = ca_block_device_put_data(nbd, req_offset, p, MIN(sz, req_size));
                                         if (r < 0) {
-                                                fprintf(stderr, "Failed to send reply: %s\n", strerror(-r));
+                                                log_error_errno(r, "Failed to send reply: %m");
                                                 goto finish;
                                         }
 
@@ -3124,13 +2916,13 @@ static int verb_mkdev(int argc, char *argv[]) {
                                         if (realloc_buffer_size(&buffer) >= req_size) {
                                                 r = ca_block_device_put_data(nbd, req_offset, realloc_buffer_data(&buffer), req_size);
                                                 if (r < 0) {
-                                                        fprintf(stderr, "Failed to send reply: %s\n", strerror(-r));
+                                                        log_error_errno(r, "Failed to send reply: %m");
                                                         goto finish;
                                                 }
 
                                                 r = realloc_buffer_advance(&buffer, req_size);
                                                 if (r < 0) {
-                                                        fprintf(stderr, "Failed to advance buffer: %s\n", strerror(-r));
+                                                        log_error_errno(r, "Failed to advance buffer: %m");
                                                         goto finish;
                                                 }
 
@@ -3222,10 +3014,8 @@ static int allocate_stores(
                 n++;
 
                 r = ca_store_set_path(stores.stores[n-1], wstore_path);
-                if (r < 0) {
-                        fprintf(stderr, "Unable to set store path %s: %s\n", wstore_path, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Unable to set store path %s: %m", wstore_path);
         }
 
         STRV_FOREACH(rstore_path, rstore_paths) {
@@ -3235,10 +3025,8 @@ static int allocate_stores(
                 n++;
 
                 r = ca_store_set_path(stores.stores[n-1], *rstore_path);
-                if (r < 0) {
-                        fprintf(stderr, "Unable to set store path %s: %s\n", *rstore_path, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Unable to set store path %s: %m", *rstore_path);
         }
 
         *ret = stores.stores;
@@ -3256,7 +3044,7 @@ static int verb_pull(int argc, char *argv[]) {
         int r;
 
         if (argc < 5) {
-                fprintf(stderr, "Expected at least 5 arguments.\n");
+                log_error("Expected at least 5 arguments.");
                 return -EINVAL;
         }
 
@@ -3268,12 +3056,12 @@ static int verb_pull(int argc, char *argv[]) {
         stores.n_stores = !!wstore_path + (argc - 5);
 
         if (base_path) {
-                fprintf(stderr, "Pull from base or archive not yet supported.\n");
+                log_error("Pull from base or archive not yet supported.");
                 return -EOPNOTSUPP;
         }
 
         if (!archive_path && !index_path && stores.n_stores == 0) {
-                fprintf(stderr, "Nothing to do.\n");
+                log_error("Nothing to do.");
                 return -EINVAL;
         }
 
@@ -3287,39 +3075,29 @@ static int verb_pull(int argc, char *argv[]) {
                                               (stores.n_stores > 0 ? CA_PROTOCOL_READABLE_STORE : 0) |
                                               (index_path ? CA_PROTOCOL_READABLE_INDEX : 0) |
                                               (archive_path ? CA_PROTOCOL_READABLE_ARCHIVE : 0));
-        if (r < 0) {
-                fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set feature flags: %m");
 
         if (arg_rate_limit_bps != UINT64_MAX) {
                 r = ca_remote_set_rate_limit_bps(rr, arg_rate_limit_bps);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set rate limit: %m");
         }
 
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);
-        if (r < 0) {
-                fprintf(stderr, "Failed to set I/O file descriptors: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set I/O file descriptors: %m");
 
         if (index_path) {
                 r = ca_remote_set_index_path(rr, index_path);
-                if (r < 0) {
-                        fprintf(stderr, "Unable to set index file %s: %s\n", index_path, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Unable to set index file %s: %m", index_path);
         }
 
         if (archive_path) {
                 r = ca_remote_set_archive_path(rr, archive_path);
-                if (r < 0) {
-                        fprintf(stderr, "Unable to set archive file %s: %s\n", archive_path, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Unable to set archive file %s: %m", archive_path);
         }
 
         r = allocate_stores(wstore_path, argv + 5, argc - 5, &stores.stores, &stores.n_stores);
@@ -3332,17 +3110,15 @@ static int verb_pull(int argc, char *argv[]) {
                 int step;
 
                 if (quit) {
-                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        log_info("Got exit signal, quitting.");
                         return -ESHUTDOWN;
                 }
 
                 step = ca_remote_step(rr);
                 if (step == -EPIPE || step == CA_REMOTE_FINISHED) /* When somebody pulls from us, he's welcome to terminate any time he likes */
                         break;
-                if (step < 0) {
-                        fprintf(stderr, "Failed to process remote: %s\n", strerror(-step));
-                        return step;
-                }
+                if (step < 0)
+                        return log_error_errno(step, "Failed to process remote: %m");
 
                 put_count = 0;
                 for (;;) {
@@ -3353,20 +3129,16 @@ static int verb_pull(int argc, char *argv[]) {
                         uint64_t l;
 
                         r = ca_remote_can_put_chunk(rr);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to determine whether there's buffer space for sending: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to determine whether there's buffer space for sending: %m");
                         if (r == 0) /* No space to put more */
                                 break;
 
                         r = ca_remote_next_request(rr, &id);
                         if (r == -ENODATA) /* No data requested */
                                 break;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to determine which chunk to send next: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to determine which chunk to send next: %m");
 
                         for (i = 0; i < stores.n_stores; i++) {
                                 r = ca_store_get(stores.stores[i], &id, CA_CHUNK_COMPRESSED, &p, &l, &compression);
@@ -3374,20 +3146,16 @@ static int verb_pull(int argc, char *argv[]) {
                                         found = true;
                                         break;
                                 }
-                                if (r != -ENOENT) {
-                                        fprintf(stderr, "Failed to query store: %s\n", strerror(-r));
-                                        return r;
-                                }
+                                if (r != -ENOENT)
+                                        return log_error_errno(r, "Failed to query store: %m");
                         }
 
                         if (found)
                                 r = ca_remote_put_chunk(rr, &id, compression, p, l);
                         else
                                 r = ca_remote_put_missing(rr, &id);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to enqueue response: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to enqueue response: %m");
 
                         put_count ++;
                 }
@@ -3410,14 +3178,10 @@ static int verb_pull(int argc, char *argv[]) {
 
                 block_exit_handler(SIG_UNBLOCK, NULL);
 
-                if (r == -ESHUTDOWN) {
-                        fprintf(stderr, "Got exit signal, quitting.\n");
-                        return r;
-                }
-                if (r < 0) {
-                        fprintf(stderr, "Failed to poll remoting engine: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r == -ESHUTDOWN)
+                        return log_error_errno(r, "Got exit signal, quitting.");
+                if (r < 0)
+                        return log_error_errno(r, "Failed to poll remoting engine: %m");
         }
 
         return 0;
@@ -3433,7 +3197,7 @@ static int verb_push(int argc, char *argv[]) {
         int r;
 
         if (argc < 5) {
-                fprintf(stderr, "Expected at least 5 arguments.\n");
+                log_error("Expected at least 5 arguments.");
                 return -EINVAL;
         }
 
@@ -3445,16 +3209,16 @@ static int verb_push(int argc, char *argv[]) {
         stores.n_stores = !!wstore_path + (argc - 5);
 
         if (base_path) {
-                fprintf(stderr, "Push to base not yet supported.\n");
+                log_error("Push to base not yet supported.");
                 return -EOPNOTSUPP;
         }
 
         if (!archive_path && !index_path && stores.n_stores == 0) {
-                fprintf(stderr, "Nothing to do.\n");
+                log_error("Nothing to do.");
                 return -EINVAL;
         }
 
-        /* fprintf(stderr, "push archive: %s index: %s wstore: %s\n", strna(archive_path), strna(index_path), strna(wstore_path)); */
+        /* log_error("push archive: %s index: %s wstore: %s", strna(archive_path), strna(index_path), strna(wstore_path)); */
 
         rr = ca_remote_new();
         if (!rr)
@@ -3464,24 +3228,18 @@ static int verb_push(int argc, char *argv[]) {
                                               (wstore_path ? CA_PROTOCOL_WRITABLE_STORE : 0) |
                                               (index_path ? CA_PROTOCOL_WRITABLE_INDEX : 0) |
                                               (archive_path ? CA_PROTOCOL_WRITABLE_ARCHIVE : 0));
-        if (r < 0) {
-                fprintf(stderr, "Failed to set feature flags: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                log_error_errno(r, "Failed to set feature flags: %m");
 
         if (arg_rate_limit_bps != UINT64_MAX) {
                 r = ca_remote_set_rate_limit_bps(rr, arg_rate_limit_bps);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to set rate limit: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        log_error_errno(r, "Failed to set rate limit: %m");
         }
 
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);
-        if (r < 0) {
-                fprintf(stderr, "Failed to set I/O file descriptors: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0)
+                log_error_errno(r, "Failed to set I/O file descriptors: %m");
 
         if (index_path) {
                 index = ca_index_new_incremental_read();
@@ -3489,24 +3247,18 @@ static int verb_push(int argc, char *argv[]) {
                         return log_oom();
 
                 r = ca_index_set_path(index, index_path);
-                if (r < 0) {
-                        fprintf(stderr, "Unable to set index file %s: %s\n", index_path, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Unable to set index file %s: %m", index_path);
 
                 r = ca_index_open(index);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to open index file %s: %s\n", index_path, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to open index file %s: %m", index_path);
         }
 
         if (archive_path) {
                 r = ca_remote_set_archive_path(rr, archive_path);
-                if (r < 0) {
-                        fprintf(stderr, "Unable to set archive file %s: %s\n", archive_path, strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Unable to set archive file %s: %m", archive_path);
         }
 
         r = allocate_stores(wstore_path, argv + 5, argc - 5, &stores.stores, &stores.n_stores);
@@ -3518,15 +3270,13 @@ static int verb_push(int argc, char *argv[]) {
                 int step;
 
                 if (quit) {
-                        fprintf(stderr, "Got exit signal, quitting.\n");
+                        log_error("Got exit signal, quitting.");
                         return -ESHUTDOWN;
                 }
 
                 step = ca_remote_step(rr);
-                if (step < 0) {
-                        fprintf(stderr, "Failed to process remote: %s\n", strerror(-step));
-                        return step;
-                }
+                if (step < 0)
+                        return log_error_errno(step, "Failed to process remote: %m");
 
                 if (step == CA_REMOTE_FINISHED)
                         break;
@@ -3548,14 +3298,10 @@ static int verb_push(int argc, char *argv[]) {
 
                         block_exit_handler(SIG_UNBLOCK, NULL);
 
-                        if (r == -ESHUTDOWN) {
-                                fprintf(stderr, "Got exit signal, quitting.\n");
-                                return r;
-                        }
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to run remoting engine: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r == -ESHUTDOWN)
+                                return log_info_errno(r, "Got exit signal, quitting.");
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to run remoting engine: %m");
 
                         break;
                 }
@@ -3573,26 +3319,20 @@ static int verb_push(int argc, char *argv[]) {
                         size_t n;
 
                         r = ca_remote_read_index(rr, &p, &n);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to read index data: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to read index data: %m");
 
                         r = ca_index_incremental_write(index, p, n);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to write index data: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to write index data: %m");
 
                         break;
                 }
 
                 case CA_REMOTE_READ_INDEX_EOF:
                         r = ca_index_incremental_eof(index);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to write index EOF: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to write index EOF: %m");
 
                         index_written = true;
                         break;
@@ -3604,22 +3344,16 @@ static int verb_push(int argc, char *argv[]) {
                         size_t n;
 
                         r = ca_remote_next_chunk(rr, CA_CHUNK_AS_IS, &id, &p, &n, &compression);
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to determine most recent chunk: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to determine most recent chunk: %m");
 
                         r = ca_store_put(stores.stores[0], &id, compression, p, n); /* Write to wstore */
-                        if (r < 0 && r != -EEXIST) {
-                                fprintf(stderr, "Failed to write chunk to store: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0 && r != -EEXIST)
+                                return log_error_errno(r, "Failed to write chunk to store: %m");
 
                         r = ca_remote_forget_chunk(rr, &id);
-                        if (r < 0 && r != -ENOENT) {
-                                fprintf(stderr, "Failed to forget chunk: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0 && r != -ENOENT)
+                                return log_error_errno(r, "Failed to forget chunk: %m");
 
                         break;
                 }
@@ -3645,10 +3379,8 @@ static int verb_push(int argc, char *argv[]) {
                         r = ca_remote_get_remote_feature_flags(rr, &remote_flags);
                         if (r == -ENODATA)
                                 break;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to get remote feature flags: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to get remote feature flags: %m");
 
                         /* Only request chunks if this is requested by the client side */
                         if ((remote_flags & CA_PROTOCOL_PUSH_INDEX_CHUNKS) == 0) {
@@ -3659,10 +3391,8 @@ static int verb_push(int argc, char *argv[]) {
                         r = ca_index_read_chunk(index, &id, NULL, NULL);
                         if (r == -EAGAIN) /* Not read enough yet */
                                 break;
-                        if (r < 0) {
-                                fprintf(stderr, "Failed to read index: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to read index: %m");
                         if (r == 0) { /* EOF */
                                 index_processed = true;
                                 break;
@@ -3673,10 +3403,8 @@ static int verb_push(int argc, char *argv[]) {
                         r = 0;
                         for (i = 0; i < stores.n_stores; i++) {
                                 r = ca_store_has(stores.stores[i], &id);
-                                if (r < 0) {
-                                        fprintf(stderr, "Failed to test whether chunk exists locally already: %s\n", strerror(-r));
-                                        return r;
-                                }
+                                if (r < 0)
+                                        log_error_errno(r, "Failed to test whether chunk exists locally already: %m");
                                 if (r > 0)
                                         break;
                         }
@@ -3688,10 +3416,8 @@ static int verb_push(int argc, char *argv[]) {
                         /* fprintf(stderr, "Requesting %s\n", ca_chunk_id_format(&id, ids)); */
 
                         r = ca_remote_request_async(rr, &id, false);
-                        if (r < 0 && r != -EALREADY && r != -EAGAIN) {
-                                fprintf(stderr, "Failed to request chunk: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0 && r != -EALREADY && r != -EAGAIN)
+                                return log_error_errno(r, "Failed to request chunk: %m");
 
                         /* if (r > 0) */
                         /*         fprintf(stderr, "New request for %s\n", ca_chunk_id_format(&id, ids)); */
@@ -3709,28 +3435,22 @@ static int verb_push(int argc, char *argv[]) {
 
                 /* If there are any chunks queued still, don't finish yet */
                 r = ca_remote_has_chunks(rr);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to determine if further requests are pending: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine if further requests are pending: %m");
                 if (r > 0)
                         finished = false;
 
                 if (finished) {
                         r = ca_remote_goodbye(rr);
-                        if (r < 0 && r != -EALREADY) {
-                                fprintf(stderr, "Failed to enqueue goodbye: %s\n", strerror(-r));
-                                return r;
-                        }
+                        if (r < 0 && r != -EALREADY)
+                                return log_error_errno(r, "Failed to enqueue goodbye: %m");
                 }
         }
 
         if (index) {
                 r = ca_index_install(index);
-                if (r < 0) {
-                        fprintf(stderr, "Failed to install index on location: %s\n", strerror(-r));
-                        return r;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to install index on location: %m");
         }
 
         return 0;
@@ -3741,17 +3461,16 @@ static int verb_udev(int argc, char *argv[]) {
         char pretty[FILENAME_MAX+1];
         const char *p;
         _cleanup_(safe_closep) int fd = -1;
-        int r;
         ssize_t n;
 
         if (argc != 2) {
-                fprintf(stderr, "Expected one argument.\n");
+                log_error("Expected one argument.");
                 return -EINVAL;
         }
 
         e = path_startswith(argv[1], "/dev");
         if (!e || !filename_is_valid(e)) {
-                fprintf(stderr, "Argument is not a valid device node path: %s.\n", argv[2]);
+                log_error("Argument is not a valid device node path: %s.", argv[2]);
                 return -EINVAL;
         }
 
@@ -3761,18 +3480,13 @@ static int verb_udev(int argc, char *argv[]) {
                 if (errno == ENOENT)
                         return 0;
 
-                r = -errno;
-                fprintf(stderr, "Failed to open %s: %s\n", p, strerror(-r));
-                return r;
+                return log_error_errno(errno, "Failed to open %s: %m", p);
         }
 
         if (flock(fd, LOCK_SH|LOCK_NB) < 0) {
 
-                if (errno != EWOULDBLOCK) {
-                        r = -errno;
-                        fprintf(stderr, "Failed to check if %s is locked: %s\n", p, strerror(-r));
-                        return r;
-                }
+                if (errno != EWOULDBLOCK)
+                        return log_error_errno(errno, "Failed to check if %s is locked: %m", p);
 
                 /* If we got EWOULDBLOCK, everything is good, there's a casync locking this */
 
@@ -3783,23 +3497,20 @@ static int verb_udev(int argc, char *argv[]) {
         }
 
         n = read(fd, pretty, sizeof(pretty));
-        if (n < 0) {
-                r = -errno;
-                fprintf(stderr, "Failed to read from %s: %s\n", p, strerror(-r));
-                return r;
-        }
+        if (n < 0)
+                return log_error_errno(errno, "Failed to read from %s: %m", p);
         if ((size_t) n >= sizeof(pretty)) {
-                fprintf(stderr, "Stored name read from %s too long.\n", p);
+                log_error("Stored name read from %s too long.", p);
                 return -EINVAL;
         }
         if ((size_t) n <= 0 || pretty[n-1] != '\n') {
-                fprintf(stderr, "Stored name not newline terminated.\n");
+                log_error("Stored name not newline terminated.");
                 return -EINVAL;
         }
 
         pretty[n-1] = 0;
         if (!filename_is_valid(pretty)) {
-                fprintf(stderr, "Stored name is invalid: %s\n", pretty);
+                log_error("Stored name is invalid: %s", pretty);
                 return -EINVAL;
         }
 
@@ -3807,11 +3518,72 @@ static int verb_udev(int argc, char *argv[]) {
         return 0;
 }
 
+static int verb_gc(int argc, char *argv[]) {
+        int i, r;
+        _cleanup_(ca_chunk_collection_unrefp) CaChunkCollection *coll = NULL;
+        _cleanup_(ca_store_unrefp) CaStore *store = NULL;
+
+        if (argc < 2) {
+                log_error("Expected at least one argument.");
+                return -EINVAL;
+        }
+
+        coll = ca_chunk_collection_new();
+        if (!coll)
+                return log_oom();
+
+        /* This sets the same store for all indices, based on the first index. */
+        r = set_default_store(argv[1]);
+        if (r < 0)
+                return r;
+
+        if (!arg_store) {
+                log_error("Failed to determine store, use --store= to set store.");
+                return -EINVAL;
+        }
+
+        store = ca_store_new();
+        if (!store)
+                return log_oom();
+
+        r = ca_store_set_path(store, arg_store);
+        if (r < 0) {
+                fprintf(stderr, "Set to set store to \"%s\": %s", arg_store, strerror(-r));
+                return r;
+        }
+
+        for (i = 1; i < argc; i++) {
+                const char *path = argv[i];
+
+                r = ca_chunk_collection_add_index(coll, path);
+                if (r < 0)
+                        return r;
+        }
+
+        {
+                size_t usage, size;
+
+                assert_se(ca_chunk_collection_usage(coll, &usage) == 0);
+                assert_se(ca_chunk_collection_size(coll, &size) == 0);
+                if (arg_verbose)
+                        printf("Chunk store usage: %zu references, %zu chunks\n", usage, size);
+        }
+
+        r = ca_gc_cleanup_unused(store, coll,
+                                 arg_verbose * CA_GC_VERBOSE |
+                                 arg_dry_run * CA_GC_DRY_RUN);
+        if (r < 0)
+                log_error_errno(r, "Chunk cleanup failed: %m");
+
+        return r;
+}
+
+
 static int dispatch_verb(int argc, char *argv[]) {
         int r;
 
         if (argc < 1) {
-                fprintf(stderr, "Missing verb. (Invoke '%s --help' for a list of available verbs.)\n", program_invocation_short_name);
+                log_error("Missing verb. (Invoke '%s --help' for a list of available verbs.)", program_invocation_short_name);
                 return -EINVAL;
         }
 
@@ -3836,8 +3608,10 @@ static int dispatch_verb(int argc, char *argv[]) {
                 r = verb_push(argc, argv);
         else if (streq(argv[0], "udev")) /* "Secret" verb, only to be called by the udev nbd rules */
                 r = verb_udev(argc, argv);
+        else if (streq(argv[0], "gc"))
+                r = verb_gc(argc, argv);
         else {
-                fprintf(stderr, "Unknown verb '%s'. (Invoke '%s --help' for a list of available verbs.)\n", argv[0], program_invocation_short_name);
+                log_error("Unknown verb '%s'. (Invoke '%s --help' for a list of available verbs.)", argv[0], program_invocation_short_name);
                 r = -EINVAL;
         }
 
@@ -3864,7 +3638,7 @@ finish:
         strv_free(arg_extra_stores);
         strv_free(arg_seeds);
 
-        /* fprintf(stderr, PID_FMT ": exiting with error code: %s\n", getpid(), strerror(-r)); */
+        /* fprintf(stderr, PID_FMT ": exiting with error code: %m", getpid()); */
 
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

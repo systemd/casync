@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1+ */
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <lzma.h>
 #include <sys/stat.h>
@@ -7,6 +8,7 @@
 
 #include "castore.h"
 #include "def.h"
+#include "dirent-util.h"
 #include "realloc-buffer.h"
 #include "rm-rf.h"
 #include "util.h"
@@ -32,6 +34,14 @@ struct CaStore {
 
         uint64_t n_requests;
         uint64_t n_request_bytes;
+};
+
+struct CaStoreIterator {
+        CaStore *store;
+
+        DIR *rootdir;
+        struct dirent *subdir_de;
+        DIR *subdir;
 };
 
 CaStore* ca_store_new(void) {
@@ -311,4 +321,89 @@ int ca_store_set_digest_type(CaStore *s, CaDigestType type) {
         }
 
         return 0;
+}
+
+CaStoreIterator* ca_store_iterator_new(CaStore *store) {
+        CaStoreIterator *it;
+
+        it = new0(CaStoreIterator, 1);
+        if (!it)
+                return NULL;
+
+        it->store = store;
+
+        return it;
+}
+
+CaStoreIterator* ca_store_iterator_unref(CaStoreIterator *iter) {
+        if (!iter)
+                return NULL;
+
+        if (iter->rootdir)
+                closedir(iter->rootdir);
+        if (iter->subdir)
+                closedir(iter->subdir);
+        return mfree(iter);
+}
+
+int ca_store_iterator_next(
+                CaStoreIterator *iter,
+                int *rootdir_fd,
+                const char **subdir,
+                int *subdir_fd,
+                const char **chunk) {
+
+        struct dirent *de;
+
+        if (!iter->rootdir) {
+                iter->rootdir = opendir(iter->store->root);
+                if (!iter->rootdir)
+                        return -errno;
+        }
+
+        for (;;) {
+                if (!iter->subdir) {
+                        int fd;
+
+                        errno = 0;
+                        iter->subdir_de = readdir(iter->rootdir);
+                        if (!iter->subdir_de) {
+                                if (errno > 0)
+                                        return -errno;
+                                return 0; /* done */
+                        }
+
+                        fd = openat(dirfd(iter->rootdir), iter->subdir_de->d_name,
+                                    O_RDONLY|O_CLOEXEC|O_DIRECTORY);
+                        if (fd < 0) {
+                                if (errno == EISDIR)
+                                        continue;
+                                return -errno;
+                        }
+
+                        iter->subdir = fdopendir(fd);
+                        if (!iter->subdir) {
+                                safe_close(fd);
+                                return -errno;
+                        }
+                }
+
+                FOREACH_DIRENT_ALL(de, iter->subdir, return -errno) {
+                        if (!dirent_is_file_with_suffix(de, ".cacnk"))
+                                continue;
+
+                        if (rootdir_fd)
+                                *rootdir_fd = dirfd(iter->rootdir);
+                        if (subdir)
+                                *subdir = iter->subdir_de->d_name;
+                        if (subdir_fd)
+                                *subdir_fd = dirfd(iter->subdir);
+                        if (chunk)
+                                *chunk = de->d_name;
+                        return 1; /* success */
+                }
+
+                assert_se(closedir(iter->subdir) == 0);
+                iter->subdir = NULL;
+        }
 }
