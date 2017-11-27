@@ -26,6 +26,15 @@ enum {
         CA_REMOTE_READ_ARCHIVE_EOF, /* pull: ARCHIVE data is now complete */
 };
 
+enum {
+        CA_REMOTE_ARG_OPERATION = 0,
+        CA_REMOTE_ARG_BASE_URL,
+        CA_REMOTE_ARG_ARCHIVE_URL,
+        CA_REMOTE_ARG_INDEX_URL,
+        CA_REMOTE_ARG_WSTORE_URL,   /* This should be last except MAX */
+        _CA_REMOTE_ARG_MAX,
+};
+
 CaRemote* ca_remote_new(void);
 CaRemote* ca_remote_ref(CaRemote *rr);
 CaRemote* ca_remote_unref(CaRemote *rr);

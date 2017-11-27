@@ -1023,11 +1023,12 @@ static int ca_remote_start(CaRemote *rr) {
                                 i++;
                         }
 
-                        args[i++] = (char*) ((rr->local_feature_flags & (CA_PROTOCOL_PUSH_CHUNKS|CA_PROTOCOL_PUSH_INDEX|CA_PROTOCOL_PUSH_ARCHIVE)) ? "push" : "pull");
-                        args[i++] = /* rr->base_url ? rr->base_url + skip :*/ (char*) "-";
-                        args[i++] = rr->archive_url ? rr->archive_url + skip : (char*) "-";
-                        args[i++] = rr->index_url ? rr->index_url + skip : (char*) "-";
-                        args[i++] = rr->wstore_url ? rr->wstore_url + skip: (char*) "-";
+                        args[i + CA_REMOTE_ARG_OPERATION] = (char*) ((rr->local_feature_flags & (CA_PROTOCOL_PUSH_CHUNKS|CA_PROTOCOL_PUSH_INDEX|CA_PROTOCOL_PUSH_ARCHIVE)) ? "push" : "pull");
+                        args[i + CA_REMOTE_ARG_BASE_URL] = /* rr->base_url ? rr->base_url + skip :*/ (char*) "-";
+                        args[i + CA_REMOTE_ARG_ARCHIVE_URL] = rr->archive_url ? rr->archive_url + skip : (char*) "-";
+                        args[i + CA_REMOTE_ARG_INDEX_URL] = rr->index_url ? rr->index_url + skip : (char*) "-";
+                        args[i + CA_REMOTE_ARG_WSTORE_URL] = rr->wstore_url ? rr->wstore_url + skip: (char*) "-";
+                        i += _CA_REMOTE_ARG_MAX;
 
                         STRV_FOREACH(u, rr->rstore_urls)
                                 args[i++] = *u + skip;
