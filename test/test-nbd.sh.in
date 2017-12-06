@@ -41,7 +41,11 @@ if [ `id -u` == 0 ] ; then
     if test -e /dev/nbd0 ; then
         MKDEV_PID=`@top_builddir@/notify-wait @top_builddir@/casync $PARAMS mkdev $SCRATCH_DIR/test.caibx $SCRATCH_DIR/test-node`
 
-        dd if=$SCRATCH_DIR/test-node bs=102400 count=80 | @top_builddir@/test-calc-digest $DIGEST > $SCRATCH_DIR/mkdev.digest
+        until [ ${rc} -eq 0 -o ${retry} -gt 5 ]; do
+            sleep $((retry++))s
+            dd if=$SCRATCH_DIR/test-node bs=102400 count=80 | @top_builddir@/test-calc-digest $DIGEST > $SCRATCH_DIR/mkdev.digest
+            rc=${PIPESTATUS[0]}
+        done
 
         diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/mkdev.digest
 
