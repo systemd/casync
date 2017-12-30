@@ -1,6 +1,8 @@
 SHORT-TERM:
 * use btrfs reflink with contents checking
 * rework how default --with= and --without= are calculated, so that --except stuff doesn't leak into blob index
+* whenever we set the timestamp on a file, reread the value set and check if
+  the required granularity has been available.
 
 TO MAKE IT USEFUL FOR BACKUPS:
 * encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
@@ -49,3 +51,4 @@ LATER:
 * support blake2 as hashes
 * parallelize image generation: when storing chunks in the store do so in a thread
 * in "casync stat" output show which flags enable what
+* save/restore xfs/ext4 projid
