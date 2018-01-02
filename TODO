@@ -37,3 +37,5 @@ LATER:
 * send progress information via sd_notify(), so that people can wrap casync nicely in UIs
 * maybe turn "recursive" mode into a numeric value specifying how far to descend?
 * make "casync stat" work on a directory with a subpath
+* save/restore xfs/ext4 projid
+* tweak chunker: shift cut to last "marker".
