@@ -704,7 +704,7 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
                 }
 
                 if (r < 0) {
-                        log_error("Failed to establish FUSE mount: %m");
+                        log_error_errno(r, "Failed to establish FUSE mount: %m");
                         goto finish;
                 }
         }
@@ -713,7 +713,7 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
         fuse = fuse_new(fc, NULL, &ops, sizeof(ops), s);
         if (!fuse) {
                 r = errno != 0 ? -abs(errno) : -ENOMEM;
-                log_error("Failed to allocate FUSE object: %m");
+                log_error_errno(r, "Failed to allocate FUSE object: %m");
                 goto finish;
         }
 
@@ -736,7 +736,7 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
 
         r = fuse_loop(fuse);
         if (r < 0) {
-                log_error("Failed to run FUSE loop: %m");
+                log_error_errno(r, "Failed to run FUSE loop: %m");
                 goto finish;
         }
 
