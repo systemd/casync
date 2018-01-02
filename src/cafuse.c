@@ -641,7 +641,7 @@ static int feature_flags_warning(CaSync *s) {
                 }
         }
 
-        unsupported = ff & ~(CA_FORMAT_WITH_FUSE|CA_FORMAT_EXCLUDE_NODUMP|CA_FORMAT_EXCLUDE_SUBMOUNTS);
+        unsupported = ff & ~(CA_FORMAT_WITH_FUSE|CA_FORMAT_SHA512_256|CA_FORMAT_EXCLUDE_SUBMOUNTS|CA_FORMAT_EXCLUDE_NODUMP);
         if (unsupported == 0)
                 return 0;
 
