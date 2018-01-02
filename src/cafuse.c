@@ -735,13 +735,12 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
         (void) send_notify("READY=1");
 
         r = fuse_loop(fuse);
+        if (IN_SET(r, -ESHUTDOWN, -EINTR) && quit)
+                r = 0;
         if (r < 0) {
                 log_error_errno(r, "Failed to run FUSE loop: %m");
                 goto finish;
         }
-
-        if (IN_SET(r, -ESHUTDOWN, -EINTR) && quit)
-                r = 0;
 
 finish:
         if (updated_signal_handlers)
