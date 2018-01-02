@@ -114,7 +114,6 @@ libzstd = dependency('libzstd',
 
 libacl = cc.find_library('acl')
 
-
 if get_option('fuse')
         libfuse = dependency('fuse',
                              version : '>= 2.6')
@@ -129,6 +128,13 @@ else
         libselinux = []
 endif
 conf.set10('HAVE_SELINUX', get_option('selinux'))
+
+if get_option('udev')
+        libudev = dependency('libudev')
+else
+        libudev = []
+endif
+conf.set10('HAVE_UDEV', get_option('udev'))
 
 threads = dependency('threads')
 math = cc.find_library('m')
@@ -159,6 +165,7 @@ casync = executable(
                 libfuse,
                 liblzma,
                 libselinux,
+                libudev,
                 libz,
                 libzstd,
                 math,

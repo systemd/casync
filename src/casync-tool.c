@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +27,11 @@
 #include "parse-util.h"
 #include "signal-handler.h"
 #include "util.h"
+
+#ifdef HAVE_UDEV
+#include <libudev.h>
+#include "udev-util.h"
+#endif
 
 static enum arg_what {
         WHAT_ARCHIVE,
@@ -2556,15 +2562,24 @@ static int verb_mkdev(int argc, char *argv[]) {
                 MKDEV_BLOB_INDEX,
                 _MKDEV_OPERATION_INVALID = -1,
         } MkDevOperation;
+
         MkDevOperation operation = _MKDEV_OPERATION_INVALID;
-        _cleanup_(realloc_buffer_free) ReallocBuffer buffer = {};
         _cleanup_(ca_block_device_unrefp) CaBlockDevice *nbd = NULL;
-        const char *path = NULL, *name = NULL;
-        bool make_symlink = false, rm_symlink = false;
-        int r;
+        _cleanup_(realloc_buffer_free) ReallocBuffer buffer = {};
         _cleanup_(safe_close_nonstdp) int input_fd = -1;
-        _cleanup_free_ char *input = NULL;
+        bool make_symlink = false, rm_symlink = false;
         _cleanup_(ca_sync_unrefp) CaSync *s = NULL;
+        const char *path = NULL, *name = NULL;
+        _cleanup_free_ char *input = NULL;
+        bool initialized, sent_ready = false;
+        dev_t devnum;
+        int r;
+
+#if HAVE_UDEV
+        _cleanup_(udev_monitor_unrefp) struct udev_monitor *monitor = NULL;
+        _cleanup_(udev_device_unrefp) struct udev_device *d = NULL;
+        _cleanup_(udev_unrefp) struct udev *udev = NULL;
+#endif
 
         if (argc > 3) {
                 log_error("An blob path/URL expected, possibly followed by a device or symlink name.");
@@ -2762,6 +2777,49 @@ static int verb_mkdev(int argc, char *argv[]) {
                 goto finish;
         }
 
+        r = ca_block_device_get_devnum(nbd, &devnum);
+        if (r < 0) {
+                log_error_errno(r, "Failed to get device ID: %m");
+                goto finish;
+        }
+
+#if HAVE_UDEV
+        udev = udev_new();
+        if (!udev) {
+                r = log_error_errno(errno, "Failed to allocate udev context: %m");
+                goto finish;
+        }
+
+        monitor = udev_monitor_new_from_netlink(udev, "udev");
+        if (!monitor) {
+                r = log_error_errno(errno, "Failed to acquire udev monitor: %m");
+                goto finish;
+        }
+
+        r = udev_monitor_filter_add_match_subsystem_devtype(monitor, "block", NULL);
+        if (r < 0) {
+                log_error_errno(r, "Failed to addd udev match: %m");
+                goto finish;
+        }
+
+        r = udev_monitor_enable_receiving(monitor);
+        if (r < 0) {
+                log_error_errno(r, "Failed to start udev monitor: %m");
+                goto finish;
+        }
+
+        d = udev_device_new_from_devnum(udev, 'b', devnum);
+        if (!d) {
+                r = log_error_errno(errno, "Failed to get NBD udev device: %m");
+                goto finish;
+        }
+
+        initialized = udev_device_get_is_initialized(d) != 0;
+        d = udev_device_unref(d);
+#else
+        initialized = true;
+#endif
+
         if (make_symlink) {
                 if (symlink(path, name) < 0) {
                         r = log_error_errno(errno, "Failed to create symlink %s → %s: %m", name, path);
@@ -2773,14 +2831,41 @@ static int verb_mkdev(int argc, char *argv[]) {
 
         printf("Attached: %s\n", name ?: path);
 
-        (void) send_notify("READY=1");
-
         for (;;) {
                 uint64_t req_offset = 0, req_size = 0;
 
                 if (quit) {
                         r = 0; /* for the "mkdev" verb quitting does not indicate an incomplete operation, hence return success */
                         goto finish;
+                }
+
+#if HAVE_UDEV
+                if (!initialized) {
+                        _cleanup_(udev_device_unrefp) struct udev_device *t = NULL;
+
+                        t = udev_monitor_receive_device(monitor);
+                        if (t && udev_device_get_devnum(t) == devnum)
+                                initialized = true;
+                }
+#endif
+
+                if (initialized && !sent_ready) {
+                        _cleanup_free_ char *t = NULL;
+
+#if HAVE_UDEV
+                        monitor = udev_monitor_unref(monitor);
+                        udev = udev_unref(udev);
+#endif
+
+                        t = strjoin("READY=1\n"
+                                    "DEVICE=", path, "\n");
+                        if (!t) {
+                                r = log_oom();
+                                goto finish;
+                        }
+
+                        (void) send_notify(t);
+                        sent_ready = true;
                 }
 
                 r = ca_block_device_step(nbd);
@@ -2794,15 +2879,43 @@ static int verb_mkdev(int argc, char *argv[]) {
 
                 if (r == CA_BLOCK_DEVICE_POLL) {
                         sigset_t ss;
+                        int nbd_poll_fd, udev_fd;
+
+                        nbd_poll_fd = ca_block_device_get_poll_fd(nbd);
+                        if (nbd_poll_fd < 0) {
+                                r = log_error_errno(nbd_poll_fd, "Failed to acquire NBD poll file descriptor: %m");
+                                goto finish;
+                        }
+
+
+#if HAVE_UDEV
+                        if (monitor) {
+                                udev_fd = udev_monitor_get_fd(monitor);
+                                if (udev_fd < 0) {
+                                        r = log_error_errno(udev_fd, "Failed to acquire udev monitor fd: %m");
+                                        goto finish;
+                                }
+                        } else
+#endif
+                                udev_fd = -1;
 
                         block_exit_handler(SIG_BLOCK, &ss);
 
                         if (quit)
                                 r = -ESHUTDOWN;
                         else {
-                                r = ca_block_device_poll(nbd, UINT64_MAX, &ss);
-                                if ((r == -EINTR || r >= 0) && quit)
+                                struct pollfd p[2] = {
+                                        [0] = { .fd = nbd_poll_fd, .events = POLLIN },
+                                        [1] = { .fd = udev_fd, .events = POLLIN },
+                                };
+
+                                r = ppoll(p, udev_fd < 0 ? 1 : 2, NULL, &ss);
+                                if ((r >= 0 || errno == EINTR) && quit)
                                         r = -ESHUTDOWN;
+                                else if (r < 0)
+                                        r = -errno;
+                                else
+                                        r = 0;
                         }
 
                         block_exit_handler(SIG_UNBLOCK, NULL);
