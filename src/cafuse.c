@@ -173,7 +173,7 @@ static int casync_readlink(
 
         r = ca_sync_current_target(instance, &target);
         if (r < 0)
-                return log_error_errno(r, "failed to get symlink target: %m");
+                return log_error_errno(r, "Failed to get symlink target: %m");
 
         strncpy(ret, target, size);
 
