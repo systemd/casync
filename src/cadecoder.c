@@ -2599,7 +2599,7 @@ static int ca_decoder_parse_goodbye_tail(CaDecoder *d, CaDecoderNode *n) {
                 return -ESPIPE;
 
         sz = realloc_buffer_size(&d->buffer);
-        if (sz < sizeof(sizeof(CaFormatGoodbyeTail)))
+        if (sz < sizeof(CaFormatGoodbyeTail))
                 return CA_DECODER_REQUEST;
 
         tail = realloc_buffer_data(&d->buffer);
