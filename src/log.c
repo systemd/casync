@@ -15,7 +15,10 @@ static int log_errorv(
         const char *fmt;
 
         fmt = strjoina(format, "\n");
-        errno = abs(error);
+
+        if (error != 0)
+                errno = abs(error);
+
         vfprintf(stderr, fmt, ap);
         errno = orig_errno;
         return -abs(error);

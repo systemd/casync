@@ -38,6 +38,9 @@ int ca_block_device_get_path(CaBlockDevice *d, const char **ret);
 
 int ca_block_device_set_friendly_name(CaBlockDevice *d, const char *name);
 
+int ca_block_device_get_devnum(CaBlockDevice *d, dev_t *ret);
+int ca_block_device_get_poll_fd(CaBlockDevice *d);
+
 int ca_block_device_test_nbd(const char *name);
 
 #endif

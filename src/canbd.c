@@ -35,6 +35,8 @@ struct CaBlockDevice {
         int friendly_name_fd;
         char *friendly_name;
         char *friendly_name_path;
+
+        dev_t devnum;
 };
 
 CaBlockDevice *ca_block_device_new(void) {
@@ -270,6 +272,7 @@ fail:
 int ca_block_device_open(CaBlockDevice *d) {
         static const int one = 1;
         bool free_device_path = false;
+        struct stat st;
         int r;
 
         if (!d)
@@ -294,6 +297,16 @@ int ca_block_device_open(CaBlockDevice *d) {
                 d->device_fd = open(d->device_path, O_CLOEXEC|O_RDWR|O_NONBLOCK|O_NOCTTY);
                 if (d->device_fd < 0)
                         return -errno;
+
+                if (fstat(d->device_fd, &st) < 0) {
+                        r = -errno;
+                        goto fail;
+                }
+
+                if (!S_ISBLK(st.st_mode)) {
+                        r = -ENOTBLK;
+                        goto fail;
+                }
 
                 if (ioctl(d->device_fd, NBD_SET_SOCK, d->socket_fd[1]) < 0) {
                         r = -errno;
@@ -320,6 +333,16 @@ int ca_block_device_open(CaBlockDevice *d) {
                                 goto fail;
                         }
 
+                        if (fstat(d->device_fd, &st) < 0) {
+                                r = -errno;
+                                goto fail;
+                        }
+
+                        if (!S_ISBLK(st.st_mode)) {
+                                r = -ENOTBLK;
+                                goto fail;
+                        }
+
                         if (ioctl(d->device_fd, NBD_SET_SOCK, d->socket_fd[1]) >= 0) {
                                 d->device_path = path;
                                 free_device_path = true;
@@ -337,6 +360,8 @@ int ca_block_device_open(CaBlockDevice *d) {
                         i++;
                 }
         }
+
+        d->devnum = st.st_rdev;
 
         r = ca_block_device_establish_friendly_name(d);
         if (r < 0)
@@ -489,6 +514,17 @@ int ca_block_device_put_data(CaBlockDevice *d, uint64_t offset, const void *data
         return 0;
 }
 
+int ca_block_device_get_poll_fd(CaBlockDevice *d) {
+        if (!d)
+                return -EINVAL;
+        if (d->device_fd < 0)
+                return -EUNATCH;
+        if (d->socket_fd[0] < 0)
+                return -EUNATCH;
+
+        return d->socket_fd[0];
+}
+
 int ca_block_device_poll(CaBlockDevice *d, uint64_t timeout_nsec, const sigset_t *ss) {
         struct pollfd pollfd;
         int r;
@@ -554,6 +590,21 @@ int ca_block_device_set_path(CaBlockDevice *d, const char *node) {
         d->device_path = c;
 
         return 1;
+}
+
+
+int ca_block_device_get_devnum(CaBlockDevice *d, dev_t *ret) {
+        if (!d)
+                return -EINVAL;
+
+        if (d->device_fd < 0)
+                return -EUNATCH;
+
+        if (d->devnum == 0)
+                return -EUNATCH;
+
+        *ret = d->devnum;
+        return 0;
 }
 
 int ca_block_device_test_nbd(const char *name) {

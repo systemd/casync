@@ -173,7 +173,7 @@ static int casync_readlink(
 
         r = ca_sync_current_target(instance, &target);
         if (r < 0)
-                return log_error_errno(r, "failed to get symlink target: %m");
+                return log_error_errno(r, "Failed to get symlink target: %m");
 
         strncpy(ret, target, size);
 
@@ -641,7 +641,7 @@ static int feature_flags_warning(CaSync *s) {
                 }
         }
 
-        unsupported = ff & ~(CA_FORMAT_WITH_FUSE|CA_FORMAT_EXCLUDE_NODUMP|CA_FORMAT_EXCLUDE_SUBMOUNTS);
+        unsupported = ff & ~(CA_FORMAT_WITH_FUSE|CA_FORMAT_SHA512_256|CA_FORMAT_EXCLUDE_SUBMOUNTS|CA_FORMAT_EXCLUDE_NODUMP);
         if (unsupported == 0)
                 return 0;
 
@@ -704,7 +704,7 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
                 }
 
                 if (r < 0) {
-                        log_error("Failed to establish FUSE mount: %m");
+                        log_error_errno(r, "Failed to establish FUSE mount: %m");
                         goto finish;
                 }
         }
@@ -713,7 +713,7 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
         fuse = fuse_new(fc, NULL, &ops, sizeof(ops), s);
         if (!fuse) {
                 r = errno != 0 ? -abs(errno) : -ENOMEM;
-                log_error("Failed to allocate FUSE object: %m");
+                log_error_errno(r, "Failed to allocate FUSE object: %m");
                 goto finish;
         }
 
@@ -735,13 +735,12 @@ int ca_fuse_run(CaSync *s, const char *what, const char *where, bool do_mkdir) {
         (void) send_notify("READY=1");
 
         r = fuse_loop(fuse);
-        if (r < 0) {
-                log_error("Failed to run FUSE loop: %m");
-                goto finish;
-        }
-
         if (IN_SET(r, -ESHUTDOWN, -EINTR) && quit)
                 r = 0;
+        if (r < 0) {
+                log_error_errno(r, "Failed to run FUSE loop: %m");
+                goto finish;
+        }
 
 finish:
         if (updated_signal_handlers)
