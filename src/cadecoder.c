@@ -3903,6 +3903,30 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 }
         }
 
+        if (d->replay_feature_flags & (CA_FORMAT_WITH_SEC_TIME|CA_FORMAT_WITH_USEC_TIME|CA_FORMAT_WITH_NSEC_TIME|CA_FORMAT_WITH_2SEC_TIME)) {
+                uint64_t granularity;
+
+                /* If we have restored the time validate it after all uses, since the backing file system might not
+                 * provide the granularity we need, but we shouldn't permit that since we care about
+                 * reproducability. */
+
+                if (child->fd >= 0)
+                        r = fstat(child->fd, &st);
+                else {
+                        assert(dir_fd >= 0);
+                        r = fstatat(dir_fd, name, &st, AT_SYMLINK_NOFOLLOW);
+                }
+                if (r < 0)
+                        return -errno;
+
+                r = ca_feature_flags_time_granularity_nsec(d->replay_feature_flags, &granularity);
+                if (r < 0)
+                        return r;
+
+                if (timespec_to_nsec(st.st_mtim) / granularity != read_le64(&child->entry->mtime) / granularity)
+                        return -EOPNOTSUPP;
+        }
+
         return 0;
 }
 
