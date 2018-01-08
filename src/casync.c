@@ -4,6 +4,7 @@
 #include <sys/poll.h>
 #include <sys/stat.h>
 
+#include "cacache.h"
 #include "cachunk.h"
 #include "cachunker.h"
 #include "cadecoder.h"
@@ -34,6 +35,16 @@ typedef enum CaDirection {
         CA_SYNC_DECODE,
 } CaDirection;
 
+/* In which state regarding cache check and validation are we? */
+typedef enum CaCacheState {
+        CA_SYNC_CACHE_OFF,       /* Possibly write to the cache, but don't consult it */
+        CA_SYNC_CACHE_CHECK,     /* We are at a position where it might make sense to check the cache */
+        CA_SYNC_CACHE_VERIFY,    /* We found a chunk in the cache, and are validating if it still matches disk */
+        CA_SYNC_CACHE_FAILED,    /* We found a chunk in the cache, but it turned out not to match disk, now seek back where the cache experiment started */
+        CA_SYNC_CACHE_SUCCEEDED, /* We found a chunk in the cache, and it checked out */
+        CA_SYNC_CACHE_IDLE,      /* We are not at a position where it might make sense to check the cache */
+} CaCacheState;
+
 typedef struct CaSync {
         CaDirection direction;
         bool started;
@@ -42,6 +53,7 @@ typedef struct CaSync {
         CaDecoder *decoder;
 
         CaChunker chunker;
+        CaChunker original_chunker; /* A copy of the full chunker state from the beginning, which we can use when we need to reset things */
 
         CaIndex *index;
         CaRemote *remote_index;
@@ -67,6 +79,13 @@ typedef struct CaSync {
         size_t current_seed; /* The seed we are currently indexing */
         bool index_flags_propagated;
 
+        CaCache *cache;
+        CaCacheState cache_state;
+        CaChunkID current_cache_chunk_id;
+        uint64_t current_cache_chunk_size;
+        CaOrigin *current_cache_origin;
+        CaLocation *current_cache_start_location;
+
         int base_fd;
         int boundary_fd;
         int archive_fd;
@@ -83,6 +102,8 @@ typedef struct CaSync {
         ReallocBuffer archive_buffer;
         ReallocBuffer compress_buffer;
 
+        CaOrigin *buffer_origin;
+
         CaDigest *chunk_digest;
 
         bool archive_eof;
@@ -96,6 +117,11 @@ typedef struct CaSync {
         uint64_t n_written_chunks;
         uint64_t n_reused_chunks;
         uint64_t n_prefetched_chunks;
+
+        uint64_t n_cache_hits;
+        uint64_t n_cache_misses;
+        uint64_t n_cache_invalidated;
+        uint64_t n_cache_added;
 
         uint64_t archive_size;
 
@@ -408,6 +434,14 @@ int ca_sync_set_uid_range(CaSync *s, uid_t u) {
         return 0;
 }
 
+static void ca_sync_reset_cache_data(CaSync *s) {
+        assert(s);
+
+        /* Resets the cache data, i.e. the cached item we are currently processing. */
+        s->current_cache_start_location = ca_location_unref(s->current_cache_start_location);
+        s->current_cache_origin = ca_origin_unref(s->current_cache_origin);
+}
+
 CaSync *ca_sync_unref(CaSync *s) {
         size_t i;
 
@@ -431,6 +465,9 @@ CaSync *ca_sync_unref(CaSync *s) {
         for (i = 0; i < s->n_seeds; i++)
                 ca_seed_unref(s->seeds[i]);
         free(s->seeds);
+
+        ca_sync_reset_cache_data(s);
+        ca_cache_unref(s->cache);
 
         safe_close(s->base_fd);
         safe_close(s->boundary_fd);
@@ -458,6 +495,8 @@ CaSync *ca_sync_unref(CaSync *s) {
         realloc_buffer_free(&s->index_buffer);
         realloc_buffer_free(&s->archive_buffer);
         realloc_buffer_free(&s->compress_buffer);
+
+        ca_origin_unref(s->buffer_origin);
 
         ca_file_root_unref(s->archive_root);
 
@@ -1162,6 +1201,80 @@ int ca_sync_add_seed_path(CaSync *s, const char *path) {
         return 0;
 }
 
+int ca_sync_set_cache_fd(CaSync *s, int fd) {
+        _cleanup_(ca_cache_unrefp) CaCache *cache = NULL;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (fd < 0)
+                return -EINVAL;
+
+        if (s->cache)
+                return -EBUSY;
+
+        cache = ca_cache_new();
+        if (!cache)
+                return -ENOMEM;
+
+        r = ca_cache_set_fd(cache, fd);
+        if (r < 0)
+                return r;
+
+        s->cache = cache;
+        cache = NULL;
+
+        return 0;
+}
+
+int ca_sync_set_cache_path(CaSync *s, const char *path) {
+
+        _cleanup_(ca_cache_unrefp) CaCache *cache = NULL;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!path)
+                return -EINVAL;
+
+        if (s->cache)
+                return -EBUSY;
+
+        cache = ca_cache_new();
+        if (!cache)
+                return -ENOMEM;
+
+        r = ca_cache_set_path(cache, path);
+        if (r < 0)
+                return r;
+
+        s->cache = cache;
+        cache = NULL;
+
+        return 0;
+}
+
+static bool ca_sync_use_cache(CaSync *s) {
+        assert(s);
+
+        /* Returns true if we can use the cache when reading. This only works if we don't generate an archive or
+         * archive digest and if we actually have a cache configured. */
+
+        if (s->direction != CA_SYNC_ENCODE)
+                return false;
+
+        if (s->archive_fd >= 0)
+                return false;
+
+        if (s->remote_archive)
+                return false;
+
+        if (s->archive_digest || s->payload_digest || s->hardlink_digest)
+                return false;
+
+        return !!s->cache;
+}
+
 static int ca_sync_start(CaSync *s) {
         size_t i;
         int r;
@@ -1389,6 +1502,8 @@ static int ca_sync_start(CaSync *s) {
                 r = ca_encoder_enable_hardlink_digest(s->encoder, s->hardlink_digest);
                 if (r < 0)
                         return r;
+
+                s->original_chunker = s->chunker;
         }
 
         if (s->decoder) {
@@ -1463,6 +1578,13 @@ static int ca_sync_start(CaSync *s) {
                         return r;
         }
 
+        if (s->cache) {
+                r = ca_cache_set_digest_type(s->cache, ca_feature_flags_to_digest_type(s->feature_flags));
+                if (r < 0)
+                        return r;
+        }
+
+        s->cache_state = ca_sync_use_cache(s) ? CA_SYNC_CACHE_CHECK : CA_SYNC_CACHE_OFF;
         s->started = true;
 
         return 1;
@@ -1488,12 +1610,17 @@ static int ca_sync_write_remote_archive(CaSync *s, const void *p, size_t l) {
         return ca_remote_put_archive(s->remote_archive, p, l);
 }
 
-static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l) {
+static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l, CaOrigin *origin) {
         CaChunkID id;
         int r;
 
         assert(s);
         assert(p || l == 0);
+        assert(!origin || ca_origin_bytes(origin) == l);
+
+        /* Processes a single chunk we just generated. Writes it to our wstore, our cache store, and our cache. Also
+         * writes a record about it into the index. Note that if we hit the cache ca_sync_write_one_cached_chunk() is
+         * called instead. */
 
         r = ca_sync_make_chunk_id(s, p, l, &id);
         if (r < 0)
@@ -1521,19 +1648,47 @@ static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l) {
                         return r;
         }
 
+        if (s->cache) {
+                log_debug("Adding cache entry %s.", ca_location_format(ca_origin_get(origin, 0)));
+
+                r = ca_cache_put(s->cache, origin, &id);
+                if (r < 0)
+                        return r;
+                if (r > 0)
+                        s->n_cache_added++;
+        }
+
+        if (ca_sync_use_cache(s))
+                s->cache_state = CA_SYNC_CACHE_CHECK;
+
         return 0;
 }
 
-static int ca_sync_write_chunks(CaSync *s, const void *p, size_t l) {
+static int ca_sync_write_chunks(CaSync *s, const void *p, size_t l, CaLocation *location) {
         int r;
 
         assert(s);
         assert(p || l == 0);
 
+        /* Splits up the data that was just generated into chunks, and calls ca_sync_write_one_chunk() for it */
+
         if (!s->wstore && !s->cache_store && !s->index)
                 return 0;
 
+        if (location) {
+                if (!s->buffer_origin) {
+                        r = ca_origin_new(&s->buffer_origin);
+                        if (r < 0)
+                                return r;
+                }
+
+                r = ca_origin_put(s->buffer_origin, location);
+                if (r < 0)
+                        return r;
+        }
+
         while (l > 0) {
+                _cleanup_(ca_origin_unrefp) CaOrigin *chunk_origin = NULL;
                 const void *chunk;
                 size_t chunk_size, k;
 
@@ -1555,7 +1710,22 @@ static int ca_sync_write_chunks(CaSync *s, const void *p, size_t l) {
                         chunk_size = realloc_buffer_size(&s->buffer);
                 }
 
-                r = ca_sync_write_one_chunk(s, chunk, chunk_size);
+                if (s->buffer_origin) {
+                        if (chunk_size == ca_origin_bytes(s->buffer_origin)) {
+                                chunk_origin = s->buffer_origin;
+                                s->buffer_origin = NULL;
+                        } else {
+                                r = ca_origin_extract_bytes(s->buffer_origin, chunk_size, &chunk_origin);
+                                if (r < 0)
+                                        return r;
+
+                                r = ca_origin_advance_bytes(s->buffer_origin, chunk_size);
+                                if (r < 0)
+                                        return r;
+                        }
+                }
+
+                r = ca_sync_write_one_chunk(s, chunk, chunk_size, chunk_origin);
                 if (r < 0)
                         return r;
 
@@ -1577,7 +1747,7 @@ static int ca_sync_write_final_chunk(CaSync *s) {
                 return 0;
 
         if (realloc_buffer_size(&s->buffer) > 0) {
-                r = ca_sync_write_one_chunk(s, realloc_buffer_data(&s->buffer), realloc_buffer_size(&s->buffer));
+                r = ca_sync_write_one_chunk(s, realloc_buffer_data(&s->buffer), realloc_buffer_size(&s->buffer), s->buffer_origin);
                 if (r < 0)
                         return r;
         }
@@ -1588,6 +1758,25 @@ static int ca_sync_write_final_chunk(CaSync *s) {
                         return r;
 
                 r = ca_index_install(s->index);
+                if (r < 0)
+                        return r;
+        }
+
+        return 0;
+}
+
+static int ca_sync_write_one_cached_chunk(CaSync *s, const CaChunkID *id, uint64_t size, CaLocation *location) {
+        int r;
+
+        assert(s);
+        assert(id);
+
+        /* Much like ca_sync_write_one_chunk(), but is called when we are using the cache and had a cache hit */
+
+        s->n_written_chunks ++;
+
+        if (s->index) {
+                r = ca_index_write_chunk(s->index, id, size);
                 if (r < 0)
                         return r;
         }
@@ -1620,8 +1809,36 @@ static int ca_sync_write_remote_archive_eof(CaSync *s) {
         return ca_remote_put_archive_eof(s->remote_archive);
 }
 
+static int ca_sync_cache_get(CaSync *s, CaLocation *location) {
+        int r;
+
+        assert(s);
+        assert(location);
+
+        assert(s->cache);
+        assert(!s->current_cache_start_location);
+        assert(!s->current_cache_origin);
+
+        r = ca_cache_get(s->cache, location, &s->current_cache_chunk_id, &s->current_cache_origin);
+        if (r == -ENOENT) { /* No luck, no cached entry about this, let's generate new data then */
+                log_debug("Cache miss at %s.", ca_location_format(location));
+                s->n_cache_misses++;
+                return r;
+        }
+        if (r < 0)
+                return log_debug_errno(r, "Failed to acquire item from cache: %m");
+
+        log_debug("Yay, cache hit at %s.", ca_location_format(location));
+
+        s->current_cache_start_location = ca_location_ref(location);
+        s->current_cache_chunk_size = ca_origin_bytes(s->current_cache_origin);
+
+        return r;
+}
+
 static int ca_sync_step_encode(CaSync *s) {
         int r, step;
+        bool next_step;
 
         assert(s);
 
@@ -1640,13 +1857,180 @@ static int ca_sync_step_encode(CaSync *s) {
                         return CA_SYNC_POLL;
         }
 
-        step = ca_encoder_step(s->encoder);
-        if (step < 0)
-                return step;
+        switch (s->cache_state) {
+
+        case CA_SYNC_CACHE_OFF:
+        case CA_SYNC_CACHE_IDLE:
+                next_step = true;
+                break;
+
+        case CA_SYNC_CACHE_CHECK: {
+                CaLocation *location;
+
+                assert(!s->current_cache_start_location);
+                assert(!s->current_cache_origin);
+
+                /* Let's see if there's already data in the buffer. If so, let's see if we have a cached entry for
+                 * it. */
+                if (realloc_buffer_size(&s->buffer) == 0) {
+                        /* Nope, nothing new. Let's generate some new data then */
+                        next_step = true;
+                        break;
+                }
+
+                assert_se(location = ca_origin_get(s->buffer_origin, 0));
+
+                /* A previous iteration already read stuff into the buffer, however it wasn't enough for a whole
+                 * chunk. Let's see if instead of generating further data the cache can help us. */
+
+                r = ca_sync_cache_get(s, location);
+                if (r == -ENOENT) { /* No luck */
+                        s->cache_state = CA_SYNC_CACHE_IDLE;
+                        next_step = true;
+                        break;
+                }
+                if (r < 0)
+                        return r;
+
+                /* Yippieh! */
+                s->cache_state = CA_SYNC_CACHE_VERIFY;
+                return CA_SYNC_STEP;
+        }
+
+        case CA_SYNC_CACHE_VERIFY: {
+                CaLocation *a, *b;
+
+                assert(s->current_cache_start_location);
+                assert(s->current_cache_origin);
+
+                if (ca_origin_bytes(s->current_cache_origin) == 0) {
+                        /* Nice! All checked out! */
+                        log_debug("Cached block checked out (on buffer).");
+                        s->cache_state = CA_SYNC_CACHE_SUCCEEDED;
+                        return CA_SYNC_STEP;
+                }
+
+                /* Let's see if there's data in the buffer we need to verify first. */
+                if (realloc_buffer_size(&s->buffer) == 0) {
+                        /* Nope there is not, let's generate some new data then */
+                        next_step = true;
+                        break;
+                }
+
+                assert_se(a = ca_origin_get(s->current_cache_origin, 0));
+                assert_se(b = ca_origin_get(s->buffer_origin, 0));
+
+                if (ca_location_equal(a, b, false)) {
+                        uint64_t sz;
+
+                        /* Yay, this location checked out. Let's advance both our buffer (and its origin), and the
+                         * cache origin. */
+
+                        assert_se(a->size != UINT64_MAX);
+                        assert_se(a->size != 0);
+
+                        assert_se(b->size != UINT64_MAX);
+                        assert_se(b->size != 0);
+
+                        sz = MIN(a->size, b->size);
+
+                        r = ca_origin_advance_bytes(s->current_cache_origin, sz);
+                        if (r < 0)
+                                return r;
+
+                        r = ca_origin_advance_bytes(s->buffer_origin, sz);
+                        if (r < 0)
+                                return r;
+
+                        r = realloc_buffer_advance(&s->buffer, sz);
+                        if (r < 0)
+                                return r;
+
+                        return CA_SYNC_STEP;
+                }
+
+                /* Ah, dang, this didn't check out. Let's revert back. */
+                log_debug("Cache item out of date, location didn't match (on buffer).");
+                s->cache_state = CA_SYNC_CACHE_FAILED;
+                return CA_SYNC_STEP;
+        }
+
+        case CA_SYNC_CACHE_SUCCEEDED:
+                assert(s->current_cache_start_location);
+                assert(s->current_cache_origin);
+
+                /* In the previous iteration we tried to use the cache, and it did work out. Yay! Let's now
+                 * write the cached item, and seek where we are supposed to continue */
+
+                log_debug("Succeeded with cached block!");
+
+                r = ca_sync_write_one_cached_chunk(s, &s->current_cache_chunk_id, s->current_cache_chunk_size, s->current_cache_start_location);
+                if (r < 0)
+                        return log_debug_errno(r, "Failed to write cached item to index: %m");
+
+                s->n_cache_hits++;
+
+                /* Reset the cached item we are operating on */
+                ca_sync_reset_cache_data(s);
+                s->cache_state = CA_SYNC_CACHE_CHECK;
+
+                return CA_SYNC_STEP;
+
+        case CA_SYNC_CACHE_FAILED:
+                assert(s->current_cache_start_location);
+                assert(s->current_cache_origin);
+
+                /* In the previous iteration we tried to use the cache, but this didn't work out, the stuff on disk
+                 * didn't match our cache anymore. In this iteration we'll hence seek back to where our cache adventure
+                 * started, and read off disk again. But we'll remove the bogus cache entry first, so that this doesn't
+                 * happen again, ever. */
+
+                log_debug("Cached block didn't check out, seeking back to %s.", ca_location_format(s->current_cache_start_location));
+
+                r = ca_cache_remove(s->cache, s->current_cache_start_location);
+                if (r < 0 && r != -ENOENT)
+                        return log_debug_errno(r, "Failed to remove cache item: %m");
+
+                s->n_cache_invalidated++;
+
+                step = ca_encoder_seek_location(s->encoder, s->current_cache_start_location);
+                if (step < 0)
+                        return log_debug_errno(step, "Failed to seek encoder: %m");
+
+                /* Reset the cached item we are operating on */
+                ca_sync_reset_cache_data(s);
+                s->cache_state = CA_SYNC_CACHE_IDLE;
+
+                /* Clear whatever is currently in the buffer */
+                realloc_buffer_empty(&s->buffer);
+                s->buffer_origin = ca_origin_unref(s->buffer_origin);
+
+                s->chunker = s->original_chunker;
+
+                next_step = false;
+                break;
+        }
+
+        if (next_step) {
+                step = ca_encoder_step(s->encoder);
+                if (step < 0)
+                        return log_debug_errno(step, "Failed to run encoder step: %m");
+        }
 
         switch (step) {
 
         case CA_ENCODER_FINISHED:
+
+                if (s->cache_state == CA_SYNC_CACHE_VERIFY) {
+                        /* What? There's still a cache item pending that didn't finish yet? If so, it's invalid. Let's
+                         * treat it as miss */
+
+                        log_debug("Cache item out of date, reached EOF too early.");
+                        s->cache_state = CA_SYNC_CACHE_FAILED;
+                        return CA_SYNC_STEP;
+                }
+
+                assert(IN_SET(s->cache_state, CA_SYNC_CACHE_OFF, CA_SYNC_CACHE_CHECK, CA_SYNC_CACHE_IDLE));
 
                 r = ca_sync_write_final_chunk(s);
                 if (r < 0)
@@ -1669,35 +2053,196 @@ static int ca_sync_step_encode(CaSync *s) {
                 return CA_SYNC_FINISHED;
 
         case CA_ENCODER_NEXT_FILE:
-        case CA_ENCODER_DONE_FILE:
         case CA_ENCODER_PAYLOAD:
         case CA_ENCODER_DATA: {
+                _cleanup_(ca_location_unrefp) CaLocation *location = NULL;
                 const void *p;
-                size_t l;
+                size_t l, extra_offset = 0;
 
-                r = ca_encoder_get_data(s->encoder, &p, &l);
-                if (r >= 0) {
+                switch (s->cache_state) {
 
-                        r = ca_sync_write_chunks(s, p, l);
+                case CA_SYNC_CACHE_OFF:
+                case CA_SYNC_CACHE_IDLE:
+                        break;
+
+                case CA_SYNC_CACHE_CHECK: {
+                        /* Let's check if the cache provides an item for our current location */
+
+                        assert(!s->current_cache_start_location);
+                        assert(!s->current_cache_origin);
+
+                        assert(realloc_buffer_size(&s->buffer) == 0);
+                        assert(ca_origin_bytes(s->buffer_origin) == 0);
+
+                        /* Let's figure out the location we are at right now */
+                        r = ca_encoder_current_location(s->encoder, 0, &location);
+                        if (r < 0)
+                                return log_debug_errno(r, "Failed to acquire encoder location: %m");
+
+                        /* Hmm, let's check the cache now then, maybe we can use that and avoid the disk accesses for
+                           the new data? */
+                        r = ca_sync_cache_get(s, location);
+                        if (r == -ENOENT) { /* No luck, let's generate new data then. */
+                                s->cache_state = CA_SYNC_CACHE_IDLE;
+                                break;
+                        }
                         if (r < 0)
                                 return r;
 
-                        r = ca_sync_write_archive(s, p, l);
+                        /* This worked! Let's proceed with verifying what we just got. */
+                        s->cache_state = CA_SYNC_CACHE_VERIFY;
+                } _fallthrough_;
+
+                case CA_SYNC_CACHE_VERIFY: {
+                        CaLocation *cached_location;
+                        uint64_t sz;
+                        size_t data_size;
+
+                        assert(s->current_cache_start_location);
+                        assert(s->current_cache_origin);
+
+                        assert(realloc_buffer_size(&s->buffer) == 0);
+                        assert(ca_origin_bytes(s->buffer_origin) == 0);
+
+                        if (!location) {
+                                /* Let's figure out the location we are at right now */
+                                r = ca_encoder_current_location(s->encoder, 0, &location);
+                                if (r < 0)
+                                        return log_debug_errno(r, "Failed to acquire encoder location: %m");
+                        }
+
+                        assert_se(cached_location = ca_origin_get(s->current_cache_origin, 0));
+
+                        if (!ca_location_equal(location, cached_location, false)) {
+                                /* We are not where we should be. Bummer. */
+                                log_debug("Cache item out of date, location didn't match (on encoder). %s != %s",
+                                          ca_location_format(location), ca_location_format(cached_location));
+                                s->cache_state = CA_SYNC_CACHE_FAILED;
+                                return CA_SYNC_STEP;
+                        }
+
+                        assert_se(cached_location->size != UINT64_MAX);
+                        assert_se(cached_location->size != 0);
+
+                        /* Generate the data if necessary, but clarify that we are not actually interested, by passing NULL */
+                        r = ca_encoder_get_data(s->encoder, cached_location->size, NULL, &data_size);
+                        if (r < 0)
+                                return log_debug_errno(r, "Failed to skip initial data: %m");
+
+                        for (;;) {
+                                if (data_size <= cached_location->size) {
+
+                                        /* Less or equal data than we expected was generated. Let's advance the cache origin,
+                                         * and retry */
+
+                                        r = ca_origin_advance_bytes(s->current_cache_origin, data_size);
+                                        if (r < 0)
+                                                return r;
+
+                                        goto done;
+                                }
+
+                                /* Hmm, so more data than we expected was generated. When this happens in the middle of
+                                 * our cache verification that's a problem, as in that case the cache data didn't match
+                                 * reality. However, if that happens at the end of our validation, it's OK, however we
+                                 * need to do something useful with the remainder. */
+
+                                if (ca_origin_items(s->current_cache_origin) > 1) {
+                                        /* Not at the end. Bummer. */
+                                        log_debug("Cache item out of date, size didn't match.");
+                                        s->cache_state = CA_SYNC_CACHE_FAILED;
+                                        return CA_SYNC_STEP;
+                                }
+
+                                log_debug("Chunk matched, writing out.");
+
+                                /* Yay, we are at the end of our cache entry. That's excellent! */
+
+                                r = ca_sync_write_one_cached_chunk(s, &s->current_cache_chunk_id, s->current_cache_chunk_size, s->current_cache_start_location);
+                                if (r < 0)
+                                        return log_debug_errno(r, "Failed to write cached item to index: %m");
+
+                                sz = cached_location->size;
+
+                                s->n_cache_hits++;
+                                ca_sync_reset_cache_data(s);
+
+                                /* So we have some more data to handle. Let's see if we have a hit for that one too. */
+
+                                r = ca_location_advance(&location, sz);
+                                if (r < 0)
+                                        return r;
+                                data_size -= sz;
+
+                                r = ca_sync_cache_get(s, location);
+                                if (r == -ENOENT) {
+                                        s->cache_state = CA_SYNC_CACHE_IDLE;
+
+                                        /* So, this is available in the cache, we hence need to generate data here. Hence we
+                                         * need to call ca_encoder_get_data() again, but this time ask for real data. And then
+                                         * we need to skip what we already used. */
+                                        extra_offset = sz;
+                                        break;
+                                }
+                                if (r < 0)
+                                        return r;
+
+                                assert_se(cached_location = ca_origin_get(s->current_cache_origin, 0));
+                        }
+
+                        assert_se(extra_offset > 0);
+                        break;
+                }
+
+                case CA_SYNC_CACHE_FAILED:
+                case CA_SYNC_CACHE_SUCCEEDED:
+                        assert_not_reached("Unexpected cache state");
+                }
+
+                r = ca_encoder_get_data(s->encoder, UINT64_MAX, &p, &l);
+                if (r < 0)
+                        return log_debug_errno(r, "Failed to acquire data: %m");
+
+                /* Apply the extra offset, if there's any */
+                p = (const uint8_t*) p + extra_offset;
+                l -= extra_offset;
+
+                if (s->cache) {
+                        /* When caching enabled, query current encoder location, so that we can generate a cache entry
+                         * for it. Note that the location might already be initialized, and if it is the 'extra_offset'
+                         * is already applied to it.  */
+
+                        if (!location) {
+                                r = ca_encoder_current_location(s->encoder, 0, &location);
+                                if (r < 0)
+                                        return r;
+                        }
+
+                        r = ca_location_patch_size(&location, l);
                         if (r < 0)
                                 return r;
+                }
 
-                        r = ca_sync_write_remote_archive(s, p, l);
-                        if (r < 0)
-                                return r;
-
-                } else if (r != -ENODATA)
+                r = ca_sync_write_chunks(s, p, l, location);
+                if (r < 0)
                         return r;
 
+                r = ca_sync_write_archive(s, p, l);
+                if (r < 0)
+                        return r;
+
+                r = ca_sync_write_remote_archive(s, p, l);
+                if (r < 0)
+                        return r;
+
+        done:
                 return step == CA_ENCODER_NEXT_FILE ? CA_SYNC_NEXT_FILE :
-                       step == CA_ENCODER_DONE_FILE ? CA_SYNC_DONE_FILE :
                        step == CA_ENCODER_PAYLOAD   ? CA_SYNC_PAYLOAD   :
                                                       CA_SYNC_STEP;
         }
+
+        case CA_ENCODER_DONE_FILE:
+                return CA_SYNC_DONE_FILE;
 
         default:
                 assert(false);
@@ -1798,7 +2343,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                          * many bytes as necessary */
                         if (s->chunk_skip >= chunk_size) {
                                 ca_origin_unref(origin);
-                                log_debug("Skip size larger than chunk. (%zu vs. %zu)", s->chunk_skip, chunk_size);
+                                log_debug("Skip size larger than chunk. (%" PRIu64 " vs. %" PRIu64 ")", s->chunk_skip, chunk_size);
                                 return -EINVAL;
                         }
 
@@ -3452,7 +3997,7 @@ int ca_sync_get_payload(CaSync *s, const void **ret, size_t *ret_size) {
         if (s->decoder)
                 return ca_decoder_get_payload(s->decoder, ret, ret_size);
         else if (s->encoder)
-                return ca_encoder_get_data(s->encoder, ret, ret_size);
+                return ca_encoder_get_data(s->encoder, UINT64_MAX, ret, ret_size);
 
         return -ENOTTY;
 }
@@ -3800,5 +4345,65 @@ int ca_sync_set_compression_type(CaSync *s, CaCompressionType compression) {
                 return -EBUSY;
 
         s->compression_type = compression;
+        return 0;
+}
+
+int ca_sync_current_cache_hits(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_ENCODE)
+                return -ENODATA;
+        if (!s->cache)
+                return -ENODATA;
+
+        *ret = s->n_cache_hits;
+        return 0;
+}
+
+int ca_sync_current_cache_misses(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_ENCODE)
+                return -ENODATA;
+        if (!s->cache)
+                return -ENODATA;
+
+        *ret = s->n_cache_misses;
+        return 0;
+}
+
+int ca_sync_current_cache_invalidated(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_ENCODE)
+                return -ENODATA;
+        if (!s->cache)
+                return -ENODATA;
+
+        *ret = s->n_cache_invalidated;
+        return 0;
+}
+
+int ca_sync_current_cache_added(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_ENCODE)
+                return -ENODATA;
+        if (!s->cache)
+                return -ENODATA;
+
+        *ret = s->n_cache_added;
         return 0;
 }

@@ -289,7 +289,7 @@ static int ca_seed_cache_chunks(CaSeed *s) {
 
         assert(s);
 
-        r = ca_encoder_get_data(s->encoder, &p, &l);
+        r = ca_encoder_get_data(s->encoder, UINT64_MAX, &p, &l);
         if (r == -ENODATA)
                 return 0;
         if (r < 0)
@@ -580,7 +580,7 @@ int ca_seed_get(CaSeed *s,
                         size_t w;
                         uint64_t m;
 
-                        r = ca_encoder_get_data(s->encoder, &q, &w);
+                        r = ca_encoder_get_data(s->encoder, UINT64_MAX, &q, &w);
                         if (r == -ENODATA)
                                 break;
                         if (r < 0)

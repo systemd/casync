@@ -1,0 +1,76 @@
+#!/bin/bash -ex
+# SPDX-License-Identifier: LGPL-2.1+
+
+SCRATCH_DIR=${TMPDIR:-/var/tmp}/test-casync.$RANDOM
+mkdir -p $SCRATCH_DIR/src
+
+if [ `id -u` == 0 ] ; then
+    cp -aT @top_srcdir@ $SCRATCH_DIR/src/casync
+else
+    # If we lack privileges we use rsync rather than cp to copy, as it will just skip over device nodes
+    rsync -a @top_srcdir@/ $SCRATCH_DIR/src/casync
+fi
+
+cd $SCRATCH_DIR/src
+
+@top_builddir@/casync list > $SCRATCH_DIR/test.list
+@top_builddir@/casync mtree > $SCRATCH_DIR/test.mtree
+@top_builddir@/casync digest > $SCRATCH_DIR/test.digest
+
+# Make three versions of the caidx: one with no cache, one with an unpopulated cache, and one with a populated cache
+@top_builddir@/casync make $SCRATCH_DIR/test1.caidx
+@top_builddir@/casync make --cache $SCRATCH_DIR/test.cache $SCRATCH_DIR/test2.caidx
+@top_builddir@/casync make --cache $SCRATCH_DIR/test.cache $SCRATCH_DIR/test3.caidx
+
+cmp $SCRATCH_DIR/test1.caidx $SCRATCH_DIR/test2.caidx
+cmp $SCRATCH_DIR/test1.caidx $SCRATCH_DIR/test3.caidx
+
+for f in test1 test2 test3 ; do
+    @top_builddir@/casync list $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.list
+    @top_builddir@/casync mtree $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.mtree
+    @top_builddir@/casync digest $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.digest
+
+    diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/$f.list
+    diff -q $SCRATCH_DIR/test.mtree $SCRATCH_DIR/$f.mtree
+    diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/$f.digest
+done
+
+# Make some changes: one in the beginning, one in the middle, one at the end
+mkdir casync/000-early
+touch casync/000-early/testa
+mkdir casync/ggg-middle
+touch casync/ggg-middle/testb
+mkdir casync/zzz-late
+touch casync/zzz-late/testc
+
+# Also remove a file
+rm casync/NEWS
+
+# And update an existing one
+echo xxx >> casync/README.md
+
+@top_builddir@/casync list > $SCRATCH_DIR/testx.list
+@top_builddir@/casync mtree > $SCRATCH_DIR/testx.mtree
+@top_builddir@/casync digest > $SCRATCH_DIR/testx.digest
+
+@top_builddir@/casync make $SCRATCH_DIR/test4.caidx
+@top_builddir@/casync make --cache $SCRATCH_DIR/test.cache $SCRATCH_DIR/test5.caidx
+@top_builddir@/casync make --cache $SCRATCH_DIR/test.cache $SCRATCH_DIR/test6.caidx
+@top_builddir@/casync make $SCRATCH_DIR/test7.caidx
+
+cmp $SCRATCH_DIR/test4.caidx $SCRATCH_DIR/test5.caidx
+cmp $SCRATCH_DIR/test4.caidx $SCRATCH_DIR/test6.caidx
+cmp $SCRATCH_DIR/test4.caidx $SCRATCH_DIR/test7.caidx
+
+for f in test4 test5 test6 test7 ; do
+    @top_builddir@/casync list $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.list
+    @top_builddir@/casync mtree $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.mtree
+    @top_builddir@/casync digest $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.digest
+
+    diff -q $SCRATCH_DIR/testx.list $SCRATCH_DIR/$f.list
+    diff -q $SCRATCH_DIR/testx.mtree $SCRATCH_DIR/$f.mtree
+    diff -q $SCRATCH_DIR/testx.digest $SCRATCH_DIR/$f.digest
+done
+
+chmod -R u+rwx $SCRATCH_DIR
+rm -rf $SCRATCH_DIR

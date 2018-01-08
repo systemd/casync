@@ -30,6 +30,7 @@
 #include "caformat-util.h"
 #include "caformat.h"
 #include "camakebst.h"
+#include "canametable.h"
 #include "cautil.h"
 #include "chattr.h"
 #include "def.h"
@@ -59,12 +60,6 @@ typedef struct CaEncoderACLEntry {
                 uint32_t generic_id;
         };
 } CaEncoderACLEntry;
-
-typedef struct CaEncoderNameTable {
-        uint64_t hash;
-        uint64_t start_offset;
-        uint64_t end_offset;
-} CaEncoderNameTable;
 
 typedef struct CaEncoderNode {
         int fd;
@@ -125,14 +120,12 @@ typedef struct CaEncoderNode {
         bool selinux_label_valid:1;
         char *selinux_label;
 
-        /* The offset in the archive */
-        uint64_t entry_offset;
+        /* The FS_IOC_GETVERSION generation */
+        int generation;
+        int generation_valid; /* tri-state */
 
         /* If this is a directory: file name lookup data */
-        CaEncoderNameTable *name_table;
-        size_t n_name_table;
-        size_t n_name_table_allocated;
-        bool name_table_incomplete;
+        CaNameTable *name_table;
 
         /* For detecting mount boundaries */
         int mount_id;
@@ -169,6 +162,7 @@ struct CaEncoder {
 
         uint64_t archive_offset;
         uint64_t payload_offset;
+        uint64_t skipped_bytes;
 
         uid_t cached_uid;
         gid_t cached_gid;
@@ -277,13 +271,10 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
 
         n->stat.st_mode = 0;
 
-        n->name_table = mfree(n->name_table);
-        n->n_name_table = n->n_name_table_allocated = 0;
-        n->name_table_incomplete = false;
-
-        n->entry_offset = UINT64_MAX;
+        n->name_table = ca_name_table_unref(n->name_table);
 
         n->mount_id = -1;
+        n->generation_valid = 1;
 }
 
 CaEncoder *ca_encoder_unref(CaEncoder *e) {
@@ -379,8 +370,8 @@ int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
                 .acl_default_group_obj_permissions = UINT64_MAX,
                 .acl_default_other_permissions = UINT64_MAX,
                 .acl_default_mask_permissions = UINT64_MAX,
-                .entry_offset = UINT64_MAX,
                 .mount_id = -1,
+                .generation_valid = -1,
         };
 
         e->n_nodes = 1;
@@ -710,6 +701,32 @@ static int ca_encoder_node_read_selinux_label(
 #else
         return -EOPNOTSUPP;
 #endif
+}
+
+static int ca_encoder_node_read_generation(
+                CaEncoder *e,
+                CaEncoderNode *n) {
+
+        assert(e);
+        assert(n);
+
+        if (!S_ISDIR(n->stat.st_mode) && !S_ISREG(n->stat.st_mode))
+                return 0;
+        if (n->fd < 0)
+                return -EBADFD;
+        if (n->generation_valid >= 0) /* Already read? */
+                return 0;
+
+        if (ioctl(n->fd, FS_IOC_GETVERSION, &n->generation) < 0) {
+
+                if (!IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL))
+                        return -errno;
+
+                n->generation_valid = false;
+        } else
+                n->generation_valid = true;
+
+        return 0;
 }
 
 static int compare_xattr(const void *a, const void *b) {
@@ -1587,8 +1604,8 @@ static CaEncoderNode* ca_encoder_init_child(CaEncoder *e) {
                 .acl_default_group_obj_permissions = UINT64_MAX,
                 .acl_default_other_permissions = UINT64_MAX,
                 .acl_default_mask_permissions = UINT64_MAX,
-                .entry_offset = UINT64_MAX,
                 .mount_id = -1,
+                .generation_valid = -1,
         };
 
         return n;
@@ -1799,6 +1816,106 @@ static void ca_encoder_enter_state(CaEncoder *e, CaEncoderState state) {
         e->payload_offset = 0;
 }
 
+static int ca_encoder_initialize_name_table(CaEncoder *e, CaEncoderNode *n, uint64_t sub) {
+        CaEncoderNode *parent;
+
+        assert(e);
+        assert(n);
+        assert(!n->name_table);
+
+        /* Name tables only make sense for directories */
+        if (!S_ISDIR(n->stat.st_mode))
+                return 0;
+
+        /* We can't set up a name table if we don't know our position */
+        if (e->archive_offset == UINT64_MAX)
+                return 0;
+        if (e->archive_offset < sub)
+                return -EINVAL;
+
+        /* Link up parent's filename table */
+        parent = ca_encoder_node_parent_of(e, n);
+        if (parent && !parent->name_table)
+                return 0; /* Parent has no name table, hence there's no point for us either */
+
+        n->name_table = ca_name_table_new();
+        if (!n->name_table)
+                return -ENOMEM;
+
+        n->name_table->entry_offset = e->archive_offset - sub;
+        n->name_table->parent = parent ? ca_name_table_ref(parent->name_table) : NULL;
+
+        return 1;
+}
+
+static int ca_encoder_add_name_table_item(CaEncoder *e, CaEncoderNode *n, const char *name) {
+        CaNameItem *item;
+        int r;
+
+        assert(e);
+        assert(n);
+        assert(S_ISDIR(n->stat.st_mode));
+        assert(name);
+
+        if (!n->name_table)
+                return 0;
+
+        if (e->archive_offset == UINT64_MAX) {
+                n->name_table = ca_name_table_unref(n->name_table);
+                return 0;
+        }
+
+        assert(ca_name_table_items(n->name_table) == 0 ||
+               ca_name_table_last(n->name_table)->end_offset != UINT64_MAX);
+
+        r = ca_name_table_add(&n->name_table, &item);
+        if (r < 0)
+                return r;
+
+        *item = (CaNameItem) {
+                .hash = siphash24(name, strlen(name), (const uint8_t[16]) CA_FORMAT_GOODBYE_HASH_KEY),
+                .start_offset = e->archive_offset,
+                .end_offset = UINT64_MAX,
+        };
+
+        return 0;
+}
+
+static int ca_encoder_update_name_table_end_offset(CaEncoder *e, CaEncoderNode *n) {
+        CaNameItem *item;
+        int r;
+
+        assert(e);
+        assert(n);
+        assert(S_ISDIR(n->stat.st_mode));
+
+        if (!n->name_table)
+                return 0;
+
+        if (e->archive_offset == UINT64_MAX) {
+                n->name_table = ca_name_table_unref(n->name_table);
+                return 0;
+        }
+
+        if (ca_name_table_items(n->name_table) == 0)
+                return 0;
+
+        r = ca_name_table_make_writable(&n->name_table, 0);
+        if (r < 0)
+                return r;
+
+        item = ca_name_table_last(n->name_table);
+        assert(item);
+
+        assert(item->start_offset != UINT64_MAX);
+        assert(item->end_offset == UINT64_MAX);
+
+        assert(item->start_offset <= e->archive_offset);
+        item->end_offset = e->archive_offset;
+
+        return 0;
+}
+
 static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
         int r;
 
@@ -1837,6 +1954,10 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                 }
 
                 r = ca_encoder_collect_covering_feature_flags(e, n);
+                if (r < 0)
+                        return r;
+
+                r = ca_encoder_initialize_name_table(e, n, 0);
                 if (r < 0)
                         return r;
 
@@ -1903,14 +2024,9 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
 
         case CA_ENCODER_NEXT_DIRENT:
 
-                if (!n->name_table_incomplete) {
-                        assert(n->n_name_table > 0);
-
-                        if (e->archive_offset == UINT64_MAX)
-                                n->name_table_incomplete = true;
-                        else
-                                n->name_table[n->n_name_table-1].end_offset = e->archive_offset;
-                }
+                r = ca_encoder_update_name_table_end_offset(e, n);
+                if (r < 0)
+                        return r;
 
                 n->dirent_idx++;
 
@@ -1928,13 +2044,6 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                 for (;;) {
                         de = ca_encoder_node_current_dirent(n);
                         if (!de) {
-                                if (!n->name_table_incomplete && n->n_name_table > 0) {
-                                        if (e->archive_offset == UINT64_MAX)
-                                                n->name_table_incomplete = true;
-                                        else
-                                                n->name_table[n->n_name_table-1].end_offset = e->archive_offset;
-                                }
-
                                 ca_encoder_enter_state(e, CA_ENCODER_GOODBYE);
                                 return CA_ENCODER_DATA;
                         }
@@ -1954,20 +2063,9 @@ static int ca_encoder_step_node(CaEncoder *e, CaEncoderNode *n) {
                         n->dirent_idx++;
                 }
 
-                if (!n->name_table_incomplete) {
-
-                        if (e->archive_offset == UINT64_MAX)
-                                n->name_table_incomplete = true;
-                        else {
-                                if (!GREEDY_REALLOC(n->name_table, n->n_name_table_allocated, n->n_name_table+1))
-                                        return -ENOMEM;
-
-                                n->name_table[n->n_name_table++] = (CaEncoderNameTable) {
-                                        .start_offset = e->archive_offset,
-                                        .hash = siphash24(de->d_name, strlen(de->d_name), (const uint8_t[16]) CA_FORMAT_GOODBYE_HASH_KEY),
-                                };
-                        }
-                }
+                r = ca_encoder_add_name_table_item(e, n, de->d_name);
+                if (r < 0)
+                        return r;
 
                 ca_encoder_enter_state(e, CA_ENCODER_FILENAME);
                 return CA_ENCODER_DATA;
@@ -2025,6 +2123,7 @@ static void ca_encoder_advance_buffer(CaEncoder *e) {
 
         assert(e);
 
+        /* Flush generated buffer */
         sz = realloc_buffer_size(&e->buffer);
 
         e->payload_offset += sz;
@@ -2032,6 +2131,14 @@ static void ca_encoder_advance_buffer(CaEncoder *e) {
                 e->archive_offset += sz;
 
         realloc_buffer_empty(&e->buffer);
+
+        /* Flush skipped bytes */
+        e->payload_offset += e->skipped_bytes;
+
+        if (e->archive_offset != UINT64_MAX)
+                e->archive_offset += e->skipped_bytes;
+
+        e->skipped_bytes = 0;
 }
 
 int ca_encoder_step(CaEncoder *e) {
@@ -2052,7 +2159,7 @@ int ca_encoder_step(CaEncoder *e) {
         return ca_encoder_step_node(e, n);
 }
 
-static int ca_encoder_get_payload_data(CaEncoder *e, CaEncoderNode *n) {
+static int ca_encoder_get_payload_data(CaEncoder *e, CaEncoderNode *n, uint64_t suggested_size) {
         uint64_t size;
         ssize_t m;
         size_t k;
@@ -2063,6 +2170,8 @@ static int ca_encoder_get_payload_data(CaEncoder *e, CaEncoderNode *n) {
         assert(n);
         assert(S_ISREG(n->stat.st_mode) || S_ISBLK(n->stat.st_mode));
         assert(e->state == CA_ENCODER_IN_PAYLOAD);
+        assert(realloc_buffer_size(&e->buffer) == 0);
+        assert(e->skipped_bytes == 0);
 
         r = ca_encoder_node_get_payload_size(n, &size);
         if (r < 0)
@@ -2071,16 +2180,15 @@ static int ca_encoder_get_payload_data(CaEncoder *e, CaEncoderNode *n) {
         if (e->payload_offset >= size) /* at EOF? */
                 return 0;
 
-        if (realloc_buffer_size(&e->buffer) > 0) /* already in buffer? */
-                return 1;
-
         k = (size_t) MIN(BUFFER_SIZE, size - e->payload_offset);
+        if (suggested_size != UINT64_MAX && k > suggested_size)
+                k = suggested_size;
 
         p = realloc_buffer_acquire(&e->buffer, k);
         if (!p)
                 return -ENOMEM;
 
-        m = read(n->fd, p, k);
+        m = pread(n->fd, p, k, e->payload_offset);
         if (m < 0) {
                 r = -errno;
                 goto fail;
@@ -2097,15 +2205,47 @@ fail:
         return r;
 }
 
+static int ca_encoder_skip_payload_data(CaEncoder *e, CaEncoderNode *n, uint64_t suggested_size) {
+        uint64_t size, d;
+        int r;
+
+        assert(e);
+        assert(n);
+        assert(S_ISREG(n->stat.st_mode) || S_ISBLK(n->stat.st_mode));
+        assert(e->state == CA_ENCODER_IN_PAYLOAD);
+        assert(realloc_buffer_size(&e->buffer) == 0);
+        assert(e->skipped_bytes == 0);
+
+        /* Thisis much like ca_encoder_get_payload_data() but we don't actually try to read anything from disk, but
+         * instead skip right to the end of the file we are currently looking at. This is used if the caller is not
+         * actually interested in the payload, but just wants to proceed to whatever comes next. */
+
+        r = ca_encoder_node_get_payload_size(n, &size);
+        if (r < 0)
+                return r;
+
+        if (e->payload_offset >= size) /* at EOF? */
+                return 0;
+
+        d = size - e->payload_offset;
+        if (suggested_size != UINT64_MAX && d > suggested_size)
+                d = suggested_size;
+        if (d > SIZE_MAX)
+                d = SIZE_MAX;
+
+        e->skipped_bytes = d;
+        return 1;
+}
+
 static int ca_encoder_get_filename_data(CaEncoder *e, const struct dirent *de) {
         CaFormatFilename *filename;
         size_t size;
 
         assert(e);
         assert(de);
-
-        if (realloc_buffer_size(&e->buffer) > 0)
-                return 1;
+        assert(e->state == CA_ENCODER_FILENAME);
+        assert(realloc_buffer_size(&e->buffer) == 0);
+        assert(e->skipped_bytes == 0);
 
         size = offsetof(CaFormatFilename, name) + strlen(de->d_name) + 1;
 
@@ -2248,9 +2388,8 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         assert(e);
         assert(n);
         assert(e->state == CA_ENCODER_ENTRY);
-
-        if (realloc_buffer_size(&e->buffer) > 0) /* Already generated */
-                return 1;
+        assert(realloc_buffer_size(&e->buffer) == 0);
+        assert(e->skipped_bytes == 0);
 
         r = ca_encoder_node_read_chattr(e, n);
         if (r < 0)
@@ -2525,55 +2664,36 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
 
         /* fprintf(stderr, "entry at %" PRIu64 " (%s)\n", e->archive_offset, entry->name); */
 
-        n->entry_offset = e->archive_offset;
-
         return 1;
 }
 
-static int name_table_compare(const void *a, const void *b) {
-        const CaEncoderNameTable *x = a, *y = b;
-
-        if (x->hash < y->hash)
-                return -1;
-        if (x->hash > y->hash)
-                return 1;
-
-        if (x->start_offset < y->start_offset)
-                return -1;
-        if (x->start_offset > y->start_offset)
-                return 1;
-
-        return 0;
-}
-
 static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
-        const CaEncoderNameTable *table;
-        _cleanup_free_ CaEncoderNameTable *bst = NULL;
+        _cleanup_(ca_name_table_unrefp) CaNameTable *bst = NULL;
         CaFormatGoodbye *g;
         CaFormatGoodbyeTail *tail;
         size_t size, i;
+        uint64_t start_offset;
+        int r;
 
         assert(e);
         assert(n);
         assert(S_ISDIR(n->stat.st_mode));
         assert(e->state == CA_ENCODER_GOODBYE);
+        assert(realloc_buffer_size(&e->buffer) == 0);
+        assert(e->skipped_bytes == 0);
 
-        assert(sizeof(CaFormatGoodbyeTail) == sizeof(CaFormatGoodbyeItem));
-
-        if (realloc_buffer_size(&e->buffer) > 0) /* Already generated */
-                return 1;
+        assert_cc(sizeof(CaFormatGoodbyeTail) == sizeof(CaFormatGoodbyeItem));
 
         /* If we got here through a seek we don't know the correct addresses of the directory entries, hence can't
          * correctly generate the name GOODBYE record. */
-        if (n->name_table_incomplete)
+        if (!n->name_table)
                 return -ENOLINK;
 
-        /* Similar, if we don't know the entry offset */
-        if (n->entry_offset == UINT64_MAX)
+        if (e->archive_offset == UINT64_MAX)
                 return -ENOLINK;
 
         size = offsetof(CaFormatGoodbye, items) +
-                sizeof(CaFormatGoodbyeItem) * n->n_name_table +
+                sizeof(CaFormatGoodbyeItem) * ca_name_table_items(n->name_table) +
                 sizeof(CaFormatGoodbyeTail);
 
         g = realloc_buffer_acquire(&e->buffer, size);
@@ -2585,38 +2705,35 @@ static int ca_encoder_get_goodbye_data(CaEncoder *e, CaEncoderNode *n) {
                 .size = htole64(size),
         };
 
-        if (n->n_name_table <= 1)
-                table = n->name_table;
-        else {
-                qsort(n->name_table, n->n_name_table, sizeof(CaEncoderNameTable), name_table_compare);
+        r = ca_name_table_make_bst(n->name_table, &bst);
+        if (r < 0)
+                return r;
 
-                bst = new(CaEncoderNameTable, n->n_name_table);
-                if (!bst)
-                        return -ENOMEM;
+        if (e->archive_offset < e->payload_offset)
+                return -EINVAL;
 
-                ca_make_bst(n->name_table, n->n_name_table, sizeof(CaEncoderNameTable), bst);
+        /* After seeking we might be pointing into the middle of a GOODBYE record. Let's calculate the actual start
+         * position of the GOODBYE record by subtracting the offset into the record. */
+        start_offset = e->archive_offset - e->payload_offset;
 
-                table = bst;
-        }
-
-        for (i = 0; i < n->n_name_table; i++) {
-                assert(table[i].start_offset < e->archive_offset);
-                assert(table[i].end_offset <= e->archive_offset);
-                assert(table[i].start_offset < table[i].end_offset);
+        for (i = 0; i < bst->n_items; i++) {
+                assert(bst->items[i].start_offset < start_offset);
+                assert(bst->items[i].end_offset <= start_offset);
+                assert(bst->items[i].start_offset < bst->items[i].end_offset);
 
                 g->items[i] = (CaFormatGoodbyeItem) {
-                        .offset = htole64(e->archive_offset - table[i].start_offset),
-                        .size = htole64(table[i].end_offset - table[i].start_offset),
-                        .hash = htole64(table[i].hash),
+                        .offset = htole64(start_offset - bst->items[i].start_offset),
+                        .size = htole64(bst->items[i].end_offset - bst->items[i].start_offset),
+                        .hash = htole64(bst->items[i].hash),
                 };
         }
 
-        assert(n->entry_offset != UINT64_MAX);
-        assert(n->entry_offset < e->archive_offset);
+        assert(bst->entry_offset != UINT64_MAX);
+        assert(bst->entry_offset < start_offset);
 
         /* Write the tail */
-        tail = (CaFormatGoodbyeTail*) (g->items + n->n_name_table);
-        write_le64(&tail->entry_offset, e->archive_offset - n->entry_offset);
+        tail = (CaFormatGoodbyeTail*) (g->items + bst->n_items);
+        write_le64(&tail->entry_offset, start_offset - bst->entry_offset);
         write_le64(&tail->size, size);
         write_le64(&tail->marker, CA_FORMAT_GOODBYE_TAIL_MARKER);
 
@@ -2639,21 +2756,42 @@ static int ca_encoder_write_digest(CaEncoder *e, CaDigest **digest, const void *
         return 0;
 }
 
-int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
+int ca_encoder_get_data(
+                CaEncoder *e,
+                uint64_t suggested_size,
+                const void **ret,
+                size_t *ret_size) {
+
         bool skip_applied = false;
         CaEncoderNode *n;
+        bool really_want_hardlink_digest, really_want_payload_digest;
         int r;
 
         if (!e)
                 return -EINVAL;
-        if (!ret)
-                return -EINVAL;
-        if (!ret_size)
-                return -EINVAL;
+
+        /* A previous call in the same iteration was done with ret == NULL, and hence we decided to skip bytes, but the
+         * new call wants to see data for the same iteration after all? That's not supported! */
+        if (e->skipped_bytes > 0 && ret)
+                return -EKEYREVOKED;
+
+        if (realloc_buffer_size(&e->buffer) > 0 ||
+            e->skipped_bytes > 0) /* already data in buffer, if so return it again? */
+                goto done;
 
         n = ca_encoder_current_node(e);
         if (!n)
                 return -EUNATCH;
+
+        really_want_hardlink_digest =
+                e->want_hardlink_digest &&
+                !e->hardlink_digest_invalid &&
+                IN_SET(e->state, CA_ENCODER_ENTRY, CA_ENCODER_IN_PAYLOAD);
+
+        really_want_payload_digest =
+                e->want_payload_digest &&
+                !e->payload_digest_invalid &&
+                e->state == CA_ENCODER_IN_PAYLOAD;
 
         switch (e->state) {
 
@@ -2667,9 +2805,14 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
         case CA_ENCODER_IN_PAYLOAD:
                 assert(S_ISREG(n->stat.st_mode) || S_ISBLK(n->stat.st_mode));
 
-                skip_applied = true;
+                if (!ret && !e->want_archive_digest && !really_want_hardlink_digest && !really_want_payload_digest)
+                        /* OK, we can shortcut this, as neither the caller is interested in this data, nor do we need
+                         * it for digest calculation. In this case let's just skip the whole shebang. */
+                        r = ca_encoder_skip_payload_data(e, n, suggested_size);
+                else
+                        r = ca_encoder_get_payload_data(e, n, suggested_size);
 
-                r = ca_encoder_get_payload_data(e, n);
+                skip_applied = true;
                 break;
 
         case CA_ENCODER_FILENAME: {
@@ -2694,7 +2837,6 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
         default:
                 return -ENODATA;
         }
-
         if (r < 0)
                 return r;
         if (!skip_applied && r > 0) {
@@ -2707,20 +2849,30 @@ int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size) {
         }
         if (r == 0) {
                 /* EOF */
-                *ret = NULL;
-                *ret_size = 0;
+
+                assert(realloc_buffer_size(&e->buffer) == 0);
+                assert(e->skipped_bytes == 0);
+
+                if (ret)
+                        *ret = NULL;
+                if (ret_size)
+                        *ret_size = 0;
                 return 0;
         }
 
         if (e->want_archive_digest)
                 ca_encoder_write_digest(e, &e->archive_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
-        if (e->want_hardlink_digest && !e->hardlink_digest_invalid && IN_SET(e->state, CA_ENCODER_ENTRY, CA_ENCODER_IN_PAYLOAD))
+        if (really_want_hardlink_digest)
                 ca_encoder_write_digest(e, &e->hardlink_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
-        if (e->want_payload_digest && !e->payload_digest_invalid && e->state == CA_ENCODER_IN_PAYLOAD)
+        if (really_want_payload_digest)
                 ca_encoder_write_digest(e, &e->payload_digest, realloc_buffer_data(&e->buffer), realloc_buffer_size(&e->buffer));
 
-        *ret = realloc_buffer_data(&e->buffer);
-        *ret_size = realloc_buffer_size(&e->buffer);
+done:
+        if (ret)
+                *ret = realloc_buffer_data(&e->buffer);
+
+        if (ret_size)
+                *ret_size = realloc_buffer_size(&e->buffer) + e->skipped_bytes;
 
         return 1;
 }
@@ -2782,6 +2934,7 @@ static int ca_encoder_node_path(CaEncoder *e, CaEncoderNode *node, char **ret) {
 
         *ret = p;
         p = NULL;
+
         return 0;
 }
 
@@ -3160,9 +3313,9 @@ int ca_encoder_current_archive_offset(CaEncoder *e, uint64_t *ret) {
 }
 
 int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret) {
-        CaLocationDesignator designator;
-        CaEncoderNode *node;
+        CaEncoderNode *node, *name_table_node;
         _cleanup_free_ char *path = NULL;
+        CaLocationDesignator designator;
         CaLocation *l;
         int r;
 
@@ -3178,18 +3331,34 @@ int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret) {
         switch (e->state) {
 
         case CA_ENCODER_ENTRY:
+                /* In CA_ENCODER_ENTRY state, we add the parent's name table to the location. For two reasons: our own
+                 * name table will be empty anyway this early. And we generate ENTRY records for all files not just
+                 * directories, but name tables apply only to directories. By not encoding the name table here we can
+                 * thus treat all file types the same way. */
+
+                name_table_node = ca_encoder_node_parent_of(e, node);
                 designator = CA_LOCATION_ENTRY;
                 break;
 
         case CA_ENCODER_IN_PAYLOAD:
                 assert(S_ISREG(node->stat.st_mode) || S_ISBLK(node->stat.st_mode));
 
+                /* In CA_ENCODER_IN_PAYLOAD state we also use the parent's name table. Using our own makes no sense, as
+                 * we won't have any name table on our own node, as only directories have that, and in this state we
+                 * can't be in a directory */
+
+                name_table_node = ca_encoder_node_parent_of(e, node);
                 designator = CA_LOCATION_PAYLOAD;
                 break;
 
         case CA_ENCODER_FILENAME:
                 assert(S_ISDIR(node->stat.st_mode));
 
+                name_table_node = node;
+
+                /* Here's a tweak: in CA_ENCODER_FILENAME state we actually encode the child's data, as we our current
+                 * node might be the directory, but we need to serialize at which directory entry within it we
+                 * currently are. */
                 node = ca_encoder_current_child_node(e);
                 if (!node)
                         return -EUNATCH;
@@ -3200,6 +3369,7 @@ int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret) {
         case CA_ENCODER_GOODBYE:
                 assert(S_ISDIR(node->stat.st_mode));
 
+                name_table_node = node;
                 designator = CA_LOCATION_GOODBYE;
                 break;
 
@@ -3211,12 +3381,26 @@ int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret) {
         if (r < 0 && r != -ENOTDIR)
                 return r;
 
+        r = ca_encoder_node_read_generation(e, node);
+        if (r < 0)
+                return r;
+
         r = ca_location_new(path, designator, e->payload_offset + add, UINT64_MAX, &l);
         if (r < 0)
                 return r;
 
+        l->mtime = MAX(timespec_to_nsec(node->stat.st_mtim),
+                       timespec_to_nsec(node->stat.st_ctim));
+        l->inode = node->stat.st_ino;
+        l->generation_valid = node->generation_valid > 0;
+        l->generation = node->generation;
+
+        l->name_table = name_table_node ? ca_name_table_ref(name_table_node->name_table) : NULL;
+
+        if (e->archive_offset != UINT64_MAX)
+                l->archive_offset = e->archive_offset + add;
+
         *ret = l;
-        path = NULL;
         return 0;
 }
 
@@ -3240,7 +3424,7 @@ static int ca_encoder_node_seek_child(CaEncoder *e, CaEncoderNode *n, const char
         if (r < 0)
                 return r;
 
-        n->name_table_incomplete = true;
+        n->name_table = ca_name_table_unref(n->name_table);
 
         de = ca_encoder_node_current_dirent(n);
         if (de && streq(name, de->d_name)) {
@@ -3318,14 +3502,51 @@ static int ca_encoder_seek_path_and_enter(CaEncoder *e, const char *path) {
 
         assert(e);
 
-        if (isempty(path))
+        if (isempty(path)) {
+                CaEncoderNode *node;
+
+                node = ca_encoder_current_node(e);
+                if (!node)
+                        return -EUNATCH;
+
+                node->name_table = ca_name_table_unref(node->name_table);
                 return 0;
+        }
 
         r = ca_encoder_seek_path(e, path);
         if (r < 0)
                 return r;
 
         return ca_encoder_enter_child(e);
+}
+
+static int ca_encoder_node_install_name_table(CaEncoder *e, CaEncoderNode *node, CaNameTable *t) {
+        assert(e);
+        assert(node);
+        assert(S_ISDIR(node->stat.st_mode));
+        assert(t);
+
+        for (;;) {
+                ca_name_table_unref(node->name_table);
+                node->name_table = ca_name_table_ref(t);
+
+                node = ca_encoder_node_parent_of(e, node);
+                if (!node)
+                        break;
+
+                t = t->parent;
+                if (!t) {
+                        log_debug("Name table chain ended prematurely.");
+                        return -ESPIPE;
+                }
+        }
+
+        if (t->parent) {
+                log_debug("Name table chain too long.");
+                return -ESPIPE;
+        }
+
+        return 0;
 }
 
 int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
@@ -3349,7 +3570,6 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
         switch (location->designator) {
 
         case CA_LOCATION_ENTRY:
-
                 r = ca_encoder_seek_path_and_enter(e, location->path);
                 if (r < 0)
                         return r;
@@ -3358,13 +3578,30 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                 assert(node);
 
                 node->dirent_idx = 0;
-
                 ca_encoder_enter_state(e, CA_ENCODER_ENTRY);
-
                 e->payload_offset = location->offset;
-                e->archive_offset = UINT64_MAX;
+                e->archive_offset = location->archive_offset;
+
+                if (location->name_table) {
+                        CaEncoderNode *parent;
+
+                        parent = ca_encoder_node_parent_of(e, node);
+                        if (!parent)
+                                return -ENXIO;
+
+                        /* Install the name table included in the location for our parents… */
+                        r = ca_encoder_node_install_name_table(e, parent, location->name_table);
+                        if (r < 0)
+                                return r;
+                }
+
+                /* …and a new one for ourselves (if we are a directory that is). */
+                r = ca_encoder_initialize_name_table(e, node, location->offset);
+                if (r < 0)
+                        return r;
 
                 realloc_buffer_empty(&e->buffer);
+                e->skipped_bytes = 0;
 
                 ca_digest_reset(e->archive_digest);
 
@@ -3377,7 +3614,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                 if (e->want_hardlink_digest && !e->hardlink_digest_invalid)
                         ca_digest_reset(e->hardlink_digest);
 
-                return CA_ENCODER_DATA;
+                return location->offset > 0 ? CA_ENCODER_DATA : CA_ENCODER_NEXT_FILE;
 
         case CA_LOCATION_PAYLOAD: {
                 uint64_t size;
@@ -3399,18 +3636,27 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                 if (location->offset >= size)
                         return -ENXIO;
 
-                if (lseek(node->fd, location->offset, SEEK_SET) == (off_t) -1)
-                        return -errno;
-
                 ca_encoder_enter_state(e, CA_ENCODER_IN_PAYLOAD);
                 e->payload_offset = location->offset;
+                e->archive_offset = location->archive_offset;
 
-                if (CA_ENCODER_AT_ROOT(e))
+                if (e->archive_offset == UINT64_MAX && CA_ENCODER_AT_ROOT(e))
                         e->archive_offset = location->offset;
-                else
-                        e->archive_offset = UINT64_MAX;
+
+                if (location->name_table) {
+                        CaEncoderNode *parent;
+
+                        parent = ca_encoder_node_parent_of(e, node);
+                        if (!parent)
+                                return -ENXIO;
+
+                        r = ca_encoder_node_install_name_table(e, parent, location->name_table);
+                        if (r < 0)
+                                return r;
+                }
 
                 realloc_buffer_empty(&e->buffer);
+                e->skipped_bytes = 0;
 
                 ca_digest_reset(e->archive_digest);
 
@@ -3435,11 +3681,17 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                         return -ENOTDIR;
 
                 ca_encoder_enter_state(e, CA_ENCODER_FILENAME);
-
                 e->payload_offset = location->offset;
-                e->archive_offset = UINT64_MAX;
+                e->archive_offset = location->archive_offset;
+
+                if (location->name_table) {
+                        r = ca_encoder_node_install_name_table(e, node, location->name_table);
+                        if (r < 0)
+                                return r;
+                }
 
                 realloc_buffer_empty(&e->buffer);
+                e->skipped_bytes = 0;
 
                 ca_digest_reset(e->archive_digest);
 
@@ -3462,13 +3714,18 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                         return r;
 
                 node->dirent_idx = node->n_dirents;
-                node->name_table_incomplete = node->n_dirents > 0;
                 ca_encoder_enter_state(e, CA_ENCODER_GOODBYE);
-
                 e->payload_offset = location->offset;
-                e->archive_offset = UINT64_MAX;
+                e->archive_offset = location->archive_offset;
+
+                if (location->name_table) {
+                        r = ca_encoder_node_install_name_table(e, node, location->name_table);
+                        if (r < 0)
+                                return r;
+                }
 
                 realloc_buffer_empty(&e->buffer);
+                e->skipped_bytes = 0;
 
                 ca_digest_reset(e->archive_digest);
 

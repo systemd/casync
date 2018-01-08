@@ -8,6 +8,8 @@ util_sources = files('''
 '''.split())
 
 libshared_sources = files('''
+        cacache.c
+        cacache.h
         cachunk.c
         cachunk.h
         cachunker.c
@@ -34,6 +36,8 @@ libshared_sources = files('''
         calocation.h
         camakebst.c
         camakebst.h
+        canametable.c
+        canametable.h
         canbd.c
         canbd.h
         caorigin.c

@@ -259,7 +259,7 @@ int ca_origin_dump(FILE *f, CaOrigin *origin) {
         if (!f)
                 f = stderr;
 
-        for (i = 0; i < origin->n_items; i++) {
+        for (i = 0; i < ca_origin_items(origin); i++) {
                 const char *c;
 
                 c = ca_location_format(ca_origin_get(origin, i));

@@ -82,7 +82,7 @@ static int encode(int dfd, int fd) {
                         size_t sz;
                         ssize_t n;
 
-                        r = ca_encoder_get_data(e, &p, &sz);
+                        r = ca_encoder_get_data(e, UINT64_MAX, &p, &sz);
                         if (r == -ENODATA)
                                 break;
                         if (r < 0)

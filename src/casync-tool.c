@@ -55,6 +55,7 @@ static bool arg_seed_output = true;
 static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
+static char *arg_cache = NULL;
 static size_t arg_chunk_size_min = 0;
 static size_t arg_chunk_size_avg = 0;
 static size_t arg_chunk_size_max = 0;
@@ -93,6 +94,7 @@ static void help(void) {
                "     --compression=COMPRESSION\n"
                "                             Pick compression algorithm (zstd, xz or gzip)\n"
                "     --seed=PATH             Additional file or directory to use as seed\n"
+               "     --cache=PATH            Directory to use as encoder cache\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote\n"
                "                             communication\n"
                "     --exclude-nodump=no     Don't exclude files with chattr(1)'s +d 'nodump'\n"
@@ -289,6 +291,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_EXTRA_STORE,
                 ARG_CHUNK_SIZE,
                 ARG_SEED,
+                ARG_CACHE,
                 ARG_RATE_LIMIT_BPS,
                 ARG_WITH,
                 ARG_WITHOUT,
@@ -319,6 +322,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "extra-store",       required_argument, NULL, ARG_EXTRA_STORE       },
                 { "chunk-size",        required_argument, NULL, ARG_CHUNK_SIZE        },
                 { "seed",              required_argument, NULL, ARG_SEED              },
+                { "cache",             required_argument, NULL, ARG_CACHE             },
                 { "rate-limit-bps",    required_argument, NULL, ARG_RATE_LIMIT_BPS    },
                 { "with",              required_argument, NULL, ARG_WITH              },
                 { "without",           required_argument, NULL, ARG_WITHOUT           },
@@ -396,6 +400,13 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_SEED:
                         r = strv_extend(&arg_seeds, optarg);
+                        if (r < 0)
+                                return log_oom();
+
+                        break;
+
+                case ARG_CACHE:
+                        r = free_and_strdup(&arg_cache, optarg);
                         if (r < 0)
                                 return log_oom();
 
@@ -818,7 +829,8 @@ static int verbose_print_path(CaSync *s, const char *verb) {
 }
 
 static int verbose_print_done_make(CaSync *s) {
-        uint64_t n_chunks = UINT64_MAX, size = UINT64_MAX, n_reused = UINT64_MAX, covering;
+        uint64_t n_chunks = UINT64_MAX, size = UINT64_MAX, n_reused = UINT64_MAX, covering,
+                n_cache_hits = UINT64_MAX, n_cache_misses = UINT64_MAX, n_cache_invalidated = UINT64_MAX, n_cache_added = UINT64_MAX;
         char buffer[FORMAT_BYTES_MAX];
         int r;
 
@@ -868,14 +880,33 @@ static int verbose_print_done_make(CaSync *s) {
                 log_info("Number of chunks: %" PRIu64, n_chunks);
         if (n_reused != UINT64_MAX) {
                 if (n_chunks != UINT64_MAX && n_chunks > 0)
-                        log_info("Reused chunks: %"PRIu64 " (%"PRIu64 "%%)",
+                        log_info("Reused (non-cached) chunks: %"PRIu64 " (%"PRIu64 "%%)",
                                  n_reused, n_reused * 100U / n_chunks);
                 else
-                        log_info("Reused chunks: %" PRIu64, n_reused);
+                        log_info("Reused (non-cached) chunks: %" PRIu64, n_reused);
         }
 
         if (size != UINT64_MAX && n_chunks != UINT64_MAX)
                 log_info("Effective average chunk size: %s", format_bytes(buffer, sizeof(buffer), size / n_chunks));
+
+        r = ca_sync_current_cache_hits(s, &n_cache_hits);
+        if (r < 0 && r != -ENODATA)
+                return log_error_errno(r, "Failed to read number of cache hits: %m");
+
+        r = ca_sync_current_cache_misses(s, &n_cache_misses);
+        if (r < 0 && r != -ENODATA)
+                return log_error_errno(r, "Failed to read number of cache misses: %m");
+
+        r = ca_sync_current_cache_invalidated(s, &n_cache_invalidated);
+        if (r < 0 && r != -ENODATA)
+                return log_error_errno(r, "Failed to read number of invalidated cache items: %m");
+
+        r = ca_sync_current_cache_added(s, &n_cache_added);
+        if (r < 0 && r != -ENODATA)
+                return log_error_errno(r, "Failed to read number of added cache items: %m");
+
+        if (n_cache_hits != UINT64_MAX && n_cache_misses != UINT64_MAX && n_cache_invalidated != UINT64_MAX && n_cache_added != UINT64_MAX)
+                log_info("Cache hits: %" PRIu64 ", misses: %" PRIu64 ", invalidated: %" PRIu64 ", added: %" PRIu64, n_cache_hits, n_cache_misses, n_cache_invalidated, n_cache_added);
 
         return 1;
 }
@@ -1180,9 +1211,15 @@ static int verb_make(int argc, char *argv[]) {
         if (r < 0)
                 return r;
 
-        r = ca_sync_enable_archive_digest(s, true);
+        r = ca_sync_enable_archive_digest(s, !arg_cache);
         if (r < 0)
                 return log_error_errno(r, "Failed to enable archive digest: %m");
+
+        if (arg_cache) {
+                r = ca_sync_set_cache_path(s, arg_cache);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set cache: %m");
+        }
 
         (void) send_notify("READY=1");
 
@@ -1204,8 +1241,12 @@ static int verb_make(int argc, char *argv[]) {
 
                         verbose_print_done_make(s);
 
-                        assert_se(ca_sync_get_archive_digest(s, &digest) >= 0);
-                        printf("%s\n", ca_chunk_id_format(&digest, t));
+                        r = ca_sync_get_archive_digest(s, &digest);
+                        if (r >= 0)
+                                printf("%s\n", ca_chunk_id_format(&digest, t));
+                        else if (r != -ENOMEDIUM)
+                                return log_debug_errno(r, "Failed to query archive digest: %m");
+
                         return 0;
                 }
 
@@ -3743,6 +3784,7 @@ int main(int argc, char *argv[]) {
 
 finish:
         free(arg_store);
+        free(arg_cache);
         strv_free(arg_extra_stores);
         strv_free(arg_seeds);
 
