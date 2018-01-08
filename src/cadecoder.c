@@ -3462,8 +3462,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         if (child->fd >= 0)
                 r = fstat(child->fd, &st);
         else {
-                if (!n)
-                        return -EINVAL;
+                assert(dir_fd >= 0);
 
                 r = fstatat(dir_fd, name, &st, AT_SYMLINK_NOFOLLOW);
         }
@@ -3550,8 +3549,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         if (child->fd >= 0)
                                 r = fchown(child->fd, uid, gid);
                         else {
-                                if (!n)
-                                        return -EINVAL;
+                                assert(dir_fd >= 0);
 
                                 r = fchownat(dir_fd, name, uid, gid, AT_SYMLINK_NOFOLLOW);
                         }
@@ -3583,8 +3581,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         if (child->fd >= 0)
                                 r = fchmod(child->fd, new_mode);
                         else {
-                                if (!n)
-                                        return -EINVAL;
+                                assert(dir_fd >= 0);
 
                                 r = fchmodat(dir_fd, name, new_mode, AT_SYMLINK_NOFOLLOW);
                         }
@@ -3599,8 +3596,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         if (child->fd >= 0)
                                 r = fchmod(child->fd, read_le64(&child->entry->mode) & 07777);
                         else {
-                                if (!n)
-                                        return -EINVAL;
+                                assert(dir_fd >= 0);
 
                                 r = fchmodat(dir_fd, name, read_le64(&child->entry->mode) & 07777, AT_SYMLINK_NOFOLLOW);
                         }
@@ -3615,8 +3611,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 acl_t new_acl;
 
                 if (child->fd < 0) {
-                        if (!n)
-                                return -EINVAL;
+                        assert(dir_fd >= 0);
 
                         path_fd = openat(dir_fd, name, O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_PATH);
                         if (path_fd < 0)
@@ -3835,8 +3830,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 if (child->fd >= 0)
                         r = futimens(child->fd, ts);
                 else {
-                        if (!n)
-                                return -EINVAL;
+                        assert(dir_fd >= 0);
 
                         r = utimensat(dir_fd, name, ts, AT_SYMLINK_NOFOLLOW);
                 }
