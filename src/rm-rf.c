@@ -11,12 +11,13 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "chattr.h"
 #include "rm-rf.h"
 #include "util.h"
 
 static int unlinkat_immutable(int dir_fd, const char *name, int flags, RemoveFlags rflags) {
-        unsigned attr;
-        int r, fd;
+        _cleanup_(safe_closep) int fd = -1;
+        int r;
 
         if (unlinkat(dir_fd, name, flags) >= 0)
                 return 0;
@@ -38,54 +39,27 @@ static int unlinkat_immutable(int dir_fd, const char *name, int flags, RemoveFla
         if ((flags & AT_REMOVEDIR) == 0) {
                 struct stat st;
 
-                if (fstat(fd, &st) < 0) {
-                        r = -errno;
-                        goto fail;
-                }
+                if (fstat(fd, &st) < 0)
+                        return -errno;
 
-                if (S_ISDIR(st.st_mode)) {
+                if (S_ISDIR(st.st_mode))
                         /* This is a directory, but AT_REMOVEDIR wasn't set? then report it with the right error */
-                        r = -EISDIR;
-                        goto fail;
-                }
+                        return -EISDIR;
 
-                if (!S_ISREG(st.st_mode)) {
-                        r = -EPERM; /* chattr(1) flags not supported for anything not regular files or directories, propagate the original error */
-                        goto fail;
-                }
+                if (!S_ISREG(st.st_mode))
+                        return -EPERM; /* chattr(1) flags not supported for anything not regular files or directories, propagate the original error */
         }
 
-        if (ioctl(fd, FS_IOC_GETFLAGS, &attr) < 0) {
-                /* If chattr(1) flags are not supported, propagate the original error */
-                r = IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP) ? -EPERM : -errno;
-                goto fail;
-        }
+        r = mask_attr_fd(fd, 0, FS_IMMUTABLE_FL);
+        if (r < 0)
+                return r;
+        if (r == 0) /* immutable flag isn't set, propagate original error */
+                return -EPERM;
 
-        if ((attr & FS_IMMUTABLE_FL) == 0) {
-                /* immutable flag isn't set, propagate original error */
-                r = -EPERM;
-                goto fail;
-        }
-
-        attr &= ~FS_IMMUTABLE_FL;
-
-        if (ioctl(fd, FS_IOC_SETFLAGS, &attr) < 0) {
-                r = -errno;
-                goto fail;
-        }
-
-        fd = safe_close(fd);
-
-        if (unlinkat(dir_fd, name, flags) < 0) {
-                r = -errno;
-                goto fail;
-        }
+        if (unlinkat(dir_fd, name, flags) < 0)
+                return -errno;
 
         return 0;
-
-fail:
-        safe_close(fd);
-        return r;
 }
 
 int rm_rf_children(int fd, RemoveFlags flags, struct stat *root_dev) {

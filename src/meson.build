@@ -49,6 +49,8 @@ libshared_sources = files('''
         casync.h
         cautil.c
         cautil.h
+        chattr.c
+        chattr.h
         compressor.c
         compressor.h
         def.h
