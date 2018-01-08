@@ -22,6 +22,7 @@
 #include "caformat-util.h"
 #include "caformat.h"
 #include "cautil.h"
+#include "chattr.h"
 #include "def.h"
 #include "realloc-buffer.h"
 #include "reflink.h"
@@ -2810,18 +2811,15 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
                 assert(false);
         }
 
-        if (child->fd >= 0 && (read_le64(&child->entry->flags) & d->replay_feature_flags & CA_FORMAT_WITH_CHATTR) != 0) {
-
-                unsigned new_attr;
-
+        if (child->fd >= 0) {
                 /* A select few chattr() attributes need to be applied (or are better applied) on empty
                  * files/directories instead of the final result, do so here. */
 
-                new_attr = ca_feature_flags_to_chattr(read_le64(&child->entry->flags) & d->replay_feature_flags) & APPLY_EARLY_FS_FL;
-                if (new_attr != 0) {
-                        if (ioctl(child->fd, FS_IOC_SETFLAGS, &new_attr) < 0)
-                                return -errno;
-                }
+                r = mask_attr_fd(child->fd,
+                                 ca_feature_flags_to_chattr(read_le64(&child->entry->flags)),
+                                 ca_feature_flags_to_chattr(d->replay_feature_flags) & APPLY_EARLY_FS_FL);
+                if (r < 0)
+                        return r;
         }
 
         return 0;
@@ -3319,16 +3317,15 @@ finish:
 }
 
 static int drop_immutable(int dir_fd, const char *name) {
+        _cleanup_(safe_closep) int fd = -1;
         struct stat st;
-        unsigned attr;
-        int fd, r;
 
         if (dir_fd < 0)
                 return -EBADF;
         if (!name)
                 return -EINVAL;
 
-        fd = openat(dir_fd, name, O_CLOEXEC|O_RDONLY|O_NOFOLLOW|O_NOCTTY);
+        fd = openat(dir_fd, name, O_CLOEXEC|O_RDONLY|O_NOFOLLOW|O_NOCTTY|O_NONBLOCK);
         if (fd < 0) {
                 if (errno == ELOOP) /* symlinks don't have an immutable bit */
                         return 0;
@@ -3336,38 +3333,14 @@ static int drop_immutable(int dir_fd, const char *name) {
                 return -errno;
         }
 
-        if (fstat(fd, &st) < 0) {
-                r = -errno;
-                goto finish;
-        }
-        if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) {
-                r = 0; /* only regular files and directories have an immutable bit */
-                goto finish;
-        }
+        if (fstat(fd, &st) < 0)
+                return -errno;
 
-        if (ioctl(fd, FS_IOC_GETFLAGS, &attr) < 0) {
-                /* If the fs doesn't actually support chattr(1) flags, then let's not do anything */
-                r = IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP) ? 0 : -errno;
-                goto finish;
-        }
+        /* Only regular files and directories have an immutable bit */
+        if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode))
+                return 0;
 
-        if ((attr & FS_IMMUTABLE_FL) == 0) {
-                r = 0; /* nothing to unset */
-                goto finish;
-        }
-
-        attr &= ~FS_IMMUTABLE_FL;
-
-        if (ioctl(fd, FS_IOC_SETFLAGS, &attr) < 0) {
-                r = -errno;
-                goto finish;
-        }
-
-        r = 1;
-
-finish:
-        safe_close(fd);
-        return r;
+        return mask_attr_fd(fd, 0, FS_IMMUTABLE_FL);
 }
 
 static int ca_decoder_install_file(CaDecoder *d, int dir_fd, const char *temporary_name, const char *name) {
@@ -3884,50 +3857,30 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
         }
 
         if ((d->replay_feature_flags & CA_FORMAT_WITH_CHATTR) != 0 && child->fd >= 0) {
-                unsigned max_attr, new_attr, old_attr;
+                unsigned value, mask;
 
-                max_attr = ca_feature_flags_to_chattr(d->replay_feature_flags);
-                new_attr = ca_feature_flags_to_chattr(read_le64(&child->entry->flags) & d->replay_feature_flags);
+                value = ca_feature_flags_to_chattr(read_le64(&child->entry->flags));
+                mask = ca_feature_flags_to_chattr(d->replay_feature_flags);
 
-                if (ioctl(child->fd, FS_IOC_GETFLAGS, &old_attr) < 0) {
-
-                        if (new_attr != 0 || !IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP))
-                                return -errno;
-
-                } else if ((old_attr & max_attr) != new_attr) {
-                        unsigned final_attr;
-
-                        final_attr = (old_attr & ~max_attr) | (new_attr & max_attr);
-                        if (ioctl(child->fd, FS_IOC_SETFLAGS, &final_attr) < 0)
-                                return -errno;
-                }
+                r = mask_attr_fd(child->fd, value, mask);
+                if (r < 0)
+                        return r;
         }
 
         if ((d->replay_feature_flags & CA_FORMAT_WITH_FAT_ATTRS) != 0 && child->fd >= 0) {
-                uint32_t new_attr;
+                unsigned value, mask;
 
-                new_attr = ca_feature_flags_to_fat_attrs(read_le64(&child->entry->flags) & d->replay_feature_flags);
+                value = ca_feature_flags_to_fat_attrs(read_le64(&child->entry->flags));
+                mask = ca_feature_flags_to_fat_attrs(d->replay_feature_flags);
 
-                if (F_TYPE_EQUAL(magic, MSDOS_SUPER_MAGIC)) {
-                        uint32_t max_attr, old_attr;
+                if (IN_SET(magic, MSDOS_SUPER_MAGIC, FUSE_SUPER_MAGIC)) {
 
-                        max_attr = ca_feature_flags_to_fat_attrs(d->replay_feature_flags);
+                        r = mask_fat_attr_fd(child->fd, value, mask);
+                        if (r < 0)
+                                return r;
 
-                        if (ioctl(child->fd, FAT_IOCTL_GET_ATTRIBUTES, &old_attr) < 0)
-                                return -errno;
-
-                        if ((old_attr & max_attr) != new_attr) {
-                                uint32_t final_attr;
-
-                                final_attr = (old_attr & ~max_attr) | new_attr;
-
-                                if (ioctl(child->fd, FAT_IOCTL_SET_ATTRIBUTES, &final_attr) < 0)
-                                        return -errno;
-                        }
-                } else {
-                        if (new_attr != 0)
-                                return -EOPNOTSUPP;
-                }
+                } else if ((value & mask) != 0)
+                        return -EOPNOTSUPP;
         }
 
         if (d->replay_feature_flags & CA_FORMAT_WITH_SUBVOLUME) {

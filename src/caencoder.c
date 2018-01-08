@@ -31,6 +31,7 @@
 #include "caformat.h"
 #include "camakebst.h"
 #include "cautil.h"
+#include "chattr.h"
 #include "def.h"
 #include "fssize.h"
 #include "realloc-buffer.h"
@@ -574,14 +575,9 @@ static int ca_encoder_node_read_chattr(
         if ((e->feature_flags & (CA_FORMAT_WITH_CHATTR|CA_FORMAT_EXCLUDE_NODUMP)) == 0)
                 return 0;
 
-        r = ioctl(n->fd, FS_IOC_GETFLAGS, &n->chattr_flags);
-        if (r < 0) {
-                /* If a file system or node type doesn't support chattr flags, then initialize things to zero */
-                if (!IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP))
-                        return -errno;
-
-                n->chattr_flags = 0;
-        }
+        r = read_attr_fd(n->fd, &n->chattr_flags);
+        if (r < 0)
+                return r;
 
         n->chattr_flags_valid = true;
 
@@ -591,6 +587,8 @@ static int ca_encoder_node_read_chattr(
 static int ca_encoder_node_read_fat_attrs(
                 CaEncoder *e,
                 CaEncoderNode *n) {
+
+        int r;
 
         assert(e);
         assert(n);
@@ -605,14 +603,11 @@ static int ca_encoder_node_read_fat_attrs(
                 return 0;
 
         if (IN_SET(n->magic, MSDOS_SUPER_MAGIC, FUSE_SUPER_MAGIC)) {
+
                 /* FUSE and true FAT file systems might implement this ioctl(), otherwise don't bother */
-                if (ioctl(n->fd, FAT_IOCTL_GET_ATTRIBUTES, &n->fat_attrs) < 0) {
-
-                        if (!IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP))
-                                return -errno;
-
-                        n->fat_attrs = 0;
-                }
+                r = read_fat_attr_fd(n->fd, &n->fat_attrs);
+                if (r < 0)
+                        return r;
         } else
                 n->fat_attrs = 0;
 
