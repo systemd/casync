@@ -1407,3 +1407,26 @@ int is_dir(const char* path, bool follow) {
 
         return !!S_ISDIR(st.st_mode);
 }
+
+int free_and_strdup(char **p, const char *s) {
+        char *t;
+
+        assert(p);
+
+        /* Replaces a string pointer with an strdup()ed new string, possibly freeing the old one. */
+
+        if (streq_ptr(*p, s))
+                return 0;
+
+        if (s) {
+                t = strdup(s);
+                if (!t)
+                        return -ENOMEM;
+        } else
+                t = NULL;
+
+        free(*p);
+        *p = t;
+
+        return 1;
+}

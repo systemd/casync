@@ -789,4 +789,6 @@ static inline void unlink_and_free(char *p) {
 }
 DEFINE_TRIVIAL_CLEANUP_FUNC(char*, unlink_and_free);
 
+int free_and_strdup(char **p, const char *s);
+
 #endif
