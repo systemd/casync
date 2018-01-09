@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <sys/types.h>
+#include <inttypes.h>
 
 typedef struct CaDigest CaDigest;
 
@@ -22,6 +23,20 @@ CaDigest *ca_digest_free(CaDigest *d);
 int ca_digest_ensure_allocated(CaDigest **d, CaDigestType t);
 
 void ca_digest_write(CaDigest *d, const void *p, size_t l);
+
+static inline void ca_digest_write_u8(CaDigest *d, uint8_t u) {
+        ca_digest_write(d, &u, sizeof(u));
+}
+
+static inline void ca_digest_write_u32(CaDigest *d, uint32_t u) {
+        u = htole32(u);
+        ca_digest_write(d, &u, sizeof(u));
+}
+
+static inline void ca_digest_write_u64(CaDigest *d, uint64_t u) {
+        u = htole64(u);
+        ca_digest_write(d, &u, sizeof(u));
+}
 
 const void* ca_digest_read(CaDigest *d);
 
