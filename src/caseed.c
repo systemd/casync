@@ -215,7 +215,7 @@ static int ca_seed_open(CaSeed *s) {
 
                 (void) mkdir(s->cache_path, 0777);
 
-                s->cache_fd = open(s->cache_path, O_RDONLY|O_CLOEXEC|O_DIRECTORY|O_NOCTTY);
+                s->cache_fd = open(s->cache_path, O_RDONLY|O_CLOEXEC|O_DIRECTORY);
                 if (s->cache_fd < 0)
                         return -errno;
         }
