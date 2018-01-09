@@ -49,6 +49,8 @@ int ca_location_new(const char *path, CaLocationDesignator designator, uint64_t 
 CaLocation* ca_location_unref(CaLocation *l);
 CaLocation* ca_location_ref(CaLocation *l);
 
+DEFINE_TRIVIAL_CLEANUP_FUNC(CaLocation*, ca_location_unref);
+
 const char* ca_location_format(CaLocation *l);
 
 int ca_location_parse(const char *text, CaLocation **ret);

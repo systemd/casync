@@ -40,4 +40,6 @@ static inline uint64_t ca_origin_bytes(CaOrigin *origin) {
         return origin ? origin->n_bytes : 0;
 }
 
+DEFINE_TRIVIAL_CLEANUP_FUNC(CaOrigin*, ca_origin_unref);
+
 #endif
