@@ -7,9 +7,12 @@
 #include <errno.h>
 
 int log_info_errno(int error, const char* fmt, ...);
-int log_error_errno(int error, const char* format, ...);
+int log_error_errno(int error, const char* fmt, ...);
+int log_debug_errno(int error, const char* fmt, ...);
+
 #define log_info(fmt, ...) log_info_errno(0, fmt, ##__VA_ARGS__)
 #define log_error(fmt, ...) log_error_errno(0, fmt, ##__VA_ARGS__)
+#define log_debug(fmt, ...) log_debug_errno(0, fmt, ##__VA_ARGS__)
 
 static inline int log_oom(void) {
         log_error("Out of memory");

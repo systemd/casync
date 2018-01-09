@@ -2,5 +2,5 @@
 
 notify_wait_sources = [
         files('notify-wait.c'),
-        log_sources,
+        util_sources,
 ]

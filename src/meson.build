@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: LGPL-2.1+
 
-log_sources = files('''
+util_sources = files('''
         log.c
         log.h
+        util.c
+        util.h
 '''.split())
 
 libshared_sources = files('''
@@ -79,14 +81,12 @@ libshared_sources = files('''
         set.h
         siphash24.c
         siphash24.h
-        util.c
-        util.h
 '''.split())
 
 libshared = static_library(
               'shared',
               libshared_sources,
-              log_sources)
+              util_sources)
 
 casync_sources = files('''
         casync-tool.c
