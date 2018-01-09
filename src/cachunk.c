@@ -12,36 +12,6 @@
 #include "def.h"
 #include "util.h"
 
-#define CHUNK_PATH_SIZE(prefix, suffix)                                 \
-        (strlen_null(prefix) + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX + strlen_null(suffix))
-
-static char* ca_format_chunk_path(
-                const char *prefix,
-                const CaChunkID *chunkid,
-                const char *suffix,
-                char buffer[]) {
-
-        size_t n;
-
-        assert(chunkid);
-        assert(buffer);
-
-        if (prefix) {
-                n = strlen(prefix);
-                memcpy(buffer, prefix, n);
-        } else
-                n = 0;
-
-        ca_chunk_id_format(chunkid, buffer + n + 4 + 1);
-        memcpy(buffer + n, buffer + n + 4 + 1, 4);
-        buffer[n + 4] = '/';
-
-        if (suffix)
-                strcpy(buffer + n + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX - 1, suffix);
-
-        return buffer;
-}
-
 int ca_load_fd(int fd, ReallocBuffer *buffer) {
         uint64_t count = 0;
 
@@ -548,7 +518,7 @@ finish:
 
 int ca_chunk_file_open(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix, int flags) {
 
-        char path[CHUNK_PATH_SIZE(prefix, suffix)];
+        char path[CA_CHUNK_ID_PATH_SIZE(prefix, suffix)];
         bool made = false;
         char *slash = NULL;
         int r, fd;
@@ -560,7 +530,7 @@ int ca_chunk_file_open(int chunk_fd, const char *prefix, const CaChunkID *chunki
         if (!chunkid)
                 return -EINVAL;
 
-        ca_format_chunk_path(prefix, chunkid, suffix, path);
+        ca_chunk_id_format_path(prefix, chunkid, suffix, path);
 
         if ((flags & O_CREAT) == O_CREAT) {
                 assert_se(slash = strrchr(path, '/'));
@@ -593,14 +563,14 @@ int ca_chunk_file_open(int chunk_fd, const char *prefix, const CaChunkID *chunki
 }
 
 static int ca_chunk_file_access(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix) {
-        char path[CHUNK_PATH_SIZE(prefix, suffix)];
+        char path[CA_CHUNK_ID_PATH_SIZE(prefix, suffix)];
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
         if (!chunkid)
                 return -EINVAL;
 
-        ca_format_chunk_path(prefix, chunkid, suffix, path);
+        ca_chunk_id_format_path(prefix, chunkid, suffix, path);
 
         if (faccessat(chunk_fd, path, F_OK, AT_SYMLINK_NOFOLLOW) < 0)
                 return errno == ENOENT ? 0 : -errno;
@@ -609,14 +579,14 @@ static int ca_chunk_file_access(int chunk_fd, const char *prefix, const CaChunkI
 }
 
 static int ca_chunk_file_unlink(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix) {
-        char path[CHUNK_PATH_SIZE(prefix, suffix)], *slash;
+        char path[CA_CHUNK_ID_PATH_SIZE(prefix, suffix)], *slash;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
         if (!chunkid)
                 return -EINVAL;
 
-        ca_format_chunk_path(prefix, chunkid, suffix, path);
+        ca_chunk_id_format_path(prefix, chunkid, suffix, path);
 
         if (unlinkat(chunk_fd, path, 0) < 0)
                 return -errno;
@@ -631,7 +601,7 @@ static int ca_chunk_file_unlink(int chunk_fd, const char *prefix, const CaChunkI
 }
 
 static int ca_chunk_file_rename(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *old_suffix, const char *new_suffix) {
-        char old_path[CHUNK_PATH_SIZE(prefix, old_suffix)], new_path[CHUNK_PATH_SIZE(prefix, new_suffix)];
+        char old_path[CA_CHUNK_ID_PATH_SIZE(prefix, old_suffix)], new_path[CA_CHUNK_ID_PATH_SIZE(prefix, new_suffix)];
         int r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
@@ -639,8 +609,8 @@ static int ca_chunk_file_rename(int chunk_fd, const char *prefix, const CaChunkI
         if (!chunkid)
                 return -EINVAL;
 
-        ca_format_chunk_path(prefix, chunkid, old_suffix, old_path);
-        ca_format_chunk_path(prefix, chunkid, new_suffix, new_path);
+        ca_chunk_id_format_path(prefix, chunkid, old_suffix, old_path);
+        ca_chunk_id_format_path(prefix, chunkid, new_suffix, new_path);
 
         r = rename_noreplace(chunk_fd, old_path, chunk_fd, new_path);
         if (r < 0)
@@ -782,7 +752,7 @@ fail:
 }
 
 int ca_chunk_file_mark_missing(int chunk_fd, const char *prefix, const CaChunkID *chunkid) {
-        char path[CHUNK_PATH_SIZE(prefix, NULL)];
+        char path[CA_CHUNK_ID_PATH_SIZE(prefix, NULL)];
         bool made = false;
         char *slash;
         int r;
@@ -798,7 +768,7 @@ int ca_chunk_file_mark_missing(int chunk_fd, const char *prefix, const CaChunkID
         if (r > 0)
                 return -EEXIST;
 
-        ca_format_chunk_path(prefix, chunkid, NULL, path);
+        ca_chunk_id_format_path(prefix, chunkid, NULL, path);
 
         assert_se(slash = strrchr(path, '/'));
         *slash = 0;

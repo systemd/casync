@@ -48,4 +48,9 @@ static inline bool ca_chunk_id_is_null(const CaChunkID *a) {
 
 int ca_chunk_id_make(CaDigest *digest, const void *p, size_t l, CaChunkID *ret);
 
+#define CA_CHUNK_ID_PATH_SIZE(prefix, suffix)                                 \
+        (strlen_null(prefix) + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX + strlen_null(suffix))
+
+char* ca_chunk_id_format_path(const char *prefix, const CaChunkID *chunkid, const char *suffix, char buffer[]);
+
 #endif

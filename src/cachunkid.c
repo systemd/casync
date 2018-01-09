@@ -83,3 +83,30 @@ int ca_chunk_id_make(CaDigest *digest, const void *p, size_t l, CaChunkID *ret) 
         memcpy(ret, ca_digest_read(digest), sizeof(CaChunkID));
         return 0;
 }
+
+char* ca_chunk_id_format_path(
+                const char *prefix,
+                const CaChunkID *chunkid,
+                const char *suffix,
+                char buffer[]) {
+
+        size_t n;
+
+        assert(chunkid);
+        assert(buffer);
+
+        if (prefix) {
+                n = strlen(prefix);
+                memcpy(buffer, prefix, n);
+        } else
+                n = 0;
+
+        ca_chunk_id_format(chunkid, buffer + n + 4 + 1);
+        memcpy(buffer + n, buffer + n + 4 + 1, 4);
+        buffer[n + 4] = '/';
+
+        if (suffix)
+                strcpy(buffer + n + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX - 1, suffix);
+
+        return buffer;
+}
