@@ -775,4 +775,18 @@ static inline void freep(void *p) {
 
 #define _cleanup_free_ _cleanup_(freep)
 
+static inline void unlink_and_free(char *p) {
+        int saved_errno;
+
+        if (!p)
+                return;
+
+        saved_errno = errno;
+        (void) unlink(p);
+        errno = saved_errno;
+
+        free(p);
+}
+DEFINE_TRIVIAL_CLEANUP_FUNC(char*, unlink_and_free);
+
 #endif
