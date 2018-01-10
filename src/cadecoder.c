@@ -2888,7 +2888,12 @@ static int name_to_uid(CaDecoder *d, const char *name, uid_t *ret) {
                         return -ENOMEM;
 
                 r = getpwnam_r(name, &pwbuf, buf, (size_t) bufsize, &pw);
-                if (r == 0 && pw) {
+                if (pw == NULL) {
+                        if (r == 0)
+                                return 1;
+                        else if (r != ERANGE)
+                                return r > 0 ? -r : -ESRCH;
+                } else {
 
                         free(d->cached_user_name);
                         d->cached_user_name = strdup(pw->pw_name);
@@ -2897,8 +2902,6 @@ static int name_to_uid(CaDecoder *d, const char *name, uid_t *ret) {
                         *ret = pw->pw_uid;
                         return 1;
                 }
-                if (r != ERANGE)
-                        return r > 0 ? -r : -ESRCH;
 
                 bufsize *= 2;
         }
@@ -2942,7 +2945,12 @@ static int name_to_gid(CaDecoder *d, const char *name, gid_t *ret) {
                         return -ENOMEM;
 
                 r = getgrnam_r(name, &grbuf, buf, (size_t) bufsize, &gr);
-                if (r == 0 && gr) {
+                if (gr == NULL) {
+                        if (r == 0)
+                                return 1;
+                        else if (r != ERANGE)
+                                return r > 0 ? -r : -ESRCH;
+                } else {
 
                         free(d->cached_group_name);
                         d->cached_group_name = strdup(gr->gr_name);
@@ -2951,8 +2959,6 @@ static int name_to_gid(CaDecoder *d, const char *name, gid_t *ret) {
                         *ret = gr->gr_gid;
                         return 1;
                 }
-                if (r != ERANGE)
-                        return r > 0 ? -r : -ESRCH;
 
                 bufsize *= 2;
         }
