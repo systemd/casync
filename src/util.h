@@ -765,7 +765,8 @@ int is_dir(const char* path, bool follow);
 
 #define DEFINE_TRIVIAL_CLEANUP_FUNC(type, func)                 \
         static inline void func##p(type *p) {                   \
-                func(*p);                                       \
+                if (*p)                                         \
+                        func(*p);                               \
         }                                                       \
         struct __useless_struct_to_allow_trailing_semicolon__
 
