@@ -846,7 +846,7 @@ static int verbose_print_done_make(CaSync *s) {
                         if (r < 0)
                                 return log_error_errno(r, "Failed to format feature flags: %m");
 
-                        log_error("Selected feature flags not actually applicable to backing file systems: %s", strnone(t));
+                        log_info("Selected feature flags not actually applicable to backing file systems: %s", strnone(t));
                 }
         }
 
@@ -875,7 +875,7 @@ static int verbose_print_done_make(CaSync *s) {
         }
 
         if (size != UINT64_MAX && n_chunks != UINT64_MAX)
-                log_error("Effective average chunk size: %s", format_bytes(buffer, sizeof(buffer), size / n_chunks));
+                log_info("Effective average chunk size: %s", format_bytes(buffer, sizeof(buffer), size / n_chunks));
 
         return 1;
 }
