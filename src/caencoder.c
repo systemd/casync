@@ -132,7 +132,6 @@ typedef struct CaEncoderNode {
         CaEncoderNameTable *name_table;
         size_t n_name_table;
         size_t n_name_table_allocated;
-        uint64_t previous_name_table_offset;
         bool name_table_incomplete;
 
         /* For detecting mount boundaries */
@@ -280,7 +279,6 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
 
         n->name_table = mfree(n->name_table);
         n->n_name_table = n->n_name_table_allocated = 0;
-        n->previous_name_table_offset = UINT64_MAX;
         n->name_table_incomplete = false;
 
         n->entry_offset = UINT64_MAX;
@@ -381,7 +379,6 @@ int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
                 .acl_default_group_obj_permissions = UINT64_MAX,
                 .acl_default_other_permissions = UINT64_MAX,
                 .acl_default_mask_permissions = UINT64_MAX,
-                .previous_name_table_offset = UINT64_MAX,
                 .entry_offset = UINT64_MAX,
                 .mount_id = -1,
         };
