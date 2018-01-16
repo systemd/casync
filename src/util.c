@@ -806,6 +806,29 @@ int safe_atollu(const char *s, long long unsigned *ret_llu) {
         return 0;
 }
 
+int safe_atollx(const char *s, long long unsigned *ret_llu) {
+        char *x = NULL;
+        unsigned long long l;
+
+        assert(s);
+
+        s += strspn(s, WHITESPACE);
+
+        errno = 0;
+        l = strtoull(s, &x, 16);
+        if (errno > 0)
+                return -errno;
+        if (!x || x == s || *x != 0)
+                return -EINVAL;
+        if (*s == '-')
+                return -ERANGE;
+
+        if (ret_llu)
+                *ret_llu = l;
+
+        return 0;
+}
+
 int readlinkat_malloc(int fd, const char *p, char **ret) {
         size_t l = 100;
         int r;

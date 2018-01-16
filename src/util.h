@@ -303,6 +303,7 @@ int safe_atoi(const char *s, int *ret_i);
 
 int safe_atou(const char *s, unsigned *ret_u);
 int safe_atollu(const char *s, unsigned long long *ret_u);
+int safe_atollx(const char *s, unsigned long long *ret_u);
 
 static inline int safe_atou64(const char *s, uint64_t *ret_u) {
         return safe_atollu(s, (unsigned long long*) ret_u);
@@ -310,6 +311,10 @@ static inline int safe_atou64(const char *s, uint64_t *ret_u) {
 
 static inline int safe_atou32(const char *s, uint32_t *ret_u) {
         return safe_atou(s, (unsigned*) ret_u);
+}
+
+static inline int safe_atox64(const char *s, uint64_t *ret_u) {
+        return safe_atollx(s, (unsigned long long*) ret_u);
 }
 
 int readlinkat_malloc(int fd, const char *p, char **ret);
@@ -435,6 +440,7 @@ static inline int parse_gid(const char *s, gid_t *ret_gid) {
 #define ALPHABET_UPPER "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 #define ALPHABET ALPHABET_LOWER ALPHABET_UPPER
 #define DIGITS "0123456789"
+#define HEXDIGITS DIGITS "ABCDEF" "abcdef"
 
 /* This is a bit more restricted than RFC3986 */
 #define URL_PROTOCOL_FIRST ALPHABET_LOWER
