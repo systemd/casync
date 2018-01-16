@@ -368,17 +368,12 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_dry_run = true;
                         break;
 
-                case ARG_STORE: {
-                        char *p;
-
-                        p = strdup(optarg);
-                        if (!p)
+                case ARG_STORE:
+                        r = free_and_strdup(&arg_store, optarg);
+                        if (r < 0)
                                 return log_oom();
 
-                        free(arg_store);
-                        arg_store = p;
                         break;
-                }
 
                 case ARG_EXTRA_STORE:
 
