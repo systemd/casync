@@ -6,9 +6,11 @@
 #include <stdint.h>
 #include <errno.h>
 
-int log_info_errno(int error, const char* fmt, ...);
-int log_error_errno(int error, const char* fmt, ...);
-int log_debug_errno(int error, const char* fmt, ...);
+#include "gcc-macro.h"
+
+int log_info_errno(int error, const char* fmt, ...) _printf_(2,3);
+int log_error_errno(int error, const char* fmt, ...) _printf_(2,3);
+int log_debug_errno(int error, const char* fmt, ...) _printf_(2,3);
 
 #define log_info(fmt, ...) log_info_errno(0, fmt, ##__VA_ARGS__)
 #define log_error(fmt, ...) log_error_errno(0, fmt, ##__VA_ARGS__)

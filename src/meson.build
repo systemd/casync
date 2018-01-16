@@ -62,6 +62,7 @@ libshared_sources = files('''
         fssize.h
         gc.c
         gc.h
+        gcc-macro.h
         hash-funcs.c
         hash-funcs.h
         hashmap.c

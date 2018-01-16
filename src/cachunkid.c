@@ -5,6 +5,7 @@
 
 #include "cachunk.h"
 #include "cachunkid.h"
+#include "log.h"
 
 static char encode_char(uint8_t x) {
         x &= 0xF;
