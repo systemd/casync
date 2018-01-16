@@ -1378,8 +1378,7 @@ static int ca_sync_start(CaSync *s) {
         }
 
         if (s->encoder) {
-                /* If we are writing an index file we need the archive digest unconditionally, as it is included in its end */
-                r = ca_encoder_enable_archive_digest(s->encoder, s->archive_digest || s->index);
+                r = ca_encoder_enable_archive_digest(s->encoder, s->archive_digest);
                 if (r < 0)
                         return r;
 
@@ -3536,8 +3535,7 @@ int ca_sync_enable_archive_digest(CaSync *s, bool b) {
                 return 0;
 
         if (s->encoder) {
-                /* If we are writing an index file we need the archive digest unconditionally, as it is included in its end */
-                r = ca_encoder_enable_archive_digest(s->encoder, b || s->index);
+                r = ca_encoder_enable_archive_digest(s->encoder, b);
                 if (r < 0)
                         return r;
         }
