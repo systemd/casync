@@ -81,4 +81,6 @@ void* realloc_buffer_steal(ReallocBuffer *b);
 
 void* realloc_buffer_donate(ReallocBuffer *b, void *p, size_t size);
 
+int realloc_buffer_printf(ReallocBuffer *b, const char *fmt, ...) _printf_(2,3);
+
 #endif

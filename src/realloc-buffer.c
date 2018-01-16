@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: LGPL-2.1+ */
 
 #include <assert.h>
+#include <stdarg.h>
 #include <unistd.h>
 
 #include "def.h"
@@ -352,4 +353,42 @@ int realloc_buffer_write_maybe(ReallocBuffer *b, int fd) {
                 return 0;
 
         return realloc_buffer_write(b, fd);
+}
+
+int realloc_buffer_printf(ReallocBuffer *b, const char *fmt, ...) {
+        va_list ap;
+        size_t m = 64;
+
+        if (!b)
+                return -EINVAL;
+        if (!fmt)
+                return -EINVAL;
+
+        for (;;) {
+                size_t mm;
+                void *p;
+                int n;
+
+                p = realloc_buffer_extend(b, m);
+                if (!p)
+                        return -ENOMEM;
+
+                va_start(ap, fmt);
+                n = vsnprintf(p, m, fmt, ap);
+                va_end(ap);
+
+                if (n < (int) m) {
+                        realloc_buffer_shorten(b, m - n);
+                        return 0;
+                }
+
+                realloc_buffer_shorten(b, m);
+
+                mm = 2 * m;
+                if (mm < m)
+                        return -EOVERFLOW;
+
+                m = mm;
+        }
+
 }
