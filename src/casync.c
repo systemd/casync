@@ -1763,6 +1763,12 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                                 return CA_SYNC_STEP;
                         }
 
+                        /* Let's check if the chunk size was properly determined. */
+                        if (s->next_chunk_size == UINT64_MAX) {
+                                log_debug("Couldn't determine chunk size.");
+                                return -ESPIPE;
+                        }
+
                         s->next_chunk_valid = true;
                 }
 
