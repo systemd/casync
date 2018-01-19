@@ -33,6 +33,7 @@ c_args = '''
         -Werror=return-type
         -Werror=incompatible-pointer-types
         -Werror=shadow
+        -Werror=int-conversion
         -Wstrict-prototypes
         -Wredundant-decls
         -Wmissing-noreturn
