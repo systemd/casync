@@ -830,7 +830,7 @@ int safe_atollx(const char *s, long long unsigned *ret_llu) {
 }
 
 int readlinkat_malloc(int fd, const char *p, char **ret) {
-        size_t l = 100;
+        size_t l = 256;
         int r;
 
         assert(p);
