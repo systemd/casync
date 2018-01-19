@@ -24,15 +24,15 @@ static inline int log_oom(void) {
 #define assert_se(x)                                                    \
         do {                                                            \
                 if (!(x)) {                                             \
-                        log_error("%s:%d (%s): assertion failed:" #x "\n", \
-                                  __FILE__, __LINE__, __PRETTY_FUNCTION__); \
+                        log_error("%s:%d (%s): assertion failed: %s",   \
+                                  __FILE__, __LINE__, __PRETTY_FUNCTION__, #x); \
                         abort();                                        \
                 }                                                       \
         } while(false)
 
 #define assert_not_reached(x)                                           \
         do {                                                            \
-                log_error("%s:%d (%s): unreachable code reached:" x "\n", \
-                          __FILE__, __LINE__, __PRETTY_FUNCTION__);     \
+                log_error("%s:%d (%s): unreachable code reached: %s",   \
+                          __FILE__, __LINE__, __PRETTY_FUNCTION__, x);  \
                 abort();                                                \
         } while(false)
