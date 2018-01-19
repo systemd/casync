@@ -1576,12 +1576,11 @@ static int ca_sync_write_final_chunk(CaSync *s) {
         if (!s->wstore && !s->cache_store && !s->index)
                 return 0;
 
-        if (realloc_buffer_size(&s->buffer) == 0)
-                return 0;
-
-        r = ca_sync_write_one_chunk(s, realloc_buffer_data(&s->buffer), realloc_buffer_size(&s->buffer));
-        if (r < 0)
-                return r;
+        if (realloc_buffer_size(&s->buffer) > 0) {
+                r = ca_sync_write_one_chunk(s, realloc_buffer_data(&s->buffer), realloc_buffer_size(&s->buffer));
+                if (r < 0)
+                        return r;
+        }
 
         if (s->index) {
                 r = ca_index_write_eof(s->index);
