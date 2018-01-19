@@ -1753,12 +1753,12 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                         if (r == -EAGAIN) /* Not enough data */
                                 return CA_SYNC_POLL;
                         if (r < 0)
-                                return r;
+                                return log_debug_errno(r, "Failed to read index chunk: %m");
                         if (r == 0) {
                                 /* EOF */
                                 r = ca_decoder_put_eof(s->decoder);
                                 if (r < 0)
-                                        return r;
+                                        return log_debug_errno(r, "Failed to put decoder EOF: %m");
 
                                 return CA_SYNC_STEP;
                         }
@@ -1778,7 +1778,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                 if (r == -EALREADY) /* Don't have this right now, but it was already enqueued. */
                         return CA_SYNC_POLL;
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to acquire chunk: %m");
                 if (s->next_chunk_size != UINT64_MAX && /* next_chunk_size will be -1 if we just seeked in the index file */
                     s->next_chunk_size != chunk_size) {
                         ca_origin_unref(origin);
@@ -1792,6 +1792,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                          * many bytes as necessary */
                         if (s->chunk_skip >= chunk_size) {
                                 ca_origin_unref(origin);
+                                log_debug("Skip size larger than chunk. (%zu vs. %zu)", s->chunk_skip, chunk_size);
                                 return -EINVAL;
                         }
 
@@ -1804,7 +1805,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                 r = ca_decoder_put_data(s->decoder, p, chunk_size, origin);
                 ca_origin_unref(origin);
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Decoder didn't accept chunk: %m");
 
                 return CA_SYNC_STEP;
         }
@@ -1819,7 +1820,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
 
                 n = read(s->archive_fd, p, BUFFER_SIZE);
                 if (n < 0)
-                        return -errno;
+                        return log_debug_errno(errno, "Failed to read archive: %m");
 
                 assert((size_t) n <= BUFFER_SIZE);
 
@@ -1827,7 +1828,7 @@ static int ca_sync_process_decoder_request(CaSync *s) {
 
                         r = ca_decoder_put_eof(s->decoder);
                         if (r < 0)
-                                return r;
+                                return log_debug_errno(r, "Failed to put decoder EOF: %m");
 
                 } else {
                         CaOrigin *origin;
@@ -1912,19 +1913,19 @@ static int ca_sync_process_decoder_seek(CaSync *s) {
 
         r = ca_decoder_get_seek_offset(s->decoder, &offset);
         if (r < 0)
-                return r;
+                return log_debug_errno(r, "Failed to get seek offset: %m");
 
         if (s->index) {
                 r = ca_index_seek(s->index, offset, &s->chunk_skip);
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to seek in index: %m");
 
         } else if (s->archive_fd >= 0) {
                 off_t f;
 
                 f = lseek(s->archive_fd, (off_t) offset, SEEK_SET);
                 if (f == (off_t) -1)
-                        return -errno;
+                        return log_debug_errno(errno, "Failed to seek in archive: %m");
 
         } else
                 return -EOPNOTSUPP;
@@ -2026,7 +2027,7 @@ static int ca_sync_step_decode(CaSync *s) {
 
         step = ca_decoder_step(s->decoder);
         if (step < 0)
-                return step;
+                return log_debug_errno(step, "Failed to run decoder step: %m");
 
         switch (step) {
 
@@ -2235,7 +2236,18 @@ static int ca_sync_remote_prefetch(CaSync *s) {
                 requested ++;
         }
 
-        r = ca_index_set_position(s->index, saved);
+        if (saved > 0) {
+                /* Let's not just seek back to where we came from, but one earlier, and read it again, so that the
+                 * previous offset is known, so that the size of the next chunk can be determined properly */
+
+                r = ca_index_set_position(s->index, saved-1);
+                if (r < 0)
+                        return r;
+
+                r = ca_index_read_chunk(s->index, NULL, NULL, NULL);
+        } else
+                r = ca_index_set_position(s->index, saved);
+
         if (r < 0)
                 return r;
 
