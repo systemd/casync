@@ -17,5 +17,10 @@
 #else
 #  define _alloc_(...) __attribute__ ((alloc_size(__VA_ARGS__)))
 #endif
+#if __GNUC__ >= 7
+#define _fallthrough_ __attribute__((fallthrough))
+#else
+#define _fallthrough_
+#endif
 
 #endif
