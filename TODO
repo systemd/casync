@@ -39,3 +39,9 @@ LATER:
 * make "casync stat" work on a directory with a subpath
 * save/restore xfs/ext4 projid
 * tweak chunker: shift cut to last "marker".
+* define sane errors we can show user messages about
+* introduce a --best-effort mode when replaying, which means we'll ignore what we can't apply
+* add "--cache-auto" mode, that works like "--cache" but finds a suitable place for the cache automatically
+* use CaNameTable logic in seed, so that we can safely regenerate *any* chunk
+* when building the cache, also build a seed
+* make sure that "casync list" on a directory doesn't read any files
