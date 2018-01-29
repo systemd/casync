@@ -750,7 +750,7 @@ static int load_chunk_size(CaSync *s) {
         if (arg_chunk_size_max != 0) {
                 r = ca_sync_set_chunk_size_max(s, arg_chunk_size_max);
                 if (r < 0)
-                        return log_error_errno(r, "Failed to set minimum chunk size to %zu: %m", arg_chunk_size_min);
+                        return log_error_errno(r, "Failed to set maximum chunk size to %zu: %m", arg_chunk_size_max);
         }
 
         if (!arg_verbose)
