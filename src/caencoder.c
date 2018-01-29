@@ -3626,7 +3626,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
         case CA_LOCATION_ENTRY:
                 r = ca_encoder_seek_path_and_enter(e, location->path);
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to seek to path %s and enter: %m", location->path);
 
                 node = ca_encoder_current_node(e);
                 assert(node);
@@ -3675,7 +3675,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 r = ca_encoder_seek_path_and_enter(e, location->path);
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to seek to path %s and enter: %m", location->path);
 
                 node = ca_encoder_current_node(e);
                 assert(node);
@@ -3726,7 +3726,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 r = ca_encoder_seek_path(e, location->path);
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to seek to path %s: %m", location->path);
 
                 node = ca_encoder_current_node(e);
                 assert(node);
@@ -3755,7 +3755,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 r = ca_encoder_seek_path_and_enter(e, location->path);
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to seek to path %s and enter: %m", location->path);
 
                 node = ca_encoder_current_node(e);
                 assert(node);

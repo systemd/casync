@@ -533,13 +533,14 @@ int ca_seed_get(CaSeed *s,
         r = ca_location_parse(target, &l);
         free(target);
         if (r < 0)
-                return r;
+                return log_debug_errno(r, "Failed to parse location '%s': %m", target);
 
         if (l->size == UINT64_MAX) /* If the size is not specified, then this is a hardlink entry */
                 return -ENOENT;
 
         if (l->size > s->chunker.chunk_size_max) {
                 ca_location_unref(l);
+                log_debug("Location size is larger than what chunker says.");
                 return -EINVAL;
         }
         size = l->size;
@@ -549,7 +550,7 @@ int ca_seed_get(CaSeed *s,
         if (step == -ENXIO) /* location doesn't exist anymore? Then the seed has been modified */
                 return -ESTALE;
         if (step < 0)
-                return step;
+                return log_debug_errno(step, "Failed to seek to seed location: %m");
 
         p = realloc_buffer_acquire(&s->buffer, size);
         if (!p)

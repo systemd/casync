@@ -3223,7 +3223,7 @@ int ca_sync_get_local(
                 if (r == -ENOENT)
                         continue;
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to acquire chunk from seed: %m");
 
                 if (desired_compression == CA_CHUNK_COMPRESSED) {
                         realloc_buffer_empty(&s->compress_buffer);

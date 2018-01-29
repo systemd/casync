@@ -4069,7 +4069,7 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 if (parent) {
                         r = ca_decoder_realize_child(d, parent, n);
                         if (r < 0)
-                                return r;
+                                return log_debug_errno(r, "Failed to realize child: %m");
                 }
 
                 if (mode == (mode_t) -1)
@@ -4198,7 +4198,7 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
 
                         r = ca_decoder_finalize_child(d, n, saved_child);
                         if (r < 0)
-                                return r;
+                                return log_debug_errno(r, "Failed to finalize child: %m");
 
                         ca_decoder_enter_state(d, CA_DECODER_IN_DIRECTORY);
                         return CA_DECODER_STEP;
