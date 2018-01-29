@@ -35,6 +35,7 @@
 #include "chattr.h"
 #include "def.h"
 #include "fssize.h"
+#include "quota-projid.h"
 #include "realloc-buffer.h"
 #include "siphash24.h"
 #include "util.h"
@@ -123,6 +124,10 @@ typedef struct CaEncoderNode {
         /* The FS_IOC_GETVERSION generation */
         int generation;
         int generation_valid; /* tri-state */
+
+        /* The quota project ID, on file systems that support this (ext4, XFS) */
+        uint32_t quota_projid;
+        bool quota_projid_valid;
 
         /* If this is a directory: file name lookup data */
         CaNameTable *name_table;
@@ -259,6 +264,7 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
         n->acl_default_mask_permissions = UINT64_MAX;
 
         n->fcaps = mfree(n->fcaps);
+        n->quota_projid_valid = false;
 
 #if HAVE_SELINUX
         if (n->selinux_label) {
@@ -726,6 +732,35 @@ static int ca_encoder_node_read_generation(
         } else
                 n->generation_valid = true;
 
+        return 0;
+}
+
+static int ca_encoder_node_read_quota_projid(
+                CaEncoder *e,
+                CaEncoderNode *n) {
+
+        int r;
+
+        assert(e);
+        assert(n);
+
+        if (!S_ISDIR(n->stat.st_mode) && !S_ISREG(n->stat.st_mode))
+                return 0;
+        if (n->fd < 0)
+                return -EBADFD;
+        if (n->quota_projid_valid) /* Already read? */
+                return 0;
+        if (!(e->feature_flags & CA_FORMAT_WITH_QUOTA_PROJID))
+                return 0;
+
+        if (IN_SET(n->magic, EXT4_SUPER_MAGIC, XFS_SUPER_MAGIC, FUSE_SUPER_MAGIC)) {
+                r = read_quota_projid(n->fd, &n->quota_projid);
+                if (r < 0)
+                        return r;
+        } else
+                n->quota_projid = 0;
+
+        n->quota_projid_valid = true;
         return 0;
 }
 
@@ -2419,6 +2454,10 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         if (r < 0)
                 return r;
 
+        r = ca_encoder_node_read_quota_projid(e, n);
+        if (r < 0)
+                return r;
+
         if (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) {
                 uid_t shifted_uid;
                 gid_t shifted_gid;
@@ -2521,6 +2560,9 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
 
         if (n->fcaps)
                 size += offsetof(CaFormatFCaps, data) + n->fcaps_size;
+
+        if (n->quota_projid_valid && n->quota_projid != 0)
+                size += sizeof(CaFormatQuotaProjID);
 
         if (S_ISREG(n->stat.st_mode))
                 size += offsetof(CaFormatPayload, data);
@@ -2632,6 +2674,16 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
 
                 p = mempcpy(p, &header, sizeof(header));
                 p = mempcpy(p, n->fcaps, n->fcaps_size);
+        }
+
+        if (n->quota_projid_valid && n->quota_projid != 0) {
+                CaFormatQuotaProjID projid = {
+                        .header.type = htole64(CA_FORMAT_QUOTA_PROJID),
+                        .header.size = htole64(sizeof(CaFormatQuotaProjID)),
+                        .projid = htole64(n->quota_projid),
+                };
+
+                p = mempcpy(p, &projid, sizeof(projid));
         }
 
         if (S_ISREG(n->stat.st_mode)) {

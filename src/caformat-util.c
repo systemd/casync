@@ -25,6 +25,9 @@ const char *ca_format_type_name(uint64_t u) {
         case CA_FORMAT_FCAPS:
                 return "fcaps";
 
+        case CA_FORMAT_QUOTA_PROJID:
+                return "quota-projid";
+
         case CA_FORMAT_ACL_USER:
                 return "acl-user";
 
@@ -107,6 +110,7 @@ static const struct {
         { "acl",              CA_FORMAT_WITH_ACL              },
         { "selinux",          CA_FORMAT_WITH_SELINUX          },
         { "fcaps",            CA_FORMAT_WITH_FCAPS            },
+        { "quota-projid",     CA_FORMAT_WITH_QUOTA_PROJID     },
         { "best",             CA_FORMAT_WITH_BEST             },
         { "unix",             CA_FORMAT_WITH_UNIX             },
         { "fat",              CA_FORMAT_WITH_FAT              },
@@ -409,7 +413,8 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_XATTRS|
                         CA_FORMAT_WITH_ACL|
                         CA_FORMAT_WITH_SELINUX|
-                        CA_FORMAT_WITH_FCAPS;
+                        CA_FORMAT_WITH_FCAPS|
+                        CA_FORMAT_WITH_QUOTA_PROJID;
 
         case (statfs_f_type_t) XFS_SUPER_MAGIC:
                 return
@@ -434,7 +439,8 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_XATTRS|
                         CA_FORMAT_WITH_ACL|
                         CA_FORMAT_WITH_SELINUX|
-                        CA_FORMAT_WITH_FCAPS;
+                        CA_FORMAT_WITH_FCAPS|
+                        CA_FORMAT_WITH_QUOTA_PROJID;
 
         case (statfs_f_type_t) BTRFS_SUPER_MAGIC:
                 return

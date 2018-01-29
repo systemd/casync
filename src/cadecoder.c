@@ -24,6 +24,7 @@
 #include "cautil.h"
 #include "chattr.h"
 #include "def.h"
+#include "quota-projid.h"
 #include "realloc-buffer.h"
 #include "reflink.h"
 #include "rm-rf.h"
@@ -107,6 +108,9 @@ typedef struct CaDecoderNode {
         uint64_t acl_default_group_obj_permissions;
         uint64_t acl_default_other_permissions;
         uint64_t acl_default_mask_permissions;
+
+        bool have_quota_projid;
+        uint32_t quota_projid;
 
         /* Only for S_ISREG(), the origin if we know it */
         CaOrigin *payload_origin;
@@ -342,6 +346,7 @@ static void ca_decoder_node_flush_entry(CaDecoderNode *n) {
         n->fcaps = mfree(n->fcaps);
         n->fcaps_size = 0;
         n->have_fcaps = false;
+        n->have_quota_projid = false;
 
         ca_decoder_node_free_xattrs(n);
 
@@ -1156,6 +1161,25 @@ static const CaFormatFCaps* validate_format_fcaps(CaDecoder *d, const void *p) {
         return f;
 }
 
+static const CaFormatQuotaProjID* validate_format_quota_projid(CaDecoder *d, const void *p) {
+        const CaFormatQuotaProjID *q = p;
+
+        assert(d);
+        assert(q);
+
+        if (read_le64(&q->header.size) != sizeof(CaFormatQuotaProjID))
+                return NULL;
+        if (read_le64(&q->header.type) != CA_FORMAT_QUOTA_PROJID)
+                return NULL;
+
+        if (read_le64(&q->projid) == 0)
+                return NULL;
+        if (read_le64(&q->projid) > 0xFFFFFFFF)
+                return NULL;
+
+        return q;
+}
+
 static const CaFormatSymlink* validate_format_symlink(CaDecoder *d, const void *p) {
         const CaFormatSymlink *s = p;
 
@@ -1665,6 +1689,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         const CaFormatACLDefault *acl_default = NULL;
         const CaFormatSELinux *selinux = NULL;
         const CaFormatFCaps *fcaps = NULL;
+        const CaFormatQuotaProjID *quota_projid = NULL;
         uint64_t offset = 0;
         bool done = false;
         mode_t mode;
@@ -1744,6 +1769,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
                         if (l > CA_FORMAT_USER_SIZE_MAX)
                                 return -EBADMSG;
 
@@ -1777,6 +1804,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
                         if (l > CA_FORMAT_GROUP_SIZE_MAX)
                                 return -EBADMSG;
 
@@ -1806,6 +1835,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                         if (selinux)
                                 return -EBADMSG;
                         if (fcaps)
+                                return -EBADMSG;
+                        if (quota_projid)
                                 return -EBADMSG;
                         if (n->have_acl)
                                 return -EBADMSG;
@@ -1873,6 +1904,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
 
                         if (l > CA_FORMAT_ACL_USER_SIZE_MAX)
                                 return -EBADMSG;
@@ -1935,6 +1968,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
 
                         if (l > CA_FORMAT_ACL_GROUP_SIZE_MAX)
                                 return -EBADMSG;
@@ -1989,6 +2024,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
 
                         if (l != sizeof(CaFormatACLGroupObj))
                                 return -EBADMSG;
@@ -2019,6 +2056,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
 
                         if (l != sizeof(CaFormatACLDefault))
                                 return -EBADMSG;
@@ -2045,6 +2084,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
                         if (l > CA_FORMAT_SELINUX_SIZE_MAX)
                                 return -EBADMSG;
 
@@ -2066,6 +2107,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
                         if (l > CA_FORMAT_FCAPS_SIZE_MAX)
                                 return -EBADMSG;
 
@@ -2077,6 +2120,27 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
 
                         fcaps = validate_format_fcaps(d, p);
                         if (!fcaps)
+                                return -EBADMSG;
+
+                        offset += l;
+                        break;
+
+                case CA_FORMAT_QUOTA_PROJID:
+                        if (!entry)
+                                return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
+                        if (l != sizeof(CaFormatQuotaProjID))
+                                return -EBADMSG;
+
+                        r = ca_decoder_object_is_complete(p, sz);
+                        if (r < 0)
+                                return r;
+                        if (r == 0)
+                                return CA_DECODER_REQUEST;
+
+                        quota_projid = validate_format_quota_projid(d, p);
+                        if (!quota_projid)
                                 return -EBADMSG;
 
                         offset += l;
@@ -2226,6 +2290,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                 return -EBADMSG;
         if (!S_ISREG(mode) && fcaps)
                 return -EBADMSG;
+        if (!(S_ISREG(mode) || S_ISDIR(mode)) && quota_projid)
+                return -EBADMSG;
 
         /* Both FAT and chattr(1) flags are only defined for regular files and directories */
         if (read_le64(&entry->flags) != 0 && !S_ISREG(mode) && !S_ISDIR(mode))
@@ -2261,6 +2327,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         assert(!n->fcaps);
         assert(!n->symlink_target);
         assert(!n->selinux_label);
+        assert(!n->have_quota_projid);
 
         n->entry = memdup(entry, sizeof(CaFormatEntry));
         if (!n->entry)
@@ -2301,6 +2368,11 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
 
                 n->fcaps_size = read_le64(&fcaps->header.size) - offsetof(CaFormatFCaps, data);
                 n->have_fcaps = true;
+        }
+
+        if (quota_projid) {
+                n->quota_projid = read_le64(&quota_projid->projid);
+                n->have_quota_projid = true;
         }
 
         if (symlink) {
@@ -2820,6 +2892,14 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
                                  ca_feature_flags_to_chattr(d->replay_feature_flags) & APPLY_EARLY_FS_FL);
                 if (r < 0)
                         return r;
+
+                if (child->have_quota_projid &&
+                    (d->replay_feature_flags & CA_FORMAT_WITH_QUOTA_PROJID)) {
+
+                        r = write_quota_projid(child->fd, child->quota_projid);
+                        if (r < 0)
+                                return r;
+                }
         }
 
         return 0;

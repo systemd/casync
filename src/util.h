@@ -751,6 +751,19 @@ int is_dir(const char* path, bool follow);
 #define BTRFS_IOC_SUBVOL_SETFLAGS _IOW(BTRFS_IOCTL_MAGIC, 26, __u64)
 #endif
 
+#ifndef FS_IOC_FSGETXATTR
+struct fsxattr {
+        uint32_t fsx_xflags;
+        uint32_t fsx_extsize;
+        uint32_t fsx_nextents;
+        uint32_t fsx_projid;
+        uint32_t fsx_cowextsize;
+        uint8_t  fsx_pad[8];
+};
+#define FS_IOC_FSGETXATTR _IOR ('X', 31, struct fsxattr)
+#define FS_IOC_FSSETXATTR _IOW ('X', 32, struct fsxattr)
+#endif
+
 #define NSEC_PER_SEC (UINT64_C(1000000000))
 
 /* Cleanup functions */

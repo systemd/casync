@@ -27,6 +27,7 @@
  * ACL_DEFAULT_GROUP -- one GROUP ACL entry
  * ...               -- more of these when multiple are defined
  * FCAPS             -- file capability in Linux disk format
+ * QUOTA_PROJECT_ID  -- the ext4/xfs quota project ID
  * PAYLOAD           -- file contents, if it is one
  * SYMLINK           -- symlink target, if it is one
  * DEVICE            -- device major/minor, if it is a block/char device
@@ -58,6 +59,7 @@ enum {
         CA_FORMAT_ACL_DEFAULT_USER      = UINT64_C(0xbdf03df9bd010a91),
         CA_FORMAT_ACL_DEFAULT_GROUP     = UINT64_C(0xa0cb1168782d1f51),
         CA_FORMAT_FCAPS                 = UINT64_C(0xf7267db0afed0629),
+        CA_FORMAT_QUOTA_PROJID          = UINT64_C(0x161baf2d8772a72b),
         CA_FORMAT_SELINUX               = UINT64_C(0x46faf0602fd26c59),
         CA_FORMAT_SYMLINK               = UINT64_C(0x664a6fb6830e0d6c),
         CA_FORMAT_DEVICE                = UINT64_C(0xac3dace369dfe643),
@@ -119,6 +121,9 @@ enum {
         CA_FORMAT_WITH_SELINUX           = 0x40000000,
         CA_FORMAT_WITH_FCAPS             = 0x80000000,
 
+        /* XFS/ext4 project quota ID */
+        CA_FORMAT_WITH_QUOTA_PROJID      = UINT64_C(0x100000000),
+
         CA_FORMAT_SHA512_256             = UINT64_C(0x2000000000000000),
         CA_FORMAT_EXCLUDE_SUBMOUNTS      = UINT64_C(0x4000000000000000),
         CA_FORMAT_EXCLUDE_NODUMP         = UINT64_C(0x8000000000000000),
@@ -151,7 +156,8 @@ enum {
 #if HAVE_SELINUX
                 CA_FORMAT_WITH_SELINUX|
 #endif
-                CA_FORMAT_WITH_FCAPS,
+                CA_FORMAT_WITH_FCAPS|
+                CA_FORMAT_WITH_QUOTA_PROJID,
 
         CA_FORMAT_WITH_UNIX = /* Conservative UNIX file properties */
                 CA_FORMAT_WITH_16BIT_UIDS|
@@ -200,7 +206,8 @@ enum {
 #if HAVE_SELINUX
                 CA_FORMAT_WITH_SELINUX|
 #endif
-                CA_FORMAT_WITH_FCAPS,
+                CA_FORMAT_WITH_FCAPS|
+                CA_FORMAT_WITH_QUOTA_PROJID,
 
         CA_FORMAT_WITH_FUSE = /* All bits that may also be exposed via fuse */
                 CA_FORMAT_WITH_16BIT_UIDS|
@@ -253,7 +260,8 @@ enum {
 #if HAVE_SELINUX
                 CA_FORMAT_WITH_SELINUX|
 #endif
-                CA_FORMAT_WITH_FCAPS,
+                CA_FORMAT_WITH_FCAPS|
+                CA_FORMAT_WITH_QUOTA_PROJID,
 
         CA_FORMAT_DEFAULT = /* The default set of flags */
                 CA_FORMAT_WITH_BEST|
@@ -353,6 +361,11 @@ typedef struct CaFormatSELinux {
 
 /* The kernel appears to permit one page max */
 #define CA_FORMAT_SELINUX_SIZE_MAX (offsetof(CaFormatSELinux, label) + 4096)
+
+typedef struct CaFormatQuotaProjID {
+        CaFormatHeader header;
+        uint64_t projid;
+} CaFormatQuotaProjID;
 
 typedef struct CaFormatSymlink {
         CaFormatHeader header;

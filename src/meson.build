@@ -77,6 +77,8 @@ libshared_sources = files('''
         notify.h
         parse-util.c
         parse-util.h
+        quota-projid.c
+        quota-projid.h
         realloc-buffer.c
         realloc-buffer.h
         reflink.c

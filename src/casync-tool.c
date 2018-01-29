@@ -168,6 +168,7 @@ static void help(void) {
                "     --with=acl              Store file access control lists\n"
                "     --with=selinux          Store SELinux file labels\n"
                "     --with=fcaps            Store file capabilities\n"
+               "     --with=quota-projid     Store ext4/XFS quota project ID\n"
                "     (and similar: --without=16bit-uids, --without=32bit-uids, ...)\n",
                program_invocation_short_name);
 }
