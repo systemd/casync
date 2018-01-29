@@ -296,6 +296,7 @@ test_sources = '''
         test-cachunker-histogram
         test-cadigest
         test-caencoder
+        test-calocation
         test-camakebst
         test-caorigin
         test-casync

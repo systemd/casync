@@ -6,10 +6,10 @@ int main(int argc, char *argv[]) {
         CaOrigin *o, *p;
         CaLocation *a, *b, *c, *d;
 
-        assert_se(ca_location_new("/foo", CA_LOCATION_ENTRY, 0, 22, &a) >= 0);
-        assert_se(ca_location_new("/foo", CA_LOCATION_PAYLOAD, 0, 55, &b) >= 0);
-        assert_se(ca_location_new("/foo", CA_LOCATION_PAYLOAD, 55, 77, &c) >= 0);
-        assert_se(ca_location_new("/quux", CA_LOCATION_ENTRY, 0, 33, &d) >= 0);
+        assert_se(ca_location_new("foo", CA_LOCATION_ENTRY, 0, 22, &a) >= 0);
+        assert_se(ca_location_new("foo", CA_LOCATION_PAYLOAD, 0, 55, &b) >= 0);
+        assert_se(ca_location_new("foo", CA_LOCATION_PAYLOAD, 55, 77, &c) >= 0);
+        assert_se(ca_location_new("quux", CA_LOCATION_ENTRY, 0, 33, &d) >= 0);
 
         assert_se(ca_origin_new(&o) >= 0);
         assert_se(ca_origin_put(o, a) >= 0);

@@ -7,6 +7,7 @@
 
 #include "calocation.h"
 #include "util.h"
+#include "realloc-buffer.h"
 
 int ca_location_new(
                 const char *path,
@@ -19,11 +20,14 @@ int ca_location_new(
 
         if (!CA_LOCATION_DESIGNATOR_VALID(designator))
                 return -EINVAL;
+        if (!isempty(path) && path[0] == '/') /* insist on relative paths */
+                return -EINVAL;
+        if (offset == UINT64_MAX)
+                return -EINVAL;
         if (size == 0)
                 return -EINVAL;
         if (designator == CA_LOCATION_VOID && path)
                 return -EINVAL;
-
         if (size != UINT64_MAX && offset + size < offset)
                 return -EINVAL;
 
@@ -31,7 +35,7 @@ int ca_location_new(
         if (!l)
                 return -ENOMEM;
 
-        if (path) {
+        if (!isempty(path)) {
                 l->path = strdup(path);
                 if (!l->path) {
                         free(l);
@@ -45,6 +49,7 @@ int ca_location_new(
         l->size = size;
         l->mtime = UINT64_MAX;
         l->archive_offset = UINT64_MAX;
+        l->feature_flags = UINT64_MAX;
 
         *ret = l;
         return 0;
@@ -103,6 +108,7 @@ int ca_location_copy(CaLocation *l, CaLocation **ret) {
         copy->generation = l->generation;
         copy->name_table = ca_name_table_ref(l->name_table);
         copy->archive_offset = l->archive_offset;
+        copy->feature_flags = l->feature_flags;
 
         *ret = copy;
 
@@ -110,43 +116,73 @@ int ca_location_copy(CaLocation *l, CaLocation **ret) {
 }
 
 const char* ca_location_format(CaLocation *l) {
-        _cleanup_free_ char *v = NULL;
+        _cleanup_(realloc_buffer_free) ReallocBuffer buffer = {};
+        int r;
 
         if (!l)
                 return NULL;
 
+        /* Here's how we format location strings:
+         *
+         *     <path>+<designator><offset>[:<size>][@<inode>.<mtime>[.<generation>]][%<features>]
+         *
+         * == Mandatory
+         *
+         * path:       the file system path, relative to the top of the tree we operate on, empty when we operate on the root element
+         * designator: single character encoding which kind of data object we are currently serializing
+         * offset:     relative offset to the beginning of the object we are currently serializing
+         *
+         * == Optional
+         *
+         * size:       when known the size of the current data object we are serializing
+         * inode:      the inode number of the path to the file/directory we are serializing
+         * mtime:      the modification time in ns of the inode
+         * generation: when known the file's generation code
+         * features:   the feature mask used for encoding
+         *
+         */
+
         if (l->formatted)
                 return l->formatted;
 
-        if (l->size == UINT64_MAX) {
-                if (asprintf(&v, "%s+%c%" PRIu64, strempty(l->path), (char) l->designator, l->offset) < 0)
-                        return NULL;
-        } else {
-                if (asprintf(&v, "%s+%c%" PRIu64 ":%" PRIu64, strempty(l->path), (char) l->designator, l->offset, l->size) < 0)
+        r = realloc_buffer_printf(&buffer, "%s+%c%" PRIu64, strempty(l->path), (char) l->designator, l->offset);
+        if (r < 0)
+                return NULL;
+
+        if (l->size != UINT64_MAX) {
+                r = realloc_buffer_printf(&buffer, ":%" PRIu64, l->size);
+                if (r < 0)
                         return NULL;
         }
 
         if (l->mtime != UINT64_MAX) {
+                r = realloc_buffer_printf(&buffer, "@%" PRIu64 ".%" PRIu64, l->inode, l->mtime);
+                if (r < 0)
+                        return NULL;
+
                 if (l->generation_valid) {
-                        /* Note that the kernel suggests the generation is an "int", i.e. a signed entity. We'll format
-                         * it as unsigned here however, to avoid another "-" in the fomatted version. */
-                        if (asprintf(&l->formatted, "%s@%" PRIu64 ".%" PRIu64 ".%u", v, l->inode, l->mtime, (unsigned) l->generation) < 0)
-                                return NULL;
-                } else {
-                        if (asprintf(&l->formatted, "%s@%" PRIu64 ".%" PRIu64, v, l->inode, l->mtime) < 0)
+                        /* Note that the kernel API suggests the generation is an "int", i.e. a signed entity. We'll
+                         * format it as unsigned here however, to avoid another "-" in the fomatted version. */
+                        r = realloc_buffer_printf(&buffer, ".%u", (unsigned) l->generation);
+                        if (r < 0)
                                 return NULL;
                 }
-        } else {
-                l->formatted = v;
-                v = NULL;
         }
+
+        if (l->feature_flags != UINT64_MAX) {
+                r = realloc_buffer_printf(&buffer, "%%%" PRIx64, l->feature_flags);
+                if (r < 0)
+                        return NULL;
+        }
+
+        l->formatted = realloc_buffer_steal(&buffer);
 
         return l->formatted;
 }
 
 int ca_location_parse(const char *text, CaLocation **ret) {
-        uint64_t offset, size, mtime = UINT64_MAX, inode = 0;
-        const char *q, *e, *c, *u;
+        uint64_t offset, size = UINT64_MAX, mtime = UINT64_MAX, inode = 0, features = UINT64_MAX;
+        const char *q, *c, *u;
         CaLocation *l;
         char *n;
         int r, generation = 0;
@@ -157,7 +193,7 @@ int ca_location_parse(const char *text, CaLocation **ret) {
         if (!ret)
                 return -EINVAL;
 
-        u = strrchr(text, '+');
+        u = c = strrchr(text, '+');
         if (!u)
                 return -EINVAL;
 
@@ -167,22 +203,31 @@ int ca_location_parse(const char *text, CaLocation **ret) {
         if (!CA_LOCATION_DESIGNATOR_VALID(u[1]))
                 return -EINVAL;
 
-        /* The '@' suffix is optional */
-        q = strchr(u, '@');
+        /* The '%' suffix (feature flags) is optional */
+        q = strchr(u+2, '%');
         if (q) {
-                const char *z, *k;
+                r = safe_atox64(q + 1, &features);
+                if (r < 0)
+                        return r;
+                if (features == UINT64_MAX)
+                        return -EINVAL;
 
-                e = strndupa(u, q - u);
-                q++;
+                u = strndupa(u, q - u);
+        }
+
+        /* The '@' suffix (inode/mtime/generation info) is optional */
+        q = strchr(u+2, '@');
+        if (q) {
+                const char *z, *k, *w;
 
                 /* There are either two or three dot separated parts after the '@' */
-                z = strchr(q, '.');
+                z = strchr(q+1, '.');
                 if (!z)
                         return -EINVAL;
 
                 /* The first part is the inode number */
-                q = strndupa(q, z - q);
-                r = safe_atou64(q, &inode);
+                w = strndupa(q+1, z - q - 1);
+                r = safe_atou64(w, &inode);
                 if (r < 0)
                         return r;
                 z++;
@@ -191,8 +236,6 @@ int ca_location_parse(const char *text, CaLocation **ret) {
                 if (k) {
                         unsigned g;
 
-                        z = strndupa(z, k - z);
-
                         /* The third part is the generation, if there is one */
                         r = safe_atou(k + 1, &g);
                         if (r < 0)
@@ -200,6 +243,8 @@ int ca_location_parse(const char *text, CaLocation **ret) {
 
                         generation = (int) g;
                         generation_valid = true;
+
+                        z = strndupa(z, k - z);
                 }
 
                 /* The second part is the mtime */
@@ -208,42 +253,40 @@ int ca_location_parse(const char *text, CaLocation **ret) {
                         return r;
                 if (mtime == UINT64_MAX)
                         return -EINVAL;
-        } else
-                e = u;
 
-        c = strchr(e+2, ':');
-        if (c) {
-                const char *a;
+                u = strndupa(u, q - u);
+        }
 
-                a = strndupa(e+2, c-e-2);
-
-                r = safe_atou64(a, &offset);
+        /* The size is component is optional, too */
+        q = strchr(u+2, ':');
+        if (q) {
+                r = safe_atou64(q+1, &size);
                 if (r < 0)
                         return r;
+                if (size == 0 || size == UINT64_MAX)
+                        return -EINVAL;
 
-                r = safe_atou64(c+1, &size);
-        } else {
-                size = UINT64_MAX;
-
-                r = safe_atou64(e+2, &offset);
+                u = strndupa(u, q - u);
         }
+
+        r = safe_atou64(u+2, &offset);
         if (r < 0)
                 return r;
-
-        if (size == 0)
+        if (offset == UINT64_MAX)
                 return -EINVAL;
+
         if (size != UINT64_MAX && offset + size < offset)
                 return -EINVAL;
 
-        if (u == text)
+        if (c == text)
                 n = NULL;
         else {
-                n = strndup(text, u - text);
+                n = strndup(text, c - text);
                 if (!n)
                         return -ENOMEM;
         }
 
-        if (e[1] == CA_LOCATION_VOID && !isempty(n)) {
+        if (u[1] == CA_LOCATION_VOID && !isempty(n)) {
                 free(n);
                 return -EINVAL;
         }
@@ -255,15 +298,16 @@ int ca_location_parse(const char *text, CaLocation **ret) {
         }
 
         l->path = n;
-        l->offset = e[1] == CA_LOCATION_VOID ? 0 : offset;
+        l->offset = u[1] == CA_LOCATION_VOID ? 0 : offset;
         l->size = size;
-        l->designator = e[1];
+        l->designator = u[1];
         l->n_ref = 1;
         l->inode = inode;
         l->mtime = mtime;
         l->generation = generation;
         l->generation_valid = generation_valid;
         l->archive_offset = UINT64_MAX;
+        l->feature_flags = features;
 
         *ret = l;
         return 0;
@@ -442,7 +486,7 @@ int ca_location_open(CaLocation *l) {
                 if (isempty(l->path))
                         fd = fcntl(l->root->fd, F_DUPFD_CLOEXEC, 3);
                 else
-                        fd = openat(l->root->fd, l->path, O_CLOEXEC|O_RDONLY|O_NOCTTY|O_NOFOLLOW);
+                        fd = openat(l->root->fd, l->path, O_CLOEXEC|O_RDONLY|O_NOCTTY|O_NOFOLLOW|O_NONBLOCK);
 
         } else {
                 const char *p;
@@ -524,6 +568,9 @@ int ca_location_id_make(CaDigest *digest, CaLocation *l, bool include_size, CaCh
                         ca_digest_write_u32(digest, (uint32_t) l->generation);
         }
 
+        if (l->feature_flags != UINT64_MAX)
+                ca_digest_write_u64(digest, l->feature_flags);
+
         memcpy(ret, ca_digest_read(digest), sizeof(CaChunkID));
         return 0;
 }
@@ -548,6 +595,8 @@ bool ca_location_equal(CaLocation *a, CaLocation *b, bool compare_size) {
                 if (a->size != b->size)
                         return false;
 
+        if (a->feature_flags != b->feature_flags)
+                return false;
 
         if (a->mtime != b->mtime)
                 return false;

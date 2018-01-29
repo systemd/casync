@@ -3400,6 +3400,8 @@ int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret) {
         if (e->archive_offset != UINT64_MAX)
                 l->archive_offset = e->archive_offset + add;
 
+        l->feature_flags = e->feature_flags;
+
         *ret = l;
         return 0;
 }

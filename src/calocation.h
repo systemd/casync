@@ -62,6 +62,9 @@ typedef struct CaLocation {
 
         /* The formatted version of this location, if requested before */
         char *formatted;
+
+        /* The feature flags used for encoding, so that we don't use cached data create with different settings */
+        uint64_t feature_flags;
 } CaLocation;
 
 int ca_location_new(const char *path, CaLocationDesignator designator, uint64_t offset, uint64_t size, CaLocation **ret);
