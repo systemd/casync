@@ -1163,6 +1163,11 @@ static int verb_make(int argc, char *argv[]) {
                 return -EINVAL;
         }
 
+        if (!IN_SET(operation, MAKE_ARCHIVE_INDEX, MAKE_ARCHIVE) && (arg_cache_auto || arg_cache)) {
+                log_error("Caching only supported when archiving files trees.");
+                return -EOPNOTSUPP;
+        }
+
         if (IN_SET(operation, MAKE_ARCHIVE_INDEX, MAKE_BLOB_INDEX)) {
                 r = set_default_store(output);
                 if (r < 0)
