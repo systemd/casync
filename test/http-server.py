@@ -3,8 +3,12 @@
 
 PORT = 4321
 
-import http.server, socketserver, os, sys, socket, time
-
+import http.server
+import os
+import socket
+import socketserver
+import sys
+import time
 os.chdir(sys.argv[1])
 
 if len(sys.argv) >= 3:
