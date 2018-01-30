@@ -3333,6 +3333,25 @@ eof:
         return 0;
 }
 
+int ca_encoder_current_quota_projid(CaEncoder *e, uint32_t *ret) {
+        CaEncoderNode *n;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
+
+        if (!n->quota_projid_valid)
+                return -ENODATA;
+
+        *ret = n->quota_projid;
+        return 0;
+}
+
 int ca_encoder_current_payload_offset(CaEncoder *e, uint64_t *ret) {
         CaEncoderNode *n;
 

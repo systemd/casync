@@ -1773,6 +1773,8 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 char ls_mode[LS_FORMAT_MODE_MAX], ls_flags[LS_FORMAT_CHATTR_MAX], ls_fat_attrs[LS_FORMAT_FAT_ATTRS_MAX];
                 uid_t uid = UID_INVALID;
                 gid_t gid = GID_INVALID;
+                uint32_t quota_projid;
+                bool has_quota_projid;
                 dev_t rdev = (dev_t) -1;
                 unsigned flags = (unsigned) -1;
                 uint32_t fat_attrs = (uint32_t) -1;
@@ -1794,6 +1796,8 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 (void) ca_sync_current_chattr(s, &flags);
                 (void) ca_sync_current_fat_attrs(s, &fat_attrs);
                 (void) ca_sync_current_archive_offset(s, &offset);
+
+                has_quota_projid = ca_sync_current_quota_projid(s, &quota_projid) >= 0;
 
                 if (mtree_escape(path, &escaped) < 0)
                         return log_oom();
@@ -1867,6 +1871,9 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
 
                         escaped = mfree(escaped);
                 }
+
+                if (has_quota_projid)
+                        printf("  ProjID: %" PRIu32 "\n", quota_projid);
 
                 if (target) {
                         if (mtree_escape(target, &escaped) < 0)

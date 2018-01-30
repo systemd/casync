@@ -4928,6 +4928,25 @@ eof:
         return 0;
 }
 
+int ca_decoder_current_quota_projid(CaDecoder *d, uint32_t *ret) {
+        CaDecoderNode *n;
+
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
+
+        if (!n->have_quota_projid)
+                return -ENODATA;
+
+        *ret = n->quota_projid;
+        return 0;
+}
+
 int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret) {
         CaDecoderNode *n;
         mode_t mode;

@@ -100,6 +100,7 @@ int ca_decoder_current_offset(CaDecoder *d, uint64_t *ret);
 int ca_decoder_current_chattr(CaDecoder *d, unsigned *ret);
 int ca_decoder_current_fat_attrs(CaDecoder *d, uint32_t *ret);
 int ca_decoder_current_xattr(CaDecoder *d, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size);
+int ca_decoder_current_quota_projid(CaDecoder *d, uint32_t *ret);
 
 /* Seeking to positions */
 int ca_decoder_seek_offset(CaDecoder *d, uint64_t offset);

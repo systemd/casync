@@ -108,6 +108,7 @@ int ca_sync_current_rdev(CaSync *sync, dev_t *ret);
 int ca_sync_current_chattr(CaSync *sync, unsigned *ret);
 int ca_sync_current_fat_attrs(CaSync *sync, uint32_t *ret);
 int ca_sync_current_xattr(CaSync *sync, CaIterate where, const char **ret_name, const void **ret_value, size_t *ret_size);
+int ca_sync_current_quota_projid(CaSync *s, uint32_t *ret);
 
 int ca_sync_get_archive_size(CaSync *s, uint64_t *ret);
 

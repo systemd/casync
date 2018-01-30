@@ -3726,6 +3726,26 @@ int ca_sync_current_xattr(CaSync *s, CaIterate where, const char **ret_name, con
         return -ENOTTY;
 }
 
+int ca_sync_current_quota_projid(CaSync *s, uint32_t *ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_quota_projid(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_quota_projid(s->decoder, ret);
+
+        return -ENOTTY;
+}
+
 static int ca_sync_add_pollfd(CaRemote *rr, struct pollfd *pollfd) {
         int r;
 
