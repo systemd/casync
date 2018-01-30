@@ -725,7 +725,7 @@ static int ca_encoder_node_read_generation(
 
         if (ioctl(n->fd, FS_IOC_GETVERSION, &n->generation) < 0) {
 
-                if (!IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL))
+                if (!ERRNO_IS_UNSUPPORTED(errno))
                         return -errno;
 
                 n->generation_valid = false;

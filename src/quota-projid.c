@@ -14,7 +14,7 @@ int read_quota_projid(int fd, uint32_t *ret) {
 
         if (ioctl(fd, FS_IOC_FSGETXATTR, &fa) < 0) {
 
-                if (!IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL))
+                if (!ERRNO_IS_UNSUPPORTED(errno))
                         return -errno;
 
                 /* If the file system doesn't do project quota we assume it's all owned by project 0 */
@@ -35,7 +35,7 @@ int write_quota_projid(int fd, uint32_t id) {
 
                 /* When the file system doesn't support project IDs, then we consider this as equivalent to all files
                  * being owned by project 0 */
-                if (id == 0 && IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL))
+                if (id == 0 && ERRNO_IS_UNSUPPORTED(errno))
                         return 0;
 
                 return -errno;

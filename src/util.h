@@ -799,4 +799,12 @@ DEFINE_TRIVIAL_CLEANUP_FUNC(char*, unlink_and_free);
 
 int free_and_strdup(char **p, const char *s);
 
+/* A check against a list of errors commonly used to indicate that a syscall/ioctl/other kernel operation we request is
+ * not supported locally. We maintain a generic list for this here, instead of adjusting the possible error codes to
+ * exactly what the calls might return for the simple reasons that due to FUSE and many differing in-kernel
+ * implementations of the same calls in various file systems and such the error codes seen varies wildly, and we'd like
+ * to cover them all to some degree and be somewhat safe for the future too. */
+#define ERRNO_IS_UNSUPPORTED(error) \
+        IN_SET(error, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL)
+
 #endif

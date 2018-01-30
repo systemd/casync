@@ -13,7 +13,7 @@ int read_attr_fd(int fd, unsigned *ret) {
 
         if (ioctl(fd, FS_IOC_GETFLAGS, ret) < 0) {
 
-                if (!IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL))
+                if (!ERRNO_IS_UNSUPPORTED(errno))
                         return -errno;
 
                 /* If a file system or node type doesn't support chattr flags, then all flags should be considered 0 */
@@ -31,7 +31,7 @@ int write_attr_fd(int fd, unsigned attr) {
 
                 /* If we shall write the attributes as 0, and we can't write them because the file system or node type
                  * doesn't support them, that's fine */
-                if (attr == 0 && IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL))
+                if (attr == 0 && ERRNO_IS_UNSUPPORTED(errno))
                         return 0;
 
                 return -errno;
@@ -66,7 +66,7 @@ int read_fat_attr_fd(int fd, uint32_t *ret) {
 
         if (ioctl(fd, FAT_IOCTL_GET_ATTRIBUTES, ret) < 0) {
 
-                if (!IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL))
+                if (!ERRNO_IS_UNSUPPORTED(errno))
                         return -errno;
 
                 *ret = 0;
@@ -81,7 +81,7 @@ int write_fat_attr_fd(int fd, uint32_t attr) {
 
         if (ioctl(fd, FAT_IOCTL_SET_ATTRIBUTES, &attr) < 0) {
 
-                if (attr == 0 && IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL))
+                if (attr == 0 && ERRNO_IS_UNSUPPORTED(errno))
                         return 0;
 
                 return -errno;

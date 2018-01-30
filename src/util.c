@@ -1262,7 +1262,7 @@ int rename_noreplace(int olddirfd, const char *oldpath, int newdirfd, const char
 
         /* renameat2() exists since Linux 3.15, btrfs added support for it later.  If it is not implemented, fallback
          * to another method. */
-        if (!IN_SET(errno, EINVAL, ENOSYS, EOPNOTSUPP))
+        if (!ERRNO_IS_UNSUPPORTED(errno))
                 return -errno;
 
         /* Let's try linkat(). This will of course failure for non-files, but that's fine. */
