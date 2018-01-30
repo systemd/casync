@@ -1836,6 +1836,20 @@ static int ca_sync_cache_get(CaSync *s, CaLocation *location) {
         return r;
 }
 
+static int ca_sync_need_data(CaSync *s) {
+        assert(s);
+
+        /* Returns true if we actually need to generate any data, i.e. when we are supposed to write an index or
+         * archive, or a store to write to is configured, or at least one form of digest is turned on. It neither is
+         * the case (because we just want to list files/directories) then we can avoid generating data and speed things
+         * up */
+
+        return s->index || s->remote_index ||
+                s->archive_fd >= 0 || s->remote_archive ||
+                s->wstore || s->cache_store ||
+                s->archive_digest || s->hardlink_digest || s->payload_digest;
+}
+
 static int ca_sync_step_encode(CaSync *s) {
         int r, step;
         bool next_step;
@@ -2056,8 +2070,8 @@ static int ca_sync_step_encode(CaSync *s) {
         case CA_ENCODER_PAYLOAD:
         case CA_ENCODER_DATA: {
                 _cleanup_(ca_location_unrefp) CaLocation *location = NULL;
-                const void *p;
                 size_t l, extra_offset = 0;
+                const void *p = NULL;
 
                 switch (s->cache_state) {
 
@@ -2199,12 +2213,16 @@ static int ca_sync_step_encode(CaSync *s) {
                         assert_not_reached("Unexpected cache state");
                 }
 
-                r = ca_encoder_get_data(s->encoder, UINT64_MAX, &p, &l);
+                if (ca_sync_need_data(s))
+                        r = ca_encoder_get_data(s->encoder, UINT64_MAX, &p, &l);
+                else
+                        r = ca_encoder_get_data(s->encoder, UINT64_MAX, NULL, &l);
                 if (r < 0)
                         return log_debug_errno(r, "Failed to acquire data: %m");
 
                 /* Apply the extra offset, if there's any */
-                p = (const uint8_t*) p + extra_offset;
+                if (p)
+                        p = (const uint8_t*) p + extra_offset;
                 l -= extra_offset;
 
                 if (s->cache) {
@@ -2223,17 +2241,19 @@ static int ca_sync_step_encode(CaSync *s) {
                                 return r;
                 }
 
-                r = ca_sync_write_chunks(s, p, l, location);
-                if (r < 0)
-                        return r;
+                if (p) {
+                        r = ca_sync_write_chunks(s, p, l, location);
+                        if (r < 0)
+                                return r;
 
-                r = ca_sync_write_archive(s, p, l);
-                if (r < 0)
-                        return r;
+                        r = ca_sync_write_archive(s, p, l);
+                        if (r < 0)
+                                return r;
 
-                r = ca_sync_write_remote_archive(s, p, l);
-                if (r < 0)
-                        return r;
+                        r = ca_sync_write_remote_archive(s, p, l);
+                        if (r < 0)
+                                return r;
+                }
 
         done:
                 return step == CA_ENCODER_NEXT_FILE ? CA_SYNC_NEXT_FILE :
