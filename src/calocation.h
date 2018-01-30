@@ -22,6 +22,7 @@ typedef enum CaLocationDesignator {
         CA_LOCATION_FILENAME = 'n',
         CA_LOCATION_GOODBYE = 'g',
         CA_LOCATION_VOID = 'v', /* Used as placeholder if we have to describe a blob of data from no known location */
+        _CA_LOCATION_DESIGNATOR_INVALID = -1,
 } CaLocationDesignator;
 
 static inline bool CA_LOCATION_DESIGNATOR_VALID(CaLocationDesignator d) {

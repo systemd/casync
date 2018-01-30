@@ -9,6 +9,24 @@
 #include "util.h"
 #include "realloc-buffer.h"
 
+static CaLocation* ca_location_alloc(void) {
+        CaLocation *l;
+
+        l = new0(CaLocation, 1);
+        if (!l)
+                return NULL;
+
+        l->n_ref = 1;
+        l->designator = _CA_LOCATION_DESIGNATOR_INVALID;
+        l->offset = UINT64_MAX;
+        l->size = UINT64_MAX;
+        l->mtime = UINT64_MAX;
+        l->archive_offset = UINT64_MAX;
+        l->feature_flags = UINT64_MAX;
+
+        return l;
+}
+
 int ca_location_new(
                 const char *path,
                 CaLocationDesignator designator,
@@ -31,7 +49,7 @@ int ca_location_new(
         if (size != UINT64_MAX && offset + size < offset)
                 return -EINVAL;
 
-        l = new0(CaLocation, 1);
+        l = ca_location_alloc();
         if (!l)
                 return -ENOMEM;
 
@@ -43,13 +61,9 @@ int ca_location_new(
                 }
         }
 
-        l->n_ref = 1;
         l->designator = designator;
         l->offset = designator == CA_LOCATION_VOID ? 0 : offset;
         l->size = size;
-        l->mtime = UINT64_MAX;
-        l->archive_offset = UINT64_MAX;
-        l->feature_flags = UINT64_MAX;
 
         *ret = l;
         return 0;
@@ -291,7 +305,7 @@ int ca_location_parse(const char *text, CaLocation **ret) {
                 return -EINVAL;
         }
 
-        l = new0(CaLocation, 1);
+        l = ca_location_alloc();
         if (!l) {
                 free(n);
                 return -ENOMEM;
@@ -306,7 +320,6 @@ int ca_location_parse(const char *text, CaLocation **ret) {
         l->mtime = mtime;
         l->generation = generation;
         l->generation_valid = generation_valid;
-        l->archive_offset = UINT64_MAX;
         l->feature_flags = features;
 
         *ret = l;
