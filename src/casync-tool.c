@@ -56,6 +56,7 @@ static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
 static char *arg_cache = NULL;
+static bool arg_cache_auto = false;
 static size_t arg_chunk_size_min = 0;
 static size_t arg_chunk_size_avg = 0;
 static size_t arg_chunk_size_max = 0;
@@ -95,6 +96,7 @@ static void help(void) {
                "                             Pick compression algorithm (zstd, xz or gzip)\n"
                "     --seed=PATH             Additional file or directory to use as seed\n"
                "     --cache=PATH            Directory to use as encoder cache\n"
+               "  -c --cache-auto            Pick encoder cache directory automatically\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote\n"
                "                             communication\n"
                "     --exclude-nodump=no     Don't exclude files with chattr(1)'s +d 'nodump'\n"
@@ -324,6 +326,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "chunk-size",        required_argument, NULL, ARG_CHUNK_SIZE        },
                 { "seed",              required_argument, NULL, ARG_SEED              },
                 { "cache",             required_argument, NULL, ARG_CACHE             },
+                { "cache-auto",        no_argument,       NULL, 'c'                   },
                 { "rate-limit-bps",    required_argument, NULL, ARG_RATE_LIMIT_BPS    },
                 { "with",              required_argument, NULL, ARG_WITH              },
                 { "without",           required_argument, NULL, ARG_WITHOUT           },
@@ -353,7 +356,7 @@ static int parse_argv(int argc, char *argv[]) {
         if (getenv_bool("CASYNC_VERBOSE") > 0)
                 arg_verbose = true;
 
-        while ((c = getopt_long(argc, argv, "hvn", options, NULL)) >= 0) {
+        while ((c = getopt_long(argc, argv, "hvnc", options, NULL)) >= 0) {
 
                 switch (c) {
 
@@ -411,6 +414,10 @@ static int parse_argv(int argc, char *argv[]) {
                         if (r < 0)
                                 return log_oom();
 
+                        break;
+
+                case 'c':
+                        arg_cache_auto = true;
                         break;
 
                 case ARG_RATE_LIMIT_BPS:
@@ -1101,9 +1108,10 @@ static int verb_make(int argc, char *argv[]) {
                         return log_oom();
         }
 
-        if (!input || streq(input, "-"))
+        if (!input || streq(input, "-")) {
                 input_fd = STDIN_FILENO;
-        else {
+                input = NULL;
+        } else {
                 CaLocatorClass input_class;
 
                 input_class = ca_classify_locator(input);
@@ -1211,6 +1219,17 @@ static int verb_make(int argc, char *argv[]) {
         r = load_feature_flags(s, operation == MAKE_BLOB_INDEX ? 0 : CA_FORMAT_WITH_MASK);
         if (r < 0)
                 return r;
+
+        if (arg_cache_auto && !arg_cache) {
+                if (!input) {
+                        log_error("Can't automatically derive cache path if no input path is given.");
+                        return -EOPNOTSUPP;
+                }
+
+                arg_cache = strjoin(input, "/.cacac");
+                if (!arg_cache)
+                        return log_oom();
+        }
 
         r = ca_sync_enable_archive_digest(s, !arg_cache);
         if (r < 0)
