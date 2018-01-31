@@ -2015,9 +2015,10 @@ static int verb_list(int argc, char *argv[]) {
                         return log_oom();
         }
 
-        if (!input || streq(input, "-"))
+        if (!input || streq(input, "-")) {
                 input_fd = STDIN_FILENO;
-        else {
+                input = NULL;
+        } else {
                 CaLocatorClass input_class = _CA_LOCATOR_CLASS_INVALID;
 
                 input_class = ca_classify_locator(input);
@@ -2054,9 +2055,23 @@ static int verb_list(int argc, char *argv[]) {
 
                 } else if (S_ISREG(st.st_mode)) {
 
-                        if (operation == _LIST_OPERATION_INVALID)
+                        if (operation == _LIST_OPERATION_INVALID) {
+
+                                /* If the user specified an input file name to a regular file, and the suffix is
+                                 * neither .catar nor .caidx then he probably expected us to treat the file as source
+                                 * rather then encoded file. But we don't support this really: we only support
+                                 * directories as input. Eventually we should probably do something smarter here, for
+                                 * example implying as source the path's parent directory, and then seek to the file
+                                 * passed. For now, let's prohibit this, so that all options are open. */
+
+                                if (input) {
+                                        log_error("Input should be a directory, .catar or .caidx file. Refusing.");
+                                        return -EINVAL;
+                                }
+
                                 operation = LIST_ARCHIVE;
-                        else if (!IN_SET(operation, LIST_ARCHIVE, LIST_ARCHIVE_INDEX)) {
+
+                        } else if (!IN_SET(operation, LIST_ARCHIVE, LIST_ARCHIVE_INDEX)) {
                                 log_error("Input is a regular file, but attempted to list it as directory.");
                                 return -EINVAL;
                         }
@@ -2065,9 +2080,6 @@ static int verb_list(int argc, char *argv[]) {
                         return -EINVAL;
                 }
         }
-
-        if (streq_ptr(input, "-"))
-                input = mfree(input);
 
         if (operation == _LIST_OPERATION_INVALID) {
                 log_error("Failed to determine what to list. Use --what=archive, archive-index, or directory.");
