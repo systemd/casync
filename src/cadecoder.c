@@ -2271,7 +2271,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                         break;
 
                 default:
-                        log_error("Got unexpected object: %016" PRIx64, t);
+                        log_debug("Got unexpected object: %016" PRIx64, t);
                         return -EBADMSG;
                 }
 
@@ -2670,7 +2670,7 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
                 return CA_DECODER_STEP;
 
         default:
-                log_error("Got unexpected object: %016" PRIx64, t);
+                log_debug("Got unexpected object: %016" PRIx64, t);
                 return -EBADMSG;
         }
 }
@@ -3295,8 +3295,7 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
 
                         source_fd = ca_location_open(l);
                         if (source_fd == -ENOENT) {
-                                log_error_errno(source_fd,
-                                                "Can't open reflink source %s: %m", ca_location_format(l));
+                                log_debug_errno(source_fd, "Can't open reflink source %s: %m", ca_location_format(l));
                                 goto next;
                         }
                         if (source_fd < 0)
