@@ -4757,10 +4757,31 @@ int ca_decoder_current_user(CaDecoder *d, const char **ret) {
         if (!n)
                 return -EUNATCH;
 
-        if (!n->user_name)
+        if (n->user_name)
+                *ret = n->user_name;
+        else if (d->feature_flags & (CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_16BIT_UIDS)) {
+                uid_t uid, shifted_uid;
+
+                /* As special case, the "root" user is not encoded as user name string if the UID is also
+                 * encoded. Thus, let's synthesize the name here again. Note that the user name is based on the UID as
+                 * encoded on the underlying file system — i.e. not the shifted UID. This means we first have to shift
+                 * back here. */
+
+                if (!n->entry)
+                        return -ENODATA;
+
+                uid = (uid_t) read_le64(&n->entry->uid);
+                shifted_uid = ca_decoder_shift_uid(d, uid);
+                if (!uid_is_valid(shifted_uid))
+                        return -EINVAL;
+
+                if (shifted_uid != 0)
+                        return -ENODATA;
+
+                *ret = "root";
+        } else
                 return -ENODATA;
 
-        *ret = n->user_name;
         return 0;
 }
 
@@ -4779,10 +4800,26 @@ int ca_decoder_current_group(CaDecoder *d, const char **ret) {
         if (!n)
                 return -EUNATCH;
 
-        if (!n->group_name)
+        if (n->group_name)
+                *ret = n->group_name;
+        else if (d->feature_flags & (CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_16BIT_UIDS)) {
+                gid_t gid, shifted_gid;
+
+                if (!n->entry)
+                        return -ENODATA;
+
+                gid = (gid_t) read_le64(&n->entry->gid);
+                shifted_gid = ca_decoder_shift_gid(d, gid);
+                if (!gid_is_valid(shifted_gid))
+                        return -EINVAL;
+
+                if (shifted_gid != 0)
+                        return -ENODATA;
+
+                *ret = "root";
+        } else
                 return -ENODATA;
 
-        *ret = n->group_name;
         return 0;
 }
 

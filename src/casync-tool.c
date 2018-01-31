@@ -1837,12 +1837,12 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 if (uid_is_valid(uid) || user) {
                         printf("    User: ");
 
-                        if (uid == 0)
-                                user = "root";
+                        if (user) {
+                                escaped = mfree(escaped);
 
-                        if (user)
                                 if (mtree_escape(user, &escaped) < 0)
                                         return log_oom();
+                        }
 
                         if (uid_is_valid(uid) && user)
                                 printf("%s (" UID_FMT ")\n", escaped, uid);
@@ -1850,19 +1850,17 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                                 printf(UID_FMT "\n", uid);
                         else
                                 printf("%s\n", escaped);
-
-                        escaped = mfree(escaped);
                 }
 
                 if (gid_is_valid(gid) || group) {
                         printf("   Group: ");
 
-                        if (gid == 0)
-                                group = "root";
+                        if (group) {
+                                escaped = mfree(escaped);
 
-                        if (group)
                                 if (mtree_escape(group, &escaped) < 0)
                                         return log_oom();
+                        }
 
                         if (gid_is_valid(gid) && group)
                                 printf("%s (" GID_FMT ")\n", escaped, gid);

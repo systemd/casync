@@ -3138,7 +3138,7 @@ int ca_encoder_current_user(CaEncoder *e, const char **ret) {
         if (!ret)
                 return -EINVAL;
 
-        if (!(e->feature_flags & (CA_FORMAT_WITH_USER_NAMES)))
+        if (!(e->feature_flags & CA_FORMAT_WITH_USER_NAMES))
                 return -ENODATA;
 
         n = ca_encoder_current_node(e);
@@ -3149,10 +3149,13 @@ int ca_encoder_current_user(CaEncoder *e, const char **ret) {
         if (r < 0)
                 return r;
 
-        if (!e->cached_user_name || e->cached_uid != n->stat.st_uid)
+        if (e->cached_user_name && e->cached_uid == n->stat.st_uid)
+                *ret = e->cached_user_name;
+        else if (n->stat.st_uid == 0)
+                *ret = "root";
+        else
                 return -ENODATA;
 
-        *ret = e->cached_user_name;
         return 0;
 }
 
@@ -3165,7 +3168,7 @@ int ca_encoder_current_group(CaEncoder *e, const char **ret) {
         if (!ret)
                 return -EINVAL;
 
-        if (!(e->feature_flags & (CA_FORMAT_WITH_USER_NAMES)))
+        if (!(e->feature_flags & CA_FORMAT_WITH_USER_NAMES))
                 return -ENODATA;
 
         n = ca_encoder_current_node(e);
@@ -3176,10 +3179,13 @@ int ca_encoder_current_group(CaEncoder *e, const char **ret) {
         if (r < 0)
                 return r;
 
-        if (!e->cached_group_name || e->cached_gid != n->stat.st_gid)
+        if (e->cached_group_name && e->cached_gid == n->stat.st_gid)
+                *ret = e->cached_group_name;
+        else if (n->stat.st_gid == 0)
+                *ret = "root";
+        else
                 return -ENODATA;
 
-        *ret = e->cached_group_name;
         return 0;
 }
 
