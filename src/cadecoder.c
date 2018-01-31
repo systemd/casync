@@ -2251,8 +2251,6 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                 case CA_FORMAT_GOODBYE:
                         if (!entry)
                                 return -EBADMSG;
-                        if (!S_ISDIR(read_le64(&entry->mode)))
-                                return -EBADMSG;
                         if (l < offsetof(CaFormatGoodbye, items) + sizeof(CaFormatGoodbyeTail))
                                 return -EBADMSG;
 
