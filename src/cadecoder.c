@@ -4683,7 +4683,6 @@ int ca_decoder_current_size(CaDecoder *d, uint64_t *ret) {
 }
 
 int ca_decoder_current_uid(CaDecoder *d, uid_t *ret) {
-        uid_t uid, shifted_uid;
         CaDecoderNode *n;
 
         if (!d)
@@ -4703,17 +4702,11 @@ int ca_decoder_current_uid(CaDecoder *d, uid_t *ret) {
         if (!n->entry)
                 return -ENODATA;
 
-        uid = (uid_t) read_le64(&n->entry->uid);
-        shifted_uid = ca_decoder_shift_uid(d, uid);
-        if (!uid_is_valid(shifted_uid))
-                return -EINVAL;
-
-        *ret = shifted_uid;
+        *ret = (uid_t) read_le64(&n->entry->uid);
         return 0;
 }
 
 int ca_decoder_current_gid(CaDecoder *d, gid_t *ret) {
-        gid_t gid, shifted_gid;
         CaDecoderNode *n;
 
         if (!d)
@@ -4733,12 +4726,7 @@ int ca_decoder_current_gid(CaDecoder *d, gid_t *ret) {
         if (!n->entry)
                 return -ENODATA;
 
-        gid = (gid_t) read_le64(&n->entry->gid);
-        shifted_gid = ca_decoder_shift_gid(d, gid);
-        if (!gid_is_valid(shifted_gid))
-                return -EINVAL;
-
-        *ret = shifted_gid;
+        *ret = (gid_t) read_le64(&n->entry->gid);
         return 0;
 }
 
