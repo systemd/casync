@@ -1796,8 +1796,14 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                         if (!user)
                                 return -EBADMSG;
 
+                        /* If the UID is 0 then the user name should be supressed if "root". However, if it's anything
+                         * else that's OK. The latter case happens in case UID shifting is used, as the user name
+                         * always reflects the host system's user database (due to the nature of NSS), while the
+                         * encoded numeric UID reflects the shifted one. */
+
                         if ((d->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) &&
-                            read_le64(&entry->uid) == 0)
+                            read_le64(&entry->uid) == 0 &&
+                            streq(user->name, "root"))
                                 return -EBADMSG;
 
                         offset += l;
@@ -1832,7 +1838,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
 
                         if ((d->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) &&
-                            read_le64(&entry->gid) == 0)
+                            read_le64(&entry->gid) == 0 &&
+                            streq(group->name, "root"))
                                 return -EBADMSG;
 
                         offset += l;
