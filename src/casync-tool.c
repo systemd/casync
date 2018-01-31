@@ -1653,8 +1653,15 @@ static int mtree_escape(const char *p, char **ret) {
         return mtree_escape_full(p, (size_t) -1, ret);
 }
 
+static const char *empty_to_dot(const char *p) {
+        /* Internally, we encode the top-level archived path as "", let's output it as "." since empty strings are hard
+         * to handle for users. */
+
+        return isempty(p) ? "." : p;
+}
+
 static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
-        _cleanup_free_ char *path = NULL;
+        _cleanup_free_ char *path = NULL, *escaped = NULL;
         mode_t mode;
         int r;
 
@@ -1666,10 +1673,14 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
         if (r < 0)
                 return log_error_errno(r, "Failed to query current path: %m");
 
+        r = mtree_escape(path, &escaped);
+        if (r < 0)
+                return log_oom();
+
         if (streq(arg0, "list")) {
                 char ls_mode[LS_FORMAT_MODE_MAX];
 
-                printf("%s %s\n", ls_format_mode(mode, ls_mode), path);
+                printf("%s %s\n", ls_format_mode(mode, ls_mode), empty_to_dot(escaped));
 
                 if (!arg_recursive && *toplevel_shown) {
                         r = ca_sync_seek_next_sibling(s);
@@ -1686,7 +1697,6 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 uid_t uid = UID_INVALID;
                 gid_t gid = GID_INVALID;
                 dev_t rdev = (dev_t) -1;
-                char *escaped;
 
                 (void) ca_sync_current_target(s, &target);
                 (void) ca_sync_current_mtime(s, &mtime);
@@ -1697,12 +1707,7 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 (void) ca_sync_current_group(s, &group);
                 (void) ca_sync_current_rdev(s, &rdev);
 
-                r = mtree_escape(path, &escaped);
-                if (r < 0)
-                        return log_oom();
-
-                fputs(isempty(escaped) ? "." : escaped, stdout);
-                free(escaped);
+                fputs(empty_to_dot(escaped), stdout);
 
                 if (S_ISLNK(mode))
                         fputs(" type=link", stdout);
@@ -1725,11 +1730,12 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                         printf(" size=%" PRIu64, size);
 
                 if (target) {
+                        escaped = mfree(escaped);
+
                         if (mtree_escape(target, &escaped) < 0)
                                 return log_oom();
 
                         printf(" link=%s", escaped);
-                        free(escaped);
                 }
 
                 if (rdev != (dev_t) -1)
@@ -1743,19 +1749,21 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                         printf(" gid=" GID_FMT, gid);
 
                 if (user) {
+                        escaped = mfree(escaped);
+
                         if (mtree_escape(user, &escaped) < 0)
                                 return log_oom();
 
                         printf(" uname=%s", escaped);
-                        free(escaped);
                 }
 
                 if (group) {
+                        escaped = mfree(escaped);
+
                         if (mtree_escape(group, &escaped) < 0)
                                 return log_oom();
 
                         printf(" gname=%s", escaped);
-                        free(escaped);
                 }
 
                 if (mtime != UINT64_MAX)
@@ -1778,7 +1786,6 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 dev_t rdev = (dev_t) -1;
                 unsigned flags = (unsigned) -1;
                 uint32_t fat_attrs = (uint32_t) -1;
-                char *escaped;
                 const char *xname;
                 const void *xvalue;
                 size_t xsize;
@@ -1799,15 +1806,10 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
 
                 has_quota_projid = ca_sync_current_quota_projid(s, &quota_projid) >= 0;
 
-                if (mtree_escape(path, &escaped) < 0)
-                        return log_oom();
-
                 printf("    File: %s\n"
                        "    Mode: %s\n",
-                       isempty(escaped) ? "." : escaped,
+                       empty_to_dot(escaped),
                        strna(ls_format_mode(mode, ls_mode)));
-
-                escaped = mfree(escaped);
 
                 if (flags != (unsigned) -1)
                         printf("FileAttr: %s\n", strna(ls_format_chattr(flags, ls_flags)));
@@ -1868,19 +1870,18 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                                 printf(GID_FMT "\n", gid);
                         else
                                 printf("%s\n", escaped);
-
-                        escaped = mfree(escaped);
                 }
 
                 if (has_quota_projid)
                         printf("  ProjID: %" PRIu32 "\n", quota_projid);
 
                 if (target) {
+                        escaped = mfree(escaped);
+
                         if (mtree_escape(target, &escaped) < 0)
                                 return log_oom();
 
                         printf("  Target: %s\n", escaped);
-                        escaped = mfree(escaped);
                 }
 
                 if (rdev != (dev_t) -1)
