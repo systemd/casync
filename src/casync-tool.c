@@ -1911,7 +1911,7 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                         return 0;
         }
 
-        return 0;
+        return 1;
 }
 
 static int verb_list(int argc, char *argv[]) {
@@ -1925,11 +1925,11 @@ static int verb_list(int argc, char *argv[]) {
 
         ListOperation operation = _LIST_OPERATION_INVALID;
         const char *seek_path = NULL;
-        int r;
         _cleanup_(safe_close_nonstdp) int input_fd = -1;
         _cleanup_free_ char *input = NULL;
         _cleanup_(ca_sync_unrefp) CaSync *s = NULL;
         bool toplevel_shown = false;
+        int r;
 
         if (argc > 3) {
                 log_error("Input path/URL and subtree path expected.");
@@ -2135,7 +2135,7 @@ static int verb_list(int argc, char *argv[]) {
 
                 case CA_SYNC_NEXT_FILE: {
                         r = list_one_file(argv[0], s, &toplevel_shown);
-                        if (r < 0)
+                        if (r <= 0)
                                 return r;
                         break;
                 }
