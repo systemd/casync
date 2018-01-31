@@ -681,10 +681,14 @@ static int ca_decoder_object_is_complete(const void *p, size_t size) {
 
         h = p;
         k = read_le64(&h->size);
-        if (k < sizeof(CaFormatHeader))
+        if (k < sizeof(CaFormatHeader)) {
+                log_debug("Object header too short");
                 return -EBADMSG;
-        if (k == UINT64_MAX)
+        }
+        if (k == UINT64_MAX) {
+                log_debug("Object header size invalid");
                 return -EBADMSG;
+        }
 
         return size >= k;
 }
@@ -1613,14 +1617,20 @@ static int ca_decoder_do_seek(CaDecoder *d, CaDecoderNode *n) {
                         return 0;
                 }
 
-                if (read_le64(&item->size) > read_le64(&item->offset))
+                if (read_le64(&item->size) > read_le64(&item->offset)) {
+                        log_debug("GOODBYE item size larger than offset");
                         return -EBADMSG;
+                }
 
-                if (read_le64(&item->offset) > n->goodbye_offset)
+                if (read_le64(&item->offset) > n->goodbye_offset) {
+                        log_debug("GOODBYE item offset larger than GOODBYE start offset");
                         return -EBADMSG;
+                }
                 so = n->goodbye_offset - read_le64(&item->offset);
-                if (so < n->entry_offset)
+                if (so < n->entry_offset) {
+                        log_debug("GOODBYE seek offset before entry offset");
                         return -EBADMSG;
+                }
 
                 d->seek_offset = so;
                 d->seek_end_offset = so + read_le64(&item->size);
@@ -1647,8 +1657,10 @@ static int ca_decoder_do_seek(CaDecoder *d, CaDecoderNode *n) {
 
                 /* We know the end of the whole shebang, jump to its last le64_t to read the goodbye object offset */
 
-                if (n->end_offset < sizeof(CaFormatGoodbyeTail))
+                if (n->end_offset < sizeof(CaFormatGoodbyeTail)) {
+                        log_debug("GOODBYE end offset shorter than tail.");
                         return -EBADMSG;
+                }
 
                 d->seek_offset = n->end_offset - sizeof(CaFormatGoodbyeTail);
                 d->seek_end_offset = n->end_offset;
