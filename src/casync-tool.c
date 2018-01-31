@@ -1697,6 +1697,14 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 uid_t uid = UID_INVALID;
                 gid_t gid = GID_INVALID;
                 dev_t rdev = (dev_t) -1;
+                unsigned flags = (unsigned) -1;
+                uint32_t fat_attrs = (uint32_t) -1;
+                uint64_t features;
+                size_t i;
+
+                r = ca_sync_get_feature_flags(s, &features);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to read feature flags: %m");
 
                 (void) ca_sync_current_target(s, &target);
                 (void) ca_sync_current_mtime(s, &mtime);
@@ -1706,6 +1714,8 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 (void) ca_sync_current_user(s, &user);
                 (void) ca_sync_current_group(s, &group);
                 (void) ca_sync_current_rdev(s, &rdev);
+                (void) ca_sync_current_chattr(s, &flags);
+                (void) ca_sync_current_fat_attrs(s, &fat_attrs);
 
                 fputs(empty_to_dot(escaped), stdout);
 
@@ -1764,6 +1774,43 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                                 return log_oom();
 
                         printf(" gname=%s", escaped);
+                }
+
+                if (features & (CA_FORMAT_WITH_FLAG_HIDDEN|CA_FORMAT_WITH_FLAG_SYSTEM|CA_FORMAT_WITH_FLAG_ARCHIVE|
+                                CA_FORMAT_WITH_FLAG_APPEND|CA_FORMAT_WITH_FLAG_NODUMP|CA_FORMAT_WITH_FLAG_IMMUTABLE)) {
+
+                        static const struct {
+                                uint64_t flag;
+                                const char *name;
+                        } table[] = {
+                                { CA_FORMAT_WITH_FLAG_HIDDEN,    "hidden"     },
+                                { CA_FORMAT_WITH_FLAG_SYSTEM,    "system"     },
+                                { CA_FORMAT_WITH_FLAG_ARCHIVE,   "archive"    },
+                                { CA_FORMAT_WITH_FLAG_APPEND,    "sappend"    },
+                                { CA_FORMAT_WITH_FLAG_NODUMP,    "nodump"     },
+                                { CA_FORMAT_WITH_FLAG_IMMUTABLE, "simmutable" },
+                        };
+
+                        const char *comma = "";
+
+                        printf(" flags=");
+
+                        for (i = 0; i < ELEMENTSOF(table); i++) {
+                                bool b;
+
+                                if ((features & table[i].flag) == 0)
+                                        continue;
+
+                                if (table[i].flag & CA_FORMAT_WITH_FAT_ATTRS)
+                                        b = fat_attrs & ca_feature_flags_to_fat_attrs(table[i].flag);
+                                else if (table[i].flag & CA_FORMAT_WITH_CHATTR)
+                                        b = flags & ca_feature_flags_to_chattr(table[i].flag);
+                                else
+                                        assert_not_reached("Flag table bogus");
+
+                                printf("%s%s%s", comma, b ? "" : "no", table[i].name);
+                                comma = ",";
+                        }
                 }
 
                 if (mtime != UINT64_MAX)
