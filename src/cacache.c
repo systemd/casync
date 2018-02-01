@@ -367,7 +367,7 @@ int ca_cache_put(CaCache *c, CaOrigin *origin, const CaChunkID *chunk_id) {
         if (r < 0)
                 return r;
 
-        fd = openat(c->fd, temp, O_CREAT|O_WRONLY|O_CLOEXEC|O_EXCL|O_NOFOLLOW|O_EXCL, 0666);
+        fd = openat(c->fd, temp, O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC|O_NOFOLLOW, 0666);
         if (fd < 0)
                 return -errno;
 
