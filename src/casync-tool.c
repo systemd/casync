@@ -849,6 +849,7 @@ static int verbose_print_done_make(CaSync *s) {
 
         r = ca_sync_get_covering_feature_flags(s, &covering);
         if (r != -ENODATA) {
+                _cleanup_free_ char *t = NULL;
                 uint64_t selected, too_much;
 
                 if (r < 0)
@@ -858,9 +859,15 @@ static int verbose_print_done_make(CaSync *s) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to determine used flags: %m");
 
+                r = ca_with_feature_flags_format(selected, &t);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to format feature flags: %m");
+
+                log_info("Selected feature flags: %s", strnone(t));
+
                 too_much = selected & ~covering;
                 if (too_much != 0) {
-                        _cleanup_free_ char *t = NULL;
+                        t = mfree(t);
 
                         r = ca_with_feature_flags_format(too_much, &t);
                         if (r < 0)
