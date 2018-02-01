@@ -129,7 +129,7 @@ int ca_location_copy(CaLocation *l, CaLocation **ret) {
         return 1;
 }
 
-const char* ca_location_format(CaLocation *l) {
+const char* ca_location_format_full(CaLocation *l, CaLocationWith with) {
         _cleanup_(realloc_buffer_free) ReallocBuffer buffer = {};
         int r;
 
@@ -138,7 +138,7 @@ const char* ca_location_format(CaLocation *l) {
 
         /* Here's how we format location strings:
          *
-         *     <path>+<designator><offset>[:<size>][@<inode>.<mtime>[.<generation>]][%<features>]
+         *     <path>+<designator><offset>[:<size>][@<inode>.<mtime>[.<generation>]][%<features>][#<archive-offset>][$<name-table>]
          *
          * == Mandatory
          *
@@ -148,28 +148,30 @@ const char* ca_location_format(CaLocation *l) {
          *
          * == Optional
          *
-         * size:       when known the size of the current data object we are serializing
-         * inode:      the inode number of the path to the file/directory we are serializing
-         * mtime:      the modification time in ns of the inode
-         * generation: when known the file's generation code
-         * features:   the feature mask used for encoding
+         * size:           when known the size of the current data object we are serializing
+         * inode:          the inode number of the path to the file/directory we are serializing
+         * mtime:          the modification time in ns of the inode
+         * generation:     when known the file's generation code
+         * features:       the feature mask used for encoding
+         * archive-offset: the current offset in the archive
+         * name-table:     the current name table, built up to the location
          *
          */
 
-        if (l->formatted)
+        if (l->formatted && l->formatted_with == with)
                 return l->formatted;
 
         r = realloc_buffer_printf(&buffer, "%s+%c%" PRIu64, strempty(l->path), (char) l->designator, l->offset);
         if (r < 0)
                 return NULL;
 
-        if (l->size != UINT64_MAX) {
+        if ((with & CA_LOCATION_WITH_SIZE) && l->size != UINT64_MAX) {
                 r = realloc_buffer_printf(&buffer, ":%" PRIu64, l->size);
                 if (r < 0)
                         return NULL;
         }
 
-        if (l->mtime != UINT64_MAX) {
+        if ((with & CA_LOCATION_WITH_MTIME) && l->mtime != UINT64_MAX) {
                 r = realloc_buffer_printf(&buffer, "@%" PRIu64 ".%" PRIu64, l->inode, l->mtime);
                 if (r < 0)
                         return NULL;
@@ -183,19 +185,40 @@ const char* ca_location_format(CaLocation *l) {
                 }
         }
 
-        if (l->feature_flags != UINT64_MAX) {
+        if ((with & CA_LOCATION_WITH_FEATURE_FLAGS) && l->feature_flags != UINT64_MAX) {
                 r = realloc_buffer_printf(&buffer, "%%%" PRIx64, l->feature_flags);
                 if (r < 0)
                         return NULL;
         }
 
+        if ((with & CA_LOCATION_WITH_ARCHIVE_OFFSET) && l->archive_offset != UINT64_MAX) {
+                r = realloc_buffer_printf(&buffer, "#%" PRIu64, l->archive_offset);
+                if (r < 0)
+                        return NULL;
+        }
+
+        if ((with & CA_LOCATION_WITH_NAME_TABLE) && l->name_table) {
+                if (!realloc_buffer_append_byte(&buffer, '$'))
+                        return NULL;
+
+                r = ca_name_table_format_realloc_buffer(l->name_table, &buffer);
+                if (r < 0)
+                        return NULL;
+        }
+
+        if (!realloc_buffer_append_byte(&buffer, 0))
+                return NULL;
+
+        free(l->formatted);
         l->formatted = realloc_buffer_steal(&buffer);
+        l->formatted_with = with;
 
         return l->formatted;
 }
 
 int ca_location_parse(const char *text, CaLocation **ret) {
-        uint64_t offset, size = UINT64_MAX, mtime = UINT64_MAX, inode = 0, features = UINT64_MAX;
+        uint64_t offset, size = UINT64_MAX, mtime = UINT64_MAX, inode = 0, features = UINT64_MAX, archive_offset = UINT64_MAX;
+        _cleanup_(ca_name_table_unrefp) CaNameTable *nt = NULL;
         const char *q, *c, *u;
         CaLocation *l;
         char *n;
@@ -216,6 +239,30 @@ int ca_location_parse(const char *text, CaLocation **ret) {
 
         if (!CA_LOCATION_DESIGNATOR_VALID(u[1]))
                 return -EINVAL;
+
+        /* The '$' suffix (name table) is optional) */
+        q = strchr(u+2, '$');
+        if (q) {
+                const char *x = q + 1;
+
+                r = ca_name_table_parse(&x, &nt);
+                if (r < 0)
+                        return r;
+
+                u = strndupa(u, q - u);
+        }
+
+        /* The '#' suffix (archive offset) is optional */
+        q = strchr(u+2, '#');
+        if (q) {
+                r = safe_atou64(q + 1, &archive_offset);
+                if (r < 0)
+                        return r;
+                if (archive_offset == UINT64_MAX)
+                        return -EINVAL;
+
+                u = strndupa(u, q - u);
+        }
 
         /* The '%' suffix (feature flags) is optional */
         q = strchr(u+2, '%');
@@ -321,6 +368,10 @@ int ca_location_parse(const char *text, CaLocation **ret) {
         l->generation = generation;
         l->generation_valid = generation_valid;
         l->feature_flags = features;
+        l->archive_offset = archive_offset;
+
+        l->name_table = nt;
+        nt = NULL;
 
         *ret = l;
         return 0;
@@ -588,7 +639,7 @@ int ca_location_id_make(CaDigest *digest, CaLocation *l, bool include_size, CaCh
         return 0;
 }
 
-bool ca_location_equal(CaLocation *a, CaLocation *b, bool compare_size) {
+bool ca_location_equal(CaLocation *a, CaLocation *b, CaLocationWith with) {
         if (a == b)
                 return true;
 
@@ -604,27 +655,34 @@ bool ca_location_equal(CaLocation *a, CaLocation *b, bool compare_size) {
         if (!streq(strempty(a->path), strempty(b->path)))
                 return false;
 
-        if (compare_size)
+        if (with & CA_LOCATION_WITH_SIZE)
                 if (a->size != b->size)
                         return false;
 
-        if (a->feature_flags != b->feature_flags)
-                return false;
-
-        if (a->mtime != b->mtime)
-                return false;
-
-        if (a->mtime != UINT64_MAX) {
-                if (a->inode != b->inode)
+        if (with & CA_LOCATION_WITH_MTIME) {
+                if (a->mtime != b->mtime)
                         return false;
 
-                if (a->generation_valid != b->generation_valid)
-                        return false;
-
-                if (a->generation_valid)
-                        if (a->generation != b->generation)
+                if (a->mtime != UINT64_MAX) {
+                        if (a->inode != b->inode)
                                 return false;
+
+                        if (a->generation_valid != b->generation_valid)
+                                return false;
+
+                        if (a->generation_valid)
+                                if (a->generation != b->generation)
+                                        return false;
+                }
         }
+
+        if (with & CA_LOCATION_WITH_FEATURE_FLAGS)
+                if (a->feature_flags != b->feature_flags)
+                        return false;
+
+        if (with & CA_LOCATION_WITH_NAME_TABLE)
+                if (!ca_name_table_equal(a->name_table, b->name_table))
+                        return false;
 
         return true;
 }

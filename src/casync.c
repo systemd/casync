@@ -1934,7 +1934,7 @@ static int ca_sync_step_encode(CaSync *s) {
                 assert_se(a = ca_origin_get(s->current_cache_origin, 0));
                 assert_se(b = ca_origin_get(s->buffer_origin, 0));
 
-                if (ca_location_equal(a, b, false)) {
+                if (ca_location_equal(a, b, CA_LOCATION_WITH_MTIME|CA_LOCATION_WITH_FEATURE_FLAGS)) {
                         uint64_t sz;
 
                         /* Yay, this location checked out. Let's advance both our buffer (and its origin), and the
@@ -2127,7 +2127,7 @@ static int ca_sync_step_encode(CaSync *s) {
 
                         assert_se(cached_location = ca_origin_get(s->current_cache_origin, 0));
 
-                        if (!ca_location_equal(location, cached_location, false)) {
+                        if (!ca_location_equal(location, cached_location, CA_LOCATION_WITH_MTIME|CA_LOCATION_WITH_FEATURE_FLAGS)) {
                                 /* We are not where we should be. Bummer. */
                                 log_debug("Cache item out of date, location didn't match (on encoder). %s != %s",
                                           ca_location_format(location), ca_location_format(cached_location));

@@ -276,7 +276,7 @@ int ca_cache_get(CaCache *c, CaLocation *location, CaChunkID *ret_chunk_id, CaOr
                 return -EINVAL;
 
         /* The first item of the origin must match our lookup key. If it doesn't something's bad. */
-        if (!ca_location_equal(location, ca_origin_get(origin, 0), false))
+        if (!ca_location_equal(location, ca_origin_get(origin, 0), CA_LOCATION_WITH_MTIME|CA_LOCATION_WITH_FEATURE_FLAGS))
                 return -EINVAL;
 
         if (ret_chunk_id)

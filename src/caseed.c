@@ -257,7 +257,7 @@ static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void
         if (r < 0)
                 return r;
 
-        t = ca_location_format(location);
+        t = ca_location_format_full(location, CA_LOCATION_WITH_ALL);
         if (!t)
                 return -ENOMEM;
 

@@ -112,10 +112,39 @@ int ca_name_table_add(CaNameTable **t, CaNameItem **ret) {
         return 0;
 }
 
+int ca_name_table_format_realloc_buffer(CaNameTable *t, ReallocBuffer *buffer) {
+        CaNameTable *p;
+        int r;
+
+        if (!t)
+                return -EINVAL;
+        if (!buffer)
+                return -EINVAL;
+
+        for (p = t; p; p = p->parent) {
+                size_t i;
+
+                r = realloc_buffer_printf(buffer, "O%" PRIx64, p->entry_offset);
+                if (r < 0)
+                        return r;
+
+                for (i = 0; i < p->n_items; i++) {
+                        CaNameItem *item;
+
+                        item = p->items + i;
+
+                        r = realloc_buffer_printf(buffer, "H%" PRIx64 "S%" PRIx64 "X%" PRIx64,
+                                                  item->hash, item->start_offset, item->end_offset);
+                        if (r < 0)
+                                return r;
+                }
+        }
+
+        return 0;
+}
+
 char* ca_name_table_format(CaNameTable *t) {
         _cleanup_(realloc_buffer_free) ReallocBuffer buffer = {};
-        CaNameTable *p;
-        char nul = 0;
         int r;
 
         if (!t)
@@ -124,26 +153,11 @@ char* ca_name_table_format(CaNameTable *t) {
         if (t->formatted)
                 return t->formatted;
 
-        for (p = t; p; p = p->parent) {
-                size_t i;
+        r = ca_name_table_format_realloc_buffer(t, &buffer);
+        if (r < 0)
+                return NULL;
 
-                r = realloc_buffer_printf(&buffer, "O%" PRIx64, p->entry_offset);
-                if (r < 0)
-                        return NULL;
-
-                for (i = 0; i < p->n_items; i++) {
-                        CaNameItem *item;
-
-                        item = p->items + i;
-
-                        r = realloc_buffer_printf(&buffer, "H%" PRIx64 "S%" PRIx64 "X%" PRIx64,
-                                                  item->hash, item->start_offset, item->end_offset);
-                        if (r < 0)
-                                return NULL;
-                }
-        }
-
-        if (!realloc_buffer_append(&buffer, &nul, sizeof(nul)))
+        if (!realloc_buffer_append_byte(&buffer, 0))
                 return NULL;
 
         t->formatted = realloc_buffer_steal(&buffer);
@@ -357,4 +371,38 @@ int ca_name_table_dump_recursive(FILE *f, CaNameTable *t) {
 
         fputs("TOP\n", f);
         return 0;
+}
+
+bool ca_name_table_equal(CaNameTable *a, CaNameTable *b) {
+        size_t i;
+
+        if (a == b)
+                return true;
+        if (!a || !b)
+                return false;
+
+        if (a->entry_offset != b->entry_offset)
+                return false;
+
+        if (ca_name_table_items(a) != ca_name_table_items(b))
+                return false;
+
+        for (i = 0; i < ca_name_table_items(a); i++) {
+                CaNameItem *x, *y;
+
+                x = ca_name_table_get(a, i);
+                y = ca_name_table_get(b, i);
+
+                assert(x);
+                assert(y);
+
+                if (x->hash != y->hash)
+                        return false;
+                if (x->start_offset != y->start_offset)
+                        return false;
+                if (x->end_offset != y->end_offset)
+                        return false;
+        }
+
+        return ca_name_table_equal(a->parent, b->parent);
 }
