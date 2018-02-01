@@ -1869,8 +1869,10 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return CA_DECODER_REQUEST;
 
                         x = validate_format_xattr(d, p);
-                        if (!x)
+                        if (!x) {
+                                log_debug("Invalid XATTR record.");
                                 return -EBADMSG;
+                        }
 
                         /* Check whether things are properly ordered */
                         if (n->xattrs_last && strcmp((char*) x->name_and_value, (char*) n->xattrs_last->format.name_and_value) <= 0)
