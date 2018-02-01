@@ -2535,10 +2535,11 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 size += offsetof(CaFormatGroup, name) +
                         strlen(e->cached_group_name) + 1;
 
-        for (i = 0; i < n->n_xattrs; i++)
-                size += offsetof(CaFormatXAttr, name_and_value) +
-                        strlen(n->xattrs[i].name) + 1 +
-                        n->xattrs[i].data_size;
+        if (e->feature_flags & CA_FORMAT_WITH_XATTRS)
+                for (i = 0; i < n->n_xattrs; i++)
+                        size += offsetof(CaFormatXAttr, name_and_value) +
+                                strlen(n->xattrs[i].name) + 1 +
+                                n->xattrs[i].data_size;
 
         size += ca_encoder_format_acl_user_size(n->acl_user, n->n_acl_user);
         size += ca_encoder_format_acl_group_size(n->acl_group, n->n_acl_group);
@@ -2558,7 +2559,7 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         if (n->selinux_label_valid && n->selinux_label)
                 size += offsetof(CaFormatSELinux, label) + strlen(n->selinux_label) + 1;
 
-        if (n->fcaps)
+        if (n->fcaps && (e->feature_flags & CA_FORMAT_WITH_FCAPS))
                 size += offsetof(CaFormatFCaps, data) + n->fcaps_size;
 
         if (n->quota_projid_valid && n->quota_projid != 0)
@@ -2611,17 +2612,19 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 p = stpcpy(p, e->cached_group_name) + 1;
         }
 
-        for (i = 0; i < n->n_xattrs; i++) {
-                CaFormatHeader header = {
-                        .type = htole64(CA_FORMAT_XATTR),
-                        .size = htole64(offsetof(CaFormatXAttr, name_and_value) +
-                                        strlen(n->xattrs[i].name) + 1 +
-                                        n->xattrs[i].data_size),
-                };
+        if (e->feature_flags & CA_FORMAT_WITH_XATTRS) {
+                for (i = 0; i < n->n_xattrs; i++) {
+                        CaFormatHeader header = {
+                                .type = htole64(CA_FORMAT_XATTR),
+                                .size = htole64(offsetof(CaFormatXAttr, name_and_value) +
+                                                strlen(n->xattrs[i].name) + 1 +
+                                                n->xattrs[i].data_size),
+                        };
 
-                p = mempcpy(p, &header, sizeof(header));
-                p = stpcpy(p, n->xattrs[i].name) + 1;
-                p = mempcpy(p, n->xattrs[i].data, n->xattrs[i].data_size);
+                        p = mempcpy(p, &header, sizeof(header));
+                        p = stpcpy(p, n->xattrs[i].name) + 1;
+                        p = mempcpy(p, n->xattrs[i].data, n->xattrs[i].data_size);
+                }
         }
 
         p = ca_encoder_format_acl_user_append(e, p, CA_FORMAT_ACL_USER, n->acl_user, n->n_acl_user);
@@ -2666,7 +2669,7 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 p = stpcpy(p, n->selinux_label) + 1;
         }
 
-        if (n->fcaps) {
+        if (n->fcaps && (e->feature_flags & CA_FORMAT_WITH_FCAPS)) {
                 CaFormatHeader header = {
                         .type = htole64(CA_FORMAT_FCAPS),
                         .size = htole64(offsetof(CaFormatFCaps, data) + n->fcaps_size),
