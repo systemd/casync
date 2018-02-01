@@ -243,6 +243,23 @@ int realloc_buffer_read_size(ReallocBuffer *b, int fd, size_t add) {
         return l > 0;
 }
 
+int realloc_buffer_read_full(ReallocBuffer *b, int fd, size_t limit) {
+        int r;
+
+        /* Reads from "fd" until EOF is hit, but never more than "limit" */
+
+        for (;;) {
+                if (limit != (size_t) -1 && realloc_buffer_size(b) > limit)
+                        return -E2BIG;
+
+                r = realloc_buffer_read(b, fd);
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        return 0;
+        }
+}
+
 int realloc_buffer_read_target(ReallocBuffer *b, int fd, size_t target_size) {
         int r;
 
@@ -391,4 +408,32 @@ int realloc_buffer_printf(ReallocBuffer *b, const char *fmt, ...) {
                 m = mm;
         }
 
+}
+
+int realloc_buffer_memchr(ReallocBuffer *buffer, uint8_t c) {
+        const uint8_t *p, *q;
+        size_t l, d;
+        int ret;
+
+        /* Looks for byte 'c' in the buffer. Returns -ENXIO when we can't find the byte. Returns an index >= 0 if
+         * found. Returns -EOVERFLOW if found but the index doesn't fit in "int" */
+
+        l = realloc_buffer_size(buffer);
+        if (l <= 0)
+                return -ENXIO;
+
+        p = realloc_buffer_data(buffer);
+        q = memchr(p, c, l);
+        if (!q)
+                return -ENXIO;
+
+        d = (size_t) (q - p);
+        ret = (int) d;
+
+        if (_unlikely_(ret < 0))
+                return -EOVERFLOW;
+        if (_unlikely_((size_t) ret != d))
+                return -EOVERFLOW;
+
+        return ret;
 }
