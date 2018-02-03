@@ -30,6 +30,8 @@ int ca_origin_put_void(CaOrigin *origin, uint64_t n_bytes);
 int ca_origin_advance_items(CaOrigin *origin, size_t n_drop);
 int ca_origin_advance_bytes(CaOrigin *origin, uint64_t n_bytes);
 
+int ca_origin_extract_bytes(CaOrigin *origin, uint64_t n_bytes, CaOrigin **ret);
+
 int ca_origin_dump(FILE *f, CaOrigin *origin);
 
 static inline size_t ca_origin_items(CaOrigin *origin) {
@@ -39,5 +41,7 @@ static inline size_t ca_origin_items(CaOrigin *origin) {
 static inline uint64_t ca_origin_bytes(CaOrigin *origin) {
         return origin ? origin->n_bytes : 0;
 }
+
+DEFINE_TRIVIAL_CLEANUP_FUNC(CaOrigin*, ca_origin_unref);
 
 #endif

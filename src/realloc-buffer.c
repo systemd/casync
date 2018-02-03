@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: LGPL-2.1+ */
 
 #include <assert.h>
+#include <stdarg.h>
 #include <unistd.h>
 
 #include "def.h"
@@ -216,7 +217,7 @@ int realloc_buffer_truncate(ReallocBuffer *b, size_t sz) {
         return 0;
 }
 
-int realloc_buffer_read(ReallocBuffer *b, int fd) {
+int realloc_buffer_read_size(ReallocBuffer *b, int fd, size_t add) {
         ssize_t l;
         void *p;
 
@@ -225,18 +226,46 @@ int realloc_buffer_read(ReallocBuffer *b, int fd) {
         if (fd < 0)
                 return -EINVAL;
 
-        p = realloc_buffer_extend(b, BUFFER_SIZE);
+        if (add == (size_t) -1 || add < BUFFER_SIZE)
+                add = BUFFER_SIZE;
+
+        p = realloc_buffer_extend(b, add);
         if (!p)
                 return -ENOMEM;
 
-        l = read(fd, p, BUFFER_SIZE);
+        l = read(fd, p, add);
         if (l < 0) {
-                realloc_buffer_shorten(b, BUFFER_SIZE);
+                realloc_buffer_shorten(b, add);
                 return -errno;
         }
 
-        realloc_buffer_shorten(b, BUFFER_SIZE - l);
+        realloc_buffer_shorten(b, add - l);
         return l > 0;
+}
+
+int realloc_buffer_read_target(ReallocBuffer *b, int fd, size_t target_size) {
+        int r;
+
+        if (!b)
+                return -EINVAL;
+
+        /* Reads data from the specified fd until the buffer contains at least target_size bytes. Returns > 0 if the
+         * size is reached, 0 if not (due to EOF) */
+
+        for (;;) {
+                size_t c;
+
+                c = realloc_buffer_size(b);
+                if (c >= target_size)
+                        return 1;
+
+                r = realloc_buffer_read_size(b, fd, target_size - c);
+                if (r < 0)
+                        return r;
+
+                if (r == 0)
+                        return 0;
+        }
 }
 
 void* realloc_buffer_steal(ReallocBuffer *b) {
@@ -259,4 +288,107 @@ void* realloc_buffer_steal(ReallocBuffer *b) {
         b->start = b->end = b->allocated = 0;
 
         return p;
+}
+
+void* realloc_buffer_donate(ReallocBuffer *b, void *p, size_t size) {
+        if (!b)
+                return NULL;
+
+        if (realloc_buffer_size(b) > 0) {
+                void *ret;
+
+                ret = realloc_buffer_append(b, p, size);
+                if (!ret)
+                        return NULL;
+
+                free(p);
+                return ret;
+        }
+
+        free(b->data);
+        b->data = p;
+        b->start = 0;
+        b->allocated = b->end = size;
+
+        return p;
+}
+
+int realloc_buffer_write(ReallocBuffer *b, int fd) {
+        size_t done = 0;
+        int r;
+
+        if (!b)
+                return -EINVAL;
+        if (fd < 0)
+                return -EINVAL;
+
+        for (;;) {
+                size_t l;
+                ssize_t n;
+
+                l = realloc_buffer_size(b);
+                if (l <= 0)
+                        return done > 0;
+
+                n = write(fd, realloc_buffer_data(b), l);
+                if (n < 0)
+                        return -errno;
+
+                r = realloc_buffer_advance(b, (size_t) n);
+                if (r < 0)
+                        return r;
+
+                done += (size_t) n;
+        }
+}
+
+int realloc_buffer_write_maybe(ReallocBuffer *b, int fd) {
+
+        if (!b)
+                return -EINVAL;
+
+        /* Much like realloc_buffer_write(), but only write things if we collected a certain amount of data */
+
+        if (realloc_buffer_size(b) < BUFFER_SIZE)
+                return 0;
+
+        return realloc_buffer_write(b, fd);
+}
+
+int realloc_buffer_printf(ReallocBuffer *b, const char *fmt, ...) {
+        va_list ap;
+        size_t m = 64;
+
+        if (!b)
+                return -EINVAL;
+        if (!fmt)
+                return -EINVAL;
+
+        for (;;) {
+                size_t mm;
+                void *p;
+                int n;
+
+                p = realloc_buffer_extend(b, m);
+                if (!p)
+                        return -ENOMEM;
+
+                va_start(ap, fmt);
+                n = vsnprintf(p, m, fmt, ap);
+                va_end(ap);
+
+                if (n < (int) m) {
+                        realloc_buffer_shorten(b, m - n);
+                        return 0;
+                }
+
+                realloc_buffer_shorten(b, m);
+
+                mm = 2 * m;
+                if (mm < m)
+                        return -EOVERFLOW;
+
+                m = mm;
+        }
+
 }

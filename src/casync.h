@@ -88,6 +88,10 @@ int ca_sync_add_store_auto(CaSync *sync, const char *locator);
 int ca_sync_add_seed_fd(CaSync *sync, int fd);
 int ca_sync_add_seed_path(CaSync *sync, const char *path);
 
+/* Path to use as cache */
+int ca_sync_set_cache_fd(CaSync *sync, int fd);
+int ca_sync_set_cache_path(CaSync *sync, const char *path);
+
 int ca_sync_step(CaSync *sync);
 int ca_sync_poll(CaSync *s, uint64_t timeout_nsec, const sigset_t *ss);
 
@@ -151,5 +155,10 @@ int ca_sync_get_local_requests(CaSync *s, uint64_t *ret);
 int ca_sync_get_local_request_bytes(CaSync *s, uint64_t *ret);
 int ca_sync_get_remote_requests(CaSync *s, uint64_t *ret);
 int ca_sync_get_remote_request_bytes(CaSync *s, uint64_t *ret);
+
+int ca_sync_current_cache_hits(CaSync *s, uint64_t *ret);
+int ca_sync_current_cache_misses(CaSync *s, uint64_t *ret);
+int ca_sync_current_cache_invalidated(CaSync *s, uint64_t *ret);
+int ca_sync_current_cache_added(CaSync *s, uint64_t *ret);
 
 #endif

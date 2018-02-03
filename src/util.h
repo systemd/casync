@@ -21,6 +21,7 @@
 #include <linux/fs.h>
 #include <linux/btrfs.h>
 
+#include "gcc-macro.h"
 #include "log.h"
 
 #define new(t, n) ((t*) malloc((n) * sizeof(t)))
@@ -202,20 +203,6 @@ static inline uint64_t random_u64(void) {
 
 #define random_bytes(p, n) dev_urandom(p, n);
 
-#define _sentinel_ __attribute__ ((sentinel))
-#define _unused_ __attribute__ ((unused))
-#define _likely_(x) (__builtin_expect(!!(x),1))
-#define _unlikely_(x) (__builtin_expect(!!(x),0))
-#define _malloc_ __attribute__ ((malloc))
-#define _pure_ __attribute__ ((pure))
-#define _packed_ __attribute__ ((packed))
-#define _const_ __attribute__ ((const))
-#ifdef __clang__
-#  define _alloc_(...)
-#else
-#  define _alloc_(...) __attribute__ ((alloc_size(__VA_ARGS__)))
-#endif
-
 #define assert_cc(expr) static_assert(expr, #expr);
 
 #define CASE_F(X) case X:
@@ -316,6 +303,7 @@ int safe_atoi(const char *s, int *ret_i);
 
 int safe_atou(const char *s, unsigned *ret_u);
 int safe_atollu(const char *s, unsigned long long *ret_u);
+int safe_atollx(const char *s, unsigned long long *ret_u);
 
 static inline int safe_atou64(const char *s, uint64_t *ret_u) {
         return safe_atollu(s, (unsigned long long*) ret_u);
@@ -323,6 +311,10 @@ static inline int safe_atou64(const char *s, uint64_t *ret_u) {
 
 static inline int safe_atou32(const char *s, uint32_t *ret_u) {
         return safe_atou(s, (unsigned*) ret_u);
+}
+
+static inline int safe_atox64(const char *s, uint64_t *ret_u) {
+        return safe_atollx(s, (unsigned long long*) ret_u);
 }
 
 int readlinkat_malloc(int fd, const char *p, char **ret);
@@ -448,6 +440,7 @@ static inline int parse_gid(const char *s, gid_t *ret_gid) {
 #define ALPHABET_UPPER "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 #define ALPHABET ALPHABET_LOWER ALPHABET_UPPER
 #define DIGITS "0123456789"
+#define HEXDIGITS DIGITS "ABCDEF" "abcdef"
 
 /* This is a bit more restricted than RFC3986 */
 #define URL_PROTOCOL_FIRST ALPHABET_LOWER
@@ -765,7 +758,8 @@ int is_dir(const char* path, bool follow);
 
 #define DEFINE_TRIVIAL_CLEANUP_FUNC(type, func)                 \
         static inline void func##p(type *p) {                   \
-                func(*p);                                       \
+                if (*p)                                         \
+                        func(*p);                               \
         }                                                       \
         struct __useless_struct_to_allow_trailing_semicolon__
 
@@ -774,5 +768,21 @@ static inline void freep(void *p) {
 }
 
 #define _cleanup_free_ _cleanup_(freep)
+
+static inline void unlink_and_free(char *p) {
+        int saved_errno;
+
+        if (!p)
+                return;
+
+        saved_errno = errno;
+        (void) unlink(p);
+        errno = saved_errno;
+
+        free(p);
+}
+DEFINE_TRIVIAL_CLEANUP_FUNC(char*, unlink_and_free);
+
+int free_and_strdup(char **p, const char *s);
 
 #endif

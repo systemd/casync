@@ -806,8 +806,31 @@ int safe_atollu(const char *s, long long unsigned *ret_llu) {
         return 0;
 }
 
+int safe_atollx(const char *s, long long unsigned *ret_llu) {
+        char *x = NULL;
+        unsigned long long l;
+
+        assert(s);
+
+        s += strspn(s, WHITESPACE);
+
+        errno = 0;
+        l = strtoull(s, &x, 16);
+        if (errno > 0)
+                return -errno;
+        if (!x || x == s || *x != 0)
+                return -EINVAL;
+        if (*s == '-')
+                return -ERANGE;
+
+        if (ret_llu)
+                *ret_llu = l;
+
+        return 0;
+}
+
 int readlinkat_malloc(int fd, const char *p, char **ret) {
-        size_t l = 100;
+        size_t l = 256;
         int r;
 
         assert(p);
@@ -1406,4 +1429,27 @@ int is_dir(const char* path, bool follow) {
                 return -errno;
 
         return !!S_ISDIR(st.st_mode);
+}
+
+int free_and_strdup(char **p, const char *s) {
+        char *t;
+
+        assert(p);
+
+        /* Replaces a string pointer with an strdup()ed new string, possibly freeing the old one. */
+
+        if (streq_ptr(*p, s))
+                return 0;
+
+        if (s) {
+                t = strdup(s);
+                if (!t)
+                        return -ENOMEM;
+        } else
+                t = NULL;
+
+        free(*p);
+        *p = t;
+
+        return 1;
 }

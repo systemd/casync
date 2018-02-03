@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: LGPL-2.1+
 
-log_sources = files('''
+util_sources = files('''
         log.c
         log.h
+        util.c
+        util.h
 '''.split())
 
 libshared_sources = files('''
+        cacache.c
+        cacache.h
         cachunk.c
         cachunk.h
         cachunker.c
@@ -32,6 +36,8 @@ libshared_sources = files('''
         calocation.h
         camakebst.c
         camakebst.h
+        canametable.c
+        canametable.h
         canbd.c
         canbd.h
         caorigin.c
@@ -60,6 +66,7 @@ libshared_sources = files('''
         fssize.h
         gc.c
         gc.h
+        gcc-macro.h
         hash-funcs.c
         hash-funcs.h
         hashmap.c
@@ -79,14 +86,12 @@ libshared_sources = files('''
         set.h
         siphash24.c
         siphash24.h
-        util.c
-        util.h
 '''.split())
 
 libshared = static_library(
               'shared',
               libshared_sources,
-              log_sources)
+              util_sources)
 
 casync_sources = files('''
         casync-tool.c

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: LGPL-2.1+ */
 
-#include "util.h"
 #include "cacompression.h"
+#include "util.h"
 
 static const char* const table[_CA_COMPRESSION_TYPE_MAX] = {
         [CA_COMPRESSION_XZ] = "xz",

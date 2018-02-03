@@ -58,6 +58,8 @@ int ca_origin_put(CaOrigin *origin, CaLocation *location) {
                 return -EINVAL;
 
         if (origin->n_items == 0) {
+                assert(origin->n_bytes == 0);
+
                 origin->first = ca_location_ref(location);
                 origin->n_items = 1;
                 origin->n_bytes = location->size;
@@ -257,7 +259,7 @@ int ca_origin_dump(FILE *f, CaOrigin *origin) {
         if (!f)
                 f = stderr;
 
-        for (i = 0; i < origin->n_items; i++) {
+        for (i = 0; i < ca_origin_items(origin); i++) {
                 const char *c;
 
                 c = ca_location_format(ca_origin_get(origin, i));
@@ -316,6 +318,29 @@ int ca_origin_put_void(CaOrigin *origin, uint64_t n_bytes) {
                 return r;
 
         origin->n_bytes += n_bytes;
+
+        return 0;
+}
+
+int ca_origin_extract_bytes(CaOrigin *origin, uint64_t n_bytes, CaOrigin **ret) {
+        _cleanup_(ca_origin_unrefp) CaOrigin *t = NULL;
+        int r;
+
+        if (n_bytes == 0) {
+                *ret = NULL;
+                return 0;
+        }
+
+        r = ca_origin_new(&t);
+        if (r < 0)
+                return r;
+
+        r = ca_origin_concat(t, origin, n_bytes);
+        if (r < 0)
+                return r;
+
+        *ret = t;
+        t = NULL;
 
         return 0;
 }

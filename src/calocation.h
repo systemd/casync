@@ -6,7 +6,10 @@
 #include <inttypes.h>
 #include <stdbool.h>
 
+#include "cachunkid.h"
+#include "cadigest.h"
 #include "cafileroot.h"
+#include "canametable.h"
 #include "util.h"
 
 /* Describes the location of some data in a directory hierarchy. This is useful for cache management (i.e. remember
@@ -34,20 +37,41 @@ static inline bool CA_LOCATION_DESIGNATOR_VALID(CaLocationDesignator d) {
  * once. When we change it we make copies. */
 typedef struct CaLocation {
         unsigned n_ref;
+
+        /* The following three fields are unconditionally part of the location */
         CaLocationDesignator designator;
         char *path;
         uint64_t offset;
-        uint64_t size; /* if unspecified, may be UINT64_MAX */
+
+        /* The following two fields are optional */
+        uint64_t size; /* if unspecified UINT64_MAX */
+        CaFileRoot *root; /* if unspecified NULL */
+
+        /* The following is used to detect file changes, and are optional too */
+        uint64_t mtime;
+        uint64_t inode; /* only set if mtime is != UINT64_MAX */
+        int generation; /* only valid if generation_valid is true */
+        bool generation_valid;
+
+        /* The following encodes the file name tables so far built of for this node and all its parents, and is
+         * optional (in which case it is NULL) */
+        CaNameTable *name_table;
+
+        /* The archive offset at this location, if that's useful (if unspecified is UINT64_MAX) */
+        uint64_t archive_offset;
+
+        /* The formatted version of this location, if requested before */
         char *formatted;
-        CaFileRoot *root;
 } CaLocation;
 
 int ca_location_new(const char *path, CaLocationDesignator designator, uint64_t offset, uint64_t size, CaLocation **ret);
-
 #define ca_location_new_void(size, ret) ca_location_new(NULL, CA_LOCATION_VOID, 0, size, ret)
+int ca_location_copy(CaLocation *l, CaLocation **ret);
 
 CaLocation* ca_location_unref(CaLocation *l);
 CaLocation* ca_location_ref(CaLocation *l);
+
+DEFINE_TRIVIAL_CLEANUP_FUNC(CaLocation*, ca_location_unref);
 
 const char* ca_location_format(CaLocation *l);
 
@@ -61,5 +85,9 @@ int ca_location_advance(CaLocation **l, uint64_t n_bytes);
 int ca_location_merge(CaLocation **a, CaLocation *b);
 
 int ca_location_open(CaLocation *l);
+
+int ca_location_id_make(CaDigest *digest, CaLocation *l, bool include_size, CaChunkID *ret);
+
+bool ca_location_equal(CaLocation *a, CaLocation *b, bool compare_size);
 
 #endif

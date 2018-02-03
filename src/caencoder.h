@@ -39,7 +39,7 @@ int ca_encoder_get_base_fd(CaEncoder *e);
 int ca_encoder_step(CaEncoder *e);
 
 /* Output: archive stream data */
-int ca_encoder_get_data(CaEncoder *e, const void **ret, size_t *ret_size);
+int ca_encoder_get_data(CaEncoder *e, uint64_t suggested_size, const void **ret, size_t *ret_size);
 
 int ca_encoder_current_path(CaEncoder *e, char **ret);
 int ca_encoder_current_mode(CaEncoder *d, mode_t *ret);

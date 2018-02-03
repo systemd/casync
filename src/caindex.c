@@ -1089,6 +1089,8 @@ int ca_index_seek(CaIndex *i, uint64_t offset, uint64_t *ret_skip) {
                 if (r < 0)
                         return r;
 
+                i->previous_chunk_offset = first_chunk_end;
+
                 if (ret_skip)
                         *ret_skip = offset - first_chunk_end;
 

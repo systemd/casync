@@ -33,6 +33,7 @@ c_args = '''
         -Werror=return-type
         -Werror=incompatible-pointer-types
         -Werror=shadow
+        -Werror=int-conversion
         -Wstrict-prototypes
         -Wredundant-decls
         -Wmissing-noreturn
@@ -270,6 +271,14 @@ test_fuse_sh = configure_file(
         configuration : substs)
 test_fuse = find_program(test_fuse_sh)
 test('test-fuse.sh', test_fuse,
+     timeout : 30 * 60)
+
+test_cache_sh = configure_file(
+        output : 'test-cache.sh',
+        input : 'test/test-cache.sh.in',
+        configuration : substs)
+test_cache = find_program(test_cache_sh)
+test('test-cache.sh', test_cache,
      timeout : 30 * 60)
 
 udev_rule = configure_file(

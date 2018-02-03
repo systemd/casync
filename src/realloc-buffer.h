@@ -66,8 +66,21 @@ int realloc_buffer_advance(ReallocBuffer *b, size_t sz);
 int realloc_buffer_shorten(ReallocBuffer *b, size_t sz);
 int realloc_buffer_truncate(ReallocBuffer *b, size_t sz);
 
-int realloc_buffer_read(ReallocBuffer *b, int fd);
+int realloc_buffer_read_size(ReallocBuffer *b, int fd, size_t add);
+
+static inline int realloc_buffer_read(ReallocBuffer *b, int fd) {
+        return realloc_buffer_read_size(b, fd, (size_t) -1);
+}
+
+int realloc_buffer_write(ReallocBuffer *b, int fd);
+int realloc_buffer_write_maybe(ReallocBuffer *b, int fd);
+
+int realloc_buffer_read_target(ReallocBuffer *b, int fd, size_t target_size);
 
 void* realloc_buffer_steal(ReallocBuffer *b);
+
+void* realloc_buffer_donate(ReallocBuffer *b, void *p, size_t size);
+
+int realloc_buffer_printf(ReallocBuffer *b, const char *fmt, ...) _printf_(2,3);
 
 #endif
