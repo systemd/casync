@@ -140,6 +140,18 @@ static inline void safe_close_nonstdp(int *fd) {
         safe_close_above(STDERR_FILENO, *fd);
 }
 
+static inline FILE *safe_fclose(FILE *f) {
+        if (f)
+                fclose(f);
+
+        return NULL;
+}
+
+static inline void safe_fclosep(FILE **f) {
+        if (f && *f)
+                fclose(*f);
+}
+
 typedef uint16_t le16_t;
 typedef uint32_t le32_t;
 typedef uint64_t le64_t;
@@ -806,5 +818,12 @@ int free_and_strdup(char **p, const char *s);
  * to cover them all to some degree and be somewhat safe for the future too. */
 #define ERRNO_IS_UNSUPPORTED(error) \
         IN_SET(error, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL)
+
+#define LARGE_LINE_MAX (64U*1024U)
+
+int read_line(FILE *f, size_t limit, char **ret);
+
+char *delete_trailing_chars(char *s, const char *bad);
+char *strstrip(char *s);
 
 #endif

@@ -1464,3 +1464,103 @@ int free_and_strdup(char **p, const char *s) {
 
         return 1;
 }
+
+DEFINE_TRIVIAL_CLEANUP_FUNC(FILE*, funlockfile);
+
+int read_line(FILE *f, size_t limit, char **ret) {
+        _cleanup_free_ char *buffer = NULL;
+        size_t n = 0, allocated = 0, count = 0;
+
+        assert(f);
+
+        /* Something like a bounded version of getline().
+         *
+         * Considers EOF, \n and \0 end of line delimiters, and does not include these delimiters in the string
+         * returned.
+         *
+         * Returns the number of bytes read from the files (i.e. including delimiters — this hence usually differs from
+         * the number of characters in the returned string). When EOF is hit, 0 is returned.
+         *
+         * The input parameter limit is the maximum numbers of characters in the returned string, i.e. excluding
+         * delimiters. If the limit is hit we fail and return -ENOBUFS.
+         *
+         * If a line shall be skipped ret may be initialized as NULL. */
+
+        if (ret) {
+                if (!GREEDY_REALLOC(buffer, allocated, 1))
+                        return -ENOMEM;
+        }
+
+        {
+                _unused_ _cleanup_(funlockfilep) FILE *flocked = f;
+                flockfile(f);
+
+                for (;;) {
+                        int c;
+
+                        if (n >= limit)
+                                return -ENOBUFS;
+
+                        errno = 0;
+                        c = fgetc_unlocked(f);
+                        if (c == EOF) {
+                                /* if we read an error, and have no data to return, then propagate the error */
+                                if (ferror_unlocked(f) && n == 0)
+                                        return errno > 0 ? -errno : -EIO;
+
+                                break;
+                        }
+
+                        count++;
+
+                        if (IN_SET(c, '\n', 0)) /* Reached a delimiter */
+                                break;
+
+                        if (ret) {
+                                if (!GREEDY_REALLOC(buffer, allocated, n + 2))
+                                        return -ENOMEM;
+
+                                buffer[n] = (char) c;
+                        }
+
+                        n++;
+                }
+        }
+
+        if (ret) {
+                buffer[n] = 0;
+
+                *ret = buffer;
+                buffer = NULL;
+        }
+
+        return (int) count;
+}
+
+char *delete_trailing_chars(char *s, const char *bad) {
+        char *p, *c = s;
+
+        /* Drops all specified bad characters, at the end of the string */
+
+        if (!s)
+                return NULL;
+
+        if (!bad)
+                bad = WHITESPACE;
+
+        for (p = s; *p; p++)
+                if (!strchr(bad, *p))
+                        c = p + 1;
+
+        *c = 0;
+
+        return s;
+}
+
+char *strstrip(char *s) {
+        if (!s)
+                return NULL;
+
+        delete_trailing_chars(s, WHITESPACE);
+        return s + strspn(s, WHITESPACE);
+}
