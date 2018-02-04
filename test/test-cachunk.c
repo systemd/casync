@@ -4,7 +4,6 @@
 
 #include "cachunk.h"
 #include "def.h"
-/* #include "util.h" */
 
 static void test_chunk_file(void) {
         uint8_t buffer[BUFFER_SIZE*4];
