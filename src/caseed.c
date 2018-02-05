@@ -11,6 +11,7 @@
 #include "caformat.h"
 #include "calocation.h"
 #include "caseed.h"
+#include "def.h"
 #include "realloc-buffer.h"
 #include "rm-rf.h"
 #include "util.h"
@@ -63,7 +64,7 @@ CaSeed *ca_seed_new(void) {
 
         s->chunker = (CaChunker) CA_CHUNKER_INIT;
 
-        assert_se(ca_feature_flags_normalize(CA_FORMAT_DEFAULT, &s->feature_flags) >= 0);
+        s->feature_flags = CA_FORMAT_DEFAULT & SUPPORTED_FEATURE_MASK;
 
         return s;
 }

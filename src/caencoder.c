@@ -223,7 +223,7 @@ CaEncoder *ca_encoder_new(void) {
         if (!e)
                 return NULL;
 
-        assert_se(ca_feature_flags_normalize(CA_FORMAT_DEFAULT, &e->feature_flags) >= 0);
+        e->feature_flags = CA_FORMAT_DEFAULT & SUPPORTED_FEATURE_MASK;
         e->time_granularity = 1;
 
         return e;

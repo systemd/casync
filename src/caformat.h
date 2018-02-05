@@ -154,9 +154,7 @@ enum {
                 CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_XATTRS|
                 CA_FORMAT_WITH_ACL|
-#if HAVE_SELINUX
                 CA_FORMAT_WITH_SELINUX|
-#endif
                 CA_FORMAT_WITH_FCAPS|
                 CA_FORMAT_WITH_QUOTA_PROJID,
 
@@ -204,9 +202,7 @@ enum {
                 CA_FORMAT_WITH_SUBVOLUME|
                 CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_ACL|
-#if HAVE_SELINUX
                 CA_FORMAT_WITH_SELINUX|
-#endif
                 CA_FORMAT_WITH_FCAPS|
                 CA_FORMAT_WITH_QUOTA_PROJID,
 
@@ -258,9 +254,7 @@ enum {
                 CA_FORMAT_WITH_SUBVOLUME_RO|
                 CA_FORMAT_WITH_XATTRS|
                 CA_FORMAT_WITH_ACL|
-#if HAVE_SELINUX
                 CA_FORMAT_WITH_SELINUX|
-#endif
                 CA_FORMAT_WITH_FCAPS|
                 CA_FORMAT_WITH_QUOTA_PROJID,
 

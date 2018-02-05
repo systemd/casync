@@ -22,6 +22,7 @@
 #include "caremote.h"
 #include "castore.h"
 #include "casync.h"
+#include "def.h"
 #include "gc.h"
 #include "notify.h"
 #include "parse-util.h"
@@ -299,7 +300,7 @@ static int dump_with_flags(void) {
                 _cleanup_free_ char *s = NULL;
                 uint64_t flag = UINT64_C(1) << i;
 
-                if (!(flag & CA_FORMAT_WITH_MASK))
+                if (!(flag & SUPPORTED_WITH_MASK))
                         continue;
 
                 r = ca_with_feature_flags_format(flag, &s);
@@ -1268,7 +1269,7 @@ static int verb_make(int argc, char *argv[]) {
                         return log_error_errno(r, "Failed to set store: %m");
         }
 
-        r = load_feature_flags(s, operation == MAKE_BLOB_INDEX ? 0 : CA_FORMAT_WITH_MASK);
+        r = load_feature_flags(s, operation == MAKE_BLOB_INDEX ? 0 : SUPPORTED_WITH_MASK);
         if (r < 0)
                 return r;
 
@@ -1583,7 +1584,7 @@ static int verb_extract(int argc, char *argv[]) {
         if (r < 0)
                 return r;
 
-        r = load_feature_flags(s, CA_FORMAT_WITH_MASK);
+        r = load_feature_flags(s, SUPPORTED_WITH_MASK);
         if (r < 0)
                 return r;
 
@@ -2191,7 +2192,7 @@ static int verb_list(int argc, char *argv[]) {
         if (r < 0)
                 return r;
 
-        r = load_feature_flags(s, CA_FORMAT_WITH_MASK);
+        r = load_feature_flags(s, SUPPORTED_WITH_MASK);
         if (r < 0)
                 return r;
 
@@ -2500,7 +2501,7 @@ static int verb_digest(int argc, char *argv[]) {
         if (r < 0)
                 return r;
 
-        r = load_feature_flags(s, IN_SET(operation, DIGEST_BLOB, DIGEST_BLOB_INDEX) ? 0 : CA_FORMAT_WITH_MASK);
+        r = load_feature_flags(s, IN_SET(operation, DIGEST_BLOB, DIGEST_BLOB_INDEX) ? 0 : SUPPORTED_WITH_MASK);
         if (r < 0)
                 return r;
 
