@@ -335,7 +335,7 @@ int ca_cache_put(CaCache *c, CaOrigin *origin, const CaChunkID *chunk_id) {
                 const char *f;
                 char *p;
 
-                /* If there's only a single item, then let's try to create this as symlink, is it is the cheapest
+                /* If there's only a single item, then let's try to create this as symlink, it is the cheapest
                  * option */
 
                 f = ca_location_format(first_location);

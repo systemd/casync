@@ -4006,7 +4006,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 /* If we have restored the time validate it after all uses, since the backing file system might not
                  * provide the granularity we need, but we shouldn't permit that since we care about
-                 * reproducability. */
+                 * reproducibility. */
 
                 if (child->fd >= 0)
                         r = fstat(child->fd, &st);
