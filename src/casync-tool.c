@@ -289,6 +289,29 @@ static int parse_what_selector(const char *arg, enum arg_what *what) {
         return 1;
 }
 
+static int dump_with_flags(void) {
+        uint64_t i;
+        int r;
+
+        puts("Supported --with= and --without= flags:");
+
+        for (i = 0; i < sizeof(uint64_t)*8; i++) {
+                _cleanup_free_ char *s = NULL;
+                uint64_t flag = UINT64_C(1) << i;
+
+                if (!(flag & CA_FORMAT_WITH_MASK))
+                        continue;
+
+                r = ca_with_feature_flags_format(flag, &s);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to convert feature flag to string: %m");
+
+                puts(s);
+        }
+
+        return 0;
+}
+
 static int parse_argv(int argc, char *argv[]) {
 
         enum {
@@ -438,6 +461,9 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_WITH: {
                         uint64_t u;
 
+                        if (streq(optarg, "help"))
+                                return dump_with_flags();
+
                         r = ca_with_feature_flags_parse_one(optarg, &u);
                         if (r < 0) {
                                 log_error("Failed to parse --with= feature flag: %s", optarg);
@@ -450,6 +476,9 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_WITHOUT: {
                         uint64_t u;
+
+                        if (streq(optarg, "help"))
+                                return dump_with_flags();
 
                         r = ca_with_feature_flags_parse_one(optarg, &u);
                         if (r < 0) {
