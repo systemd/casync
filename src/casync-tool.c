@@ -465,20 +465,16 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_EXCLUDE_NODUMP:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                log_error("Failed to parse --exclude-nodump= parameter: %s", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --exclude-nodump= parameter: %s", optarg);
 
                         arg_exclude_nodump = r;
                         break;
 
                 case ARG_EXCLUDE_SUBMOUNTS:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                log_error("Failed to parse --exclude-submounts= parameter: %s", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --exclude-submounts= parameter: %s", optarg);
 
                         arg_exclude_submounts = r;
                         break;
