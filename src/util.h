@@ -12,15 +12,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/vfs.h>
 #include <sys/types.h>
+#include <sys/vfs.h>
 #include <time.h>
 #include <unistd.h>
 
+#include <linux/btrfs.h>
+#include <linux/fs.h>
 #include <linux/magic.h>
 #include <linux/types.h>
-#include <linux/fs.h>
-#include <linux/btrfs.h>
 
 #include "gcc-macro.h"
 #include "log.h"
