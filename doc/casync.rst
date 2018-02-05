@@ -159,9 +159,12 @@ General options:
 --digest=<DIGEST>               Pick digest algorithm (sha512-256 or sha256)
 --compression=<COMPRESSION>     Pick compression algorithm (zstd, xz or gzip)
 --seed=<PATH>                   Additional file or directory to use as seed
+--cache=<PATH>                  Directory to use as encoder cache
+--cache-auto, -c                Pick encoder cache directory automatically
 --rate-limit-bps=<LIMIT>        Maximum bandwidth in bytes/s for remote communication
 --exclude-nodump=no             Don't exclude files with chattr(1)'s +d **nodump** flag when creating archive
 --exclude-submounts=yes         Exclude submounts when creating archive
+--exclude-file=no               Don't respect .caexclude files in the file tree
 --reflink=no                    Don't create reflinks from seeds when extracting
 --hardlink=yes                  Create hardlinks from seeds when extracting
 --punch-holes=no                Don't create sparse files when extracting
@@ -169,6 +172,7 @@ General options:
 --undo-immutable=yes            When removing existing files, undo chattr(1)'s +i 'immutable' flag when extracting
 --seed-output=no                Don't implicitly add pre-existing output as seed when extracting
 --recursive=no                  List non-recursively
+--mkdir=no                      Don't automatically create mount directory if it is missing
 --uid-shift=<yes|SHIFT>         Shift UIDs/GIDs
 --uid-range=<RANGE>             Restrict UIDs/GIDs to range
 
@@ -232,6 +236,7 @@ Individual archive features:
 --with=<acl>               Store file access control lists
 --with=<selinux>           Store SElinux file labels
 --with=<fcaps>             Store file capabilities
+--with=<quota-projid>      Store ext4/XFS quota project ID
 
 (and similar: ``--without=16bit-uids``, ``--without=32bit-uids``, ...)
 
@@ -241,3 +246,47 @@ Archive features
 The various ``--with=`` and ``--without=`` parameters control the precise set
 of metadata to store in the archive, or restore when extracting. These flags
 only apply if ``casync`` operates on the file system level.
+
+Excluding Files and Directories from Archiving
+----------------------------------------------
+
+When generating an archive or index from a file system directory tree, some
+files and directories are excluded by default and others may optionally be
+excluded:
+
+1. Files and directories of virtual API file systems exposed by the kernel
+   (i.e. procfs, sysfs, cgroupfs, devpts … — but not tmpfs/devtmpfs) are
+   excluded unconditionally.
+
+2. Depending on whether symlinks, device nodes, fifos and sockets are enabled
+   for archiving with ``--with=`` and ``--without=``, file nodes of these types
+   are excluded.
+
+3. By default, files and directories with the ``+d`` chattr(1) flag set are
+   excluded, however this behaviour may be turned off with
+   ``--exclude-nodump=no``.
+
+4. Optionally, files and directories contained in submounts of the specified
+   file system tree are excluded, if ``--exclude-submounts=yes`` is specified.
+
+5. By default, any files and directories listed in ``.caexclude`` files in the
+   file hierarchy are excluded, however interpretation of these files may be
+   turned off with ``--exclude-file=no``. These files operate similar to
+   ``git``'s ``.gitignore`` concept: they are read as text file where each line
+   is either empty/starts with ``#`` (in which case they have no effect, which
+   may be used for commenting), or list a globbing path pattern of
+   files/directories to ignore. If a line contains no ``/`` character the line
+   applies to the directory the ``.caexclude`` file is located in as well as
+   all child directories of it. If it contains at least one ``/`` character it
+   is considered stricly relative to the directory the ``.caexclude`` file is
+   located in. ``.caexclude`` files may appear in any directory of the file
+   system tree that is archived, however they have no effect when placed in
+   directories that are marked for exclusion via ``.caexclude`` files placed
+   further up in the directory tree. When a line ends in a ``/`` character it
+   applies to directories only, and not regular files or other file node
+   types. If a line is prefixed with a ``!`` character matching files are
+   excluded from the exclusion, i.e. the effect of other matching lines that
+   are not prefixed like this is cancelled for matching files. ``!`` lines
+   unconditionally take precedence over lines not marked like this. Moreover,
+   lines prefixed with ``!`` also cancel the effect of patterns in
+   ``.caexclude`` files placed in directories further up the tree.
