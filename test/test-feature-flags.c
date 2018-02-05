@@ -26,6 +26,11 @@ int main(int argc, char *argv[]) {
         assert_se(ca_feature_flags_normalize(CA_FORMAT_FEATURE_FLAGS_MAX, &normalized) >= 0);
         assert_se((normalized & CA_FORMAT_WITH_MASK) == (CA_FORMAT_WITH_BEST & ~CA_FORMAT_WITH_FLAG_NODUMP));
 
+        assert_se(ca_feature_flags_are_normalized(CA_FORMAT_WITH_BEST) > 0);
+        assert_se(ca_feature_flags_are_normalized(CA_FORMAT_WITH_UNIX) > 0);
+        assert_se(ca_feature_flags_are_normalized(CA_FORMAT_WITH_FAT) > 0);
+        assert_se(ca_feature_flags_are_normalized(CA_FORMAT_DEFAULT) > 0);
+
         for (i = 0; i < sizeof(uint64_t) * 8; i++) {
                 uint64_t flag = UINT64_C(1) << i, flag2;
                 _cleanup_free_ char *s = NULL;

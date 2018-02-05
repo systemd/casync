@@ -265,7 +265,7 @@ enum {
                 CA_FORMAT_WITH_QUOTA_PROJID,
 
         CA_FORMAT_DEFAULT = /* The default set of flags */
-                CA_FORMAT_WITH_BEST|
+                (CA_FORMAT_WITH_BEST & ~CA_FORMAT_WITH_FLAG_NODUMP)|
                 CA_FORMAT_EXCLUDE_NODUMP|
                 CA_FORMAT_EXCLUDE_FILE|
                 CA_FORMAT_SHA512_256,
