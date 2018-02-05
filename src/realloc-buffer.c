@@ -253,10 +253,8 @@ int realloc_buffer_read_full(ReallocBuffer *b, int fd, size_t limit) {
                         return -E2BIG;
 
                 r = realloc_buffer_read(b, fd);
-                if (r < 0)
+                if (r <= 0)
                         return r;
-                if (r == 0)
-                        return 0;
         }
 }
 
@@ -373,8 +371,7 @@ int realloc_buffer_write_maybe(ReallocBuffer *b, int fd) {
 }
 
 int realloc_buffer_printf(ReallocBuffer *b, const char *fmt, ...) {
-        va_list ap;
-        size_t m = 64;
+        size_t m = 256;
 
         if (!b)
                 return -EINVAL;
@@ -382,6 +379,7 @@ int realloc_buffer_printf(ReallocBuffer *b, const char *fmt, ...) {
                 return -EINVAL;
 
         for (;;) {
+                va_list ap;
                 size_t mm;
                 void *p;
                 int n;
