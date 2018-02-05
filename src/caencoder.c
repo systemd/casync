@@ -3761,6 +3761,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                 }
 
                 /* …and a new one for ourselves (if we are a directory that is). */
+                node->name_table = ca_name_table_unref(node->name_table);
                 r = ca_encoder_initialize_name_table(e, node, location->offset);
                 if (r < 0)
                         return r;
