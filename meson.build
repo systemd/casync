@@ -302,6 +302,7 @@ test_sources = '''
         test-caorigin
         test-casync
         test-cautil
+        test-feature-flags
         test-util
 '''.split()
 
