@@ -137,6 +137,13 @@ int ca_with_feature_flags_format(uint64_t features, char **ret) {
         char *s = NULL;
         size_t i;
 
+        /* Refuse this if there are any bits we don't know */
+        if (features & ~CA_FORMAT_FEATURE_FLAGS_MAX)
+                return -EINVAL;
+
+        /* We only format --with= and --without= flags here */
+        features &= CA_FORMAT_WITH_MASK;
+
         for (i = 0; i < ELEMENTSOF(with_feature_map); i++) {
                 uint64_t f;
 
@@ -156,10 +163,7 @@ int ca_with_feature_flags_format(uint64_t features, char **ret) {
                 features &= ~f;
         }
 
-        if ((features & ~(CA_FORMAT_EXCLUDE_NODUMP|CA_FORMAT_EXCLUDE_SUBMOUNTS|CA_FORMAT_EXCLUDE_FILE|CA_FORMAT_SHA512_256)) != 0) {
-                free(s);
-                return -EINVAL;
-        }
+        assert(features == 0);
 
         *ret = s;
         return 0;
