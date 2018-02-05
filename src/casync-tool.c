@@ -45,6 +45,7 @@ static bool arg_verbose = false;
 static bool arg_dry_run = false;
 static bool arg_exclude_nodump = true;
 static bool arg_exclude_submounts = false;
+static bool arg_exclude_file = true;
 static bool arg_reflink = true;
 static bool arg_hardlink = false;
 static bool arg_punch_holes = true;
@@ -102,6 +103,7 @@ static void help(void) {
                "     --exclude-nodump=no     Don't exclude files with chattr(1)'s +d 'nodump'\n"
                "                             flag when creating archive\n"
                "     --exclude-submounts=yes Exclude submounts when creating archive\n"
+               "     --exclude-file=no       Don't respect .caexclude files in file tree\n"
                "     --reflink=no            Don't create reflinks from seeds when extracting\n"
                "     --hardlink=yes          Create hardlinks from seeds when extracting\n"
                "     --punch-holes=no        Don't create sparse files when extracting\n"
@@ -301,6 +303,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_WHAT,
                 ARG_EXCLUDE_NODUMP,
                 ARG_EXCLUDE_SUBMOUNTS,
+                ARG_EXCLUDE_FILE,
                 ARG_UNDO_IMMUTABLE,
                 ARG_PUNCH_HOLES,
                 ARG_REFLINK,
@@ -333,6 +336,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "what",              required_argument, NULL, ARG_WHAT              },
                 { "exclude-nodump",    required_argument, NULL, ARG_EXCLUDE_NODUMP    },
                 { "exclude-submounts", required_argument, NULL, ARG_EXCLUDE_SUBMOUNTS },
+                { "exclude-file",      required_argument, NULL, ARG_EXCLUDE_FILE      },
                 { "undo-immutable",    required_argument, NULL, ARG_UNDO_IMMUTABLE    },
                 { "delete",            required_argument, NULL, ARG_DELETE            },
                 { "punch-holes",       required_argument, NULL, ARG_PUNCH_HOLES       },
@@ -477,6 +481,14 @@ static int parse_argv(int argc, char *argv[]) {
                                 return log_error_errno(r, "Failed to parse --exclude-submounts= parameter: %s", optarg);
 
                         arg_exclude_submounts = r;
+                        break;
+
+                case ARG_EXCLUDE_FILE:
+                        r = parse_boolean(optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --exclude-file= parameter: %s", optarg);
+
+                        arg_exclude_file = r;
                         break;
 
                 case ARG_UNDO_IMMUTABLE:
@@ -703,6 +715,8 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
                 flags |= CA_FORMAT_EXCLUDE_NODUMP;
         if (arg_exclude_submounts)
                 flags |= CA_FORMAT_EXCLUDE_SUBMOUNTS;
+        if (arg_exclude_file)
+                flags |= CA_FORMAT_EXCLUDE_FILE;
 
         flags |= ca_feature_flags_from_digest_type(arg_digest);
 
@@ -806,8 +820,9 @@ static int verbose_print_feature_flags(CaSync *s) {
                 return log_error_errno(r, "Failed to format feature flags: %m");
 
         log_info("Using feature flags: %s", strnone(t));
-        log_info("Excluding files with chattr(1) -d flag: %s", yes_no(flags & CA_FORMAT_EXCLUDE_NODUMP));
+        log_info("Excluding files and directories with chattr(1) -d flag: %s", yes_no(flags & CA_FORMAT_EXCLUDE_NODUMP));
         log_info("Excluding submounts: %s", yes_no(flags & CA_FORMAT_EXCLUDE_SUBMOUNTS));
+        log_info("Excluding files and directories listed in .caexclude: %s", yes_no(flags & CA_FORMAT_EXCLUDE_FILE));
         log_info("Digest algorithm: %s", ca_digest_type_to_string(ca_feature_flags_to_digest_type(flags)));
 
         printed = true;

@@ -156,7 +156,7 @@ int ca_with_feature_flags_format(uint64_t features, char **ret) {
                 features &= ~f;
         }
 
-        if ((features & ~(CA_FORMAT_EXCLUDE_NODUMP|CA_FORMAT_EXCLUDE_SUBMOUNTS|CA_FORMAT_SHA512_256)) != 0) {
+        if ((features & ~(CA_FORMAT_EXCLUDE_NODUMP|CA_FORMAT_EXCLUDE_SUBMOUNTS|CA_FORMAT_EXCLUDE_FILE|CA_FORMAT_SHA512_256)) != 0) {
                 free(s);
                 return -EINVAL;
         }

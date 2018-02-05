@@ -124,6 +124,7 @@ enum {
         /* XFS/ext4 project quota ID */
         CA_FORMAT_WITH_QUOTA_PROJID      = UINT64_C(0x100000000),
 
+        CA_FORMAT_EXCLUDE_FILE           = UINT64_C(0x1000000000000000),
         CA_FORMAT_SHA512_256             = UINT64_C(0x2000000000000000),
         CA_FORMAT_EXCLUDE_SUBMOUNTS      = UINT64_C(0x4000000000000000),
         CA_FORMAT_EXCLUDE_NODUMP         = UINT64_C(0x8000000000000000),
@@ -266,12 +267,14 @@ enum {
         CA_FORMAT_DEFAULT = /* The default set of flags */
                 CA_FORMAT_WITH_BEST|
                 CA_FORMAT_EXCLUDE_NODUMP|
+                CA_FORMAT_EXCLUDE_FILE|
                 CA_FORMAT_SHA512_256,
 
         CA_FORMAT_FEATURE_FLAGS_MAX = /* All known bits turned on */
                 CA_FORMAT_WITH_MASK|
                 CA_FORMAT_EXCLUDE_NODUMP|
                 CA_FORMAT_EXCLUDE_SUBMOUNTS|
+                CA_FORMAT_EXCLUDE_FILE|
                 CA_FORMAT_SHA512_256,
 };
 

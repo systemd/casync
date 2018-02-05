@@ -30,6 +30,7 @@
 #include "caformat-util.h"
 #include "caformat.h"
 #include "camakebst.h"
+#include "camatch.h"
 #include "canametable.h"
 #include "cautil.h"
 #include "chattr.h"
@@ -45,6 +46,14 @@
 
 /* #undef ENXIO */
 /* #define ENXIO __LINE__ */
+
+/* Encodes whether we found a ".caexclude" file in this directory, and if we did, whether we loaded it */
+typedef enum CaEncoderHasExcludeFile {
+        CA_ENCODER_HAS_EXCLUDE_FILE_DONT_KNOW = -1,
+        CA_ENCODER_HAS_EXCLUDE_FILE_NO = 0,
+        CA_ENCODER_HAS_EXCLUDE_FILE_YES,
+        CA_ENCODER_HAS_EXCLUDE_FILE_LOADED,
+} CaEncoderHasExcludeFile;
 
 typedef struct CaEncoderExtendedAttribute {
         char *name;
@@ -134,6 +143,10 @@ typedef struct CaEncoderNode {
 
         /* For detecting mount boundaries */
         int mount_id;
+
+        /* Whether there's a ".caexclude" file in this directory, and whether it's loaded */
+        CaEncoderHasExcludeFile has_exclude_file;
+        CaMatch *exclude_match;
 } CaEncoderNode;
 
 typedef enum CaEncoderState {
@@ -281,6 +294,9 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
 
         n->mount_id = -1;
         n->generation_valid = 1;
+
+        n->has_exclude_file = CA_ENCODER_HAS_EXCLUDE_FILE_DONT_KNOW;
+        n->exclude_match = ca_match_unref(n->exclude_match);
 }
 
 CaEncoder *ca_encoder_unref(CaEncoder *e) {
@@ -378,6 +394,7 @@ int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
                 .acl_default_mask_permissions = UINT64_MAX,
                 .mount_id = -1,
                 .generation_valid = -1,
+                .has_exclude_file = CA_ENCODER_HAS_EXCLUDE_FILE_DONT_KNOW,
         };
 
         e->n_nodes = 1;
@@ -453,6 +470,16 @@ static const struct dirent *ca_encoder_node_current_dirent(CaEncoderNode *n) {
         return n->dirents[n->dirent_idx];
 }
 
+static const char *ca_encoder_node_current_child_name(CaEncoderNode *n) {
+        const struct dirent *de;
+
+        de = ca_encoder_node_current_dirent(n);
+        if (!de)
+                return NULL;
+
+        return de->d_name;
+}
+
 static int scandir_filter(const struct dirent *de) {
         assert(de);
 
@@ -490,6 +517,50 @@ static int ca_encoder_node_read_dirents(CaEncoderNode *n) {
         n->dirent_idx = 0;
 
         return 1;
+}
+
+static int dirent_bsearch_func(const void *key, const void *member) {
+        const char *k = key;
+        const struct dirent ** const m = (const struct dirent ** const) member;
+
+        return strcmp(k, (*m)->d_name);
+}
+
+static int ca_encoder_node_load_exclude_file(CaEncoderNode *n) {
+        int r;
+        assert(n);
+
+        if (!S_ISDIR(n->stat.st_mode))
+                return -ENOTDIR;
+        if (n->fd < 0)
+                return -EBADFD;
+
+        if (n->has_exclude_file == CA_ENCODER_HAS_EXCLUDE_FILE_DONT_KNOW) {
+                struct dirent **found;
+
+                r = ca_encoder_node_read_dirents(n);
+                if (r < 0)
+                        return r;
+
+                found = bsearch(".caexclude", n->dirents, n->n_dirents, sizeof(struct dirent*), dirent_bsearch_func);
+                n->has_exclude_file = found ? CA_ENCODER_HAS_EXCLUDE_FILE_YES : CA_ENCODER_HAS_EXCLUDE_FILE_NO;
+        }
+
+        if (n->has_exclude_file == CA_ENCODER_HAS_EXCLUDE_FILE_YES) {
+                _cleanup_(ca_match_unrefp) CaMatch *match = NULL;
+
+                r = ca_match_new_from_file(n->fd, ".caexclude", &match);
+                if (r < 0)
+                        return r;
+
+                r = ca_match_merge(&n->exclude_match, match);
+                if (r < 0)
+                        return r;
+
+                n->has_exclude_file = CA_ENCODER_HAS_EXCLUDE_FILE_LOADED;
+        }
+
+        return 0;
 }
 
 static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
@@ -1641,6 +1712,7 @@ static CaEncoderNode* ca_encoder_init_child(CaEncoder *e) {
                 .acl_default_mask_permissions = UINT64_MAX,
                 .mount_id = -1,
                 .generation_valid = -1,
+                .has_exclude_file = CA_ENCODER_HAS_EXCLUDE_FILE_DONT_KNOW,
         };
 
         return n;
@@ -1734,11 +1806,13 @@ static int ca_encoder_leave_child(CaEncoder *e) {
 }
 
 static int ca_encoder_shall_store_child_node(CaEncoder *e, CaEncoderNode *n) {
+        _cleanup_(ca_match_unrefp) CaMatch *match = NULL;
         CaEncoderNode *child;
         int r;
 
         assert(e);
         assert(n);
+        assert(S_ISDIR(n->stat.st_mode));
 
         /* Check whether this node is one we should care for or skip */
 
@@ -1772,6 +1846,22 @@ static int ca_encoder_shall_store_child_node(CaEncoder *e, CaEncoderNode *n) {
                 return r;
         if ((e->feature_flags & CA_FORMAT_EXCLUDE_SUBMOUNTS) && child->mount_id >= 0 && n->mount_id >= 0 && child->mount_id != n->mount_id)
                 return false;
+
+        /* Load and check the child against our .caexclude file if we have one */
+        r = ca_encoder_node_load_exclude_file(n);
+        if (r < 0)
+                return log_debug_errno(r, "Failed to load exclude file: %m");
+
+        r = ca_match_test(n->exclude_match, ca_encoder_node_current_child_name(n), S_ISDIR(child->stat.st_mode), &match);
+        if (r < 0)
+                return log_debug_errno(r, "Failed to test child '%s' against exclude list: %m", ca_encoder_node_current_child_name(n));
+        if (r > 0)
+                return false;
+
+        /* Merge the match calculated for this subtree into the child's match object */
+        r = ca_match_merge(&child->exclude_match, match);
+        if (r < 0)
+                return log_debug_errno(r, "Failed to merge subtree match: %m");
 
         return true;
 }
@@ -3484,13 +3574,6 @@ int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret) {
 
         *ret = l;
         return 0;
-}
-
-static int dirent_bsearch_func(const void *key, const void *member) {
-        const char *k = key;
-        const struct dirent ** const m = (const struct dirent ** const) member;
-
-        return strcmp(k, (*m)->d_name);
 }
 
 static int ca_encoder_node_seek_child(CaEncoder *e, CaEncoderNode *n, const char *name) {
