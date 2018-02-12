@@ -21,7 +21,7 @@ int ca_chunker_set_size(
 
         if (avg_size == 0) {
                 if (min_size != 0 && max_size != 0)
-                        avg_size = (size_t) pow(2, (log2(min_size) + log2(max_size)) / 2);
+                        avg_size = (size_t) lrint(pow(2, (log2(min_size) + log2(max_size)) / 2));
                 else if (min_size != 0)
                         avg_size = min_size * 4;
                 else if (max_size != 0)
@@ -82,8 +82,8 @@ int ca_chunker_set_size(
 
         c->discriminator = discriminator;
 
-        /* fprintf(stderr, "Setting min/avg/max chunk size: %zu/%zu/%zu.\n", */
-        /*         c->chunk_size_min, c->chunk_size_avg, c->chunk_size_max); */
+        log_debug("Setting min/avg/max chunk size: %zu / %zu / %zu",
+                  c->chunk_size_min, c->chunk_size_avg, c->chunk_size_max);
 
         return 0;
 }
