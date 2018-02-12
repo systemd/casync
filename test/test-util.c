@@ -4,10 +4,10 @@
 
 #include "util.h"
 
-#define PART1 127
-#define PART2 99
-#define PART3 3333
-#define PART4 4444
+#define PART1 4096
+#define PART2 4096
+#define PART3 8192
+#define PART4 3000
 #define PART5 13
 
 int main(int argc, char *argv[]) {
@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
         assert_se(unlink(fn) == 0);
 
         assert_se(loop_write_with_holes(fd, buffer, sizeof(buffer), &n_punched) >= 0);
-        assert_se(n_punched >= PART1 + PART3);
+        assert_se(n_punched == PART1 + PART3);
 
         assert_se(lseek(fd, 0, SEEK_SET) == 0);
         assert_se(loop_read(fd, buffer2, sizeof(buffer2)) == sizeof(buffer2));
@@ -41,7 +41,6 @@ int main(int argc, char *argv[]) {
         memzero(buffer + PART1 + 1, PART2 - 2);
         assert_se(lseek(fd, PART1-1, SEEK_SET) == PART1-1);
         assert_se(loop_write_with_holes(fd, buffer + PART1 - 1, PART2 + 2, &n_punched) >= 0);
-        assert_se(n_punched >= PART2 - 2);
 
         assert_se(lseek(fd, 0, SEEK_SET) == 0);
         assert_se(loop_read(fd, buffer2, sizeof(buffer2)) == sizeof(buffer2));

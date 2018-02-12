@@ -23,7 +23,7 @@
 #include "def.h"
 #include "util.h"
 
-#define HOLE_MIN 64
+#define HOLE_MIN 4096
 
 int loop_write(int fd, const void *p, size_t l) {
 
@@ -149,6 +149,27 @@ fallback:
         return 0; /* Return == 0 if we could only write out zeroes */
 }
 
+static bool memeqzero(const void *data, size_t length) {
+        /* Does the buffer consist entirely of NULs?
+         * Copied from https://github.com/rustyrussell/ccan/blob/master/ccan/mem/mem.c#L92,
+         * which is licensed CC-0.
+         */
+
+        const uint8_t *p = data;
+        size_t i;
+
+        /* Check first 16 bytes manually */
+        for (i = 0; i < 16; i++, length--) {
+                if (length == 0)
+                        return true;
+                if (p[i])
+                        return false;
+        }
+
+        /* Now we know first 16 bytes are NUL, memcmp with self.  */
+        return memcmp(data, p + i, length) == 0;
+}
+
 int loop_write_with_holes(int fd, const void *p, size_t l, uint64_t *ret_punched) {
         const uint8_t *q, *start = p, *zero_start = NULL;
         uint64_t n_punched = 0;
@@ -157,20 +178,15 @@ int loop_write_with_holes(int fd, const void *p, size_t l, uint64_t *ret_punched
         /* Write out the specified data much like loop_write(), but try to punch holes for any longer series of zero
          * bytes, thus creating sparse files if possible. */
 
-        for (q = p; q < (const uint8_t*) p + l; q++) {
+        for (q = p; q < (const uint8_t*) p + l; ) {
+                size_t left = MIN(HOLE_MIN, (const uint8_t*) p + l - q);
 
-                if (*q == 0) {
-
+                if (memeqzero(q, left)) {
                         if (!zero_start)
                                 zero_start = q;
 
-                        continue;
-                }
-
-                if (zero_start) {
-
+                } else if (zero_start) {
                         if (q - zero_start >= HOLE_MIN) {
-
                                 r = loop_write(fd, start, zero_start - start);
                                 if (r < 0)
                                         return r;
@@ -185,10 +201,7 @@ int loop_write_with_holes(int fd, const void *p, size_t l, uint64_t *ret_punched
                                         if (r < 0)
                                                 return r;
 
-                                        if (ret_punched)
-                                                *ret_punched = n_punched;
-
-                                        return r;
+                                        goto success;
                                 }
 
                                 n_punched += q - zero_start;
@@ -196,11 +209,12 @@ int loop_write_with_holes(int fd, const void *p, size_t l, uint64_t *ret_punched
                         }
 
                         zero_start = NULL;
-                        continue;
                 }
+
+                q += left;
         }
 
-        if (zero_start) {
+        if (zero_start)
                 if (q - zero_start >= HOLE_MIN) {
                         r = loop_write(fd, start, zero_start - start);
                         if (r < 0)
@@ -212,21 +226,18 @@ int loop_write_with_holes(int fd, const void *p, size_t l, uint64_t *ret_punched
                         if (r > 0)
                                 n_punched += q - zero_start;
 
-                        if (ret_punched)
-                                *ret_punched = n_punched;
-
-                        return 0;
+                        goto success;
                 }
-        }
 
         r = loop_write(fd, start, q - start);
         if (r < 0)
                 return r;
 
+ success:
         if (ret_punched)
                 *ret_punched = n_punched;
 
-        return r;
+        return 0;
 }
 
 ssize_t loop_read(int fd, void *p, size_t l) {
