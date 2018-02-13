@@ -47,7 +47,6 @@ c_args = '''
         -Werror=sign-compare
         -Wdate-time
         -Wnested-externs
-        -ffast-math
         -fno-common
         -fdiagnostics-show-option
         -fno-strict-aliasing
