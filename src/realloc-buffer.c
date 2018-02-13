@@ -286,11 +286,8 @@ int realloc_buffer_read_target(ReallocBuffer *b, int fd, size_t target_size) {
                         return 1;
 
                 r = realloc_buffer_read_size(b, fd, target_size - c);
-                if (r < 0)
+                if (r <= 0)
                         return r;
-
-                if (r == 0)
-                        return 0;
         }
 }
 
