@@ -24,6 +24,7 @@
 #include "cautil.h"
 #include "chattr.h"
 #include "def.h"
+#include "quota-projid.h"
 #include "realloc-buffer.h"
 #include "reflink.h"
 #include "rm-rf.h"
@@ -107,6 +108,9 @@ typedef struct CaDecoderNode {
         uint64_t acl_default_group_obj_permissions;
         uint64_t acl_default_other_permissions;
         uint64_t acl_default_mask_permissions;
+
+        bool have_quota_projid;
+        uint32_t quota_projid;
 
         /* Only for S_ISREG(), the origin if we know it */
         CaOrigin *payload_origin;
@@ -342,6 +346,7 @@ static void ca_decoder_node_flush_entry(CaDecoderNode *n) {
         n->fcaps = mfree(n->fcaps);
         n->fcaps_size = 0;
         n->have_fcaps = false;
+        n->have_quota_projid = false;
 
         ca_decoder_node_free_xattrs(n);
 
@@ -676,10 +681,14 @@ static int ca_decoder_object_is_complete(const void *p, size_t size) {
 
         h = p;
         k = read_le64(&h->size);
-        if (k < sizeof(CaFormatHeader))
+        if (k < sizeof(CaFormatHeader)) {
+                log_debug("Object header too short");
                 return -EBADMSG;
-        if (k == UINT64_MAX)
+        }
+        if (k == UINT64_MAX) {
+                log_debug("Object header size invalid");
                 return -EBADMSG;
+        }
 
         return size >= k;
 }
@@ -1156,6 +1165,25 @@ static const CaFormatFCaps* validate_format_fcaps(CaDecoder *d, const void *p) {
         return f;
 }
 
+static const CaFormatQuotaProjID* validate_format_quota_projid(CaDecoder *d, const void *p) {
+        const CaFormatQuotaProjID *q = p;
+
+        assert(d);
+        assert(q);
+
+        if (read_le64(&q->header.size) != sizeof(CaFormatQuotaProjID))
+                return NULL;
+        if (read_le64(&q->header.type) != CA_FORMAT_QUOTA_PROJID)
+                return NULL;
+
+        if (read_le64(&q->projid) == 0)
+                return NULL;
+        if (read_le64(&q->projid) > 0xFFFFFFFF)
+                return NULL;
+
+        return q;
+}
+
 static const CaFormatSymlink* validate_format_symlink(CaDecoder *d, const void *p) {
         const CaFormatSymlink *s = p;
 
@@ -1589,14 +1617,20 @@ static int ca_decoder_do_seek(CaDecoder *d, CaDecoderNode *n) {
                         return 0;
                 }
 
-                if (read_le64(&item->size) > read_le64(&item->offset))
+                if (read_le64(&item->size) > read_le64(&item->offset)) {
+                        log_debug("GOODBYE item size larger than offset");
                         return -EBADMSG;
+                }
 
-                if (read_le64(&item->offset) > n->goodbye_offset)
+                if (read_le64(&item->offset) > n->goodbye_offset) {
+                        log_debug("GOODBYE item offset larger than GOODBYE start offset");
                         return -EBADMSG;
+                }
                 so = n->goodbye_offset - read_le64(&item->offset);
-                if (so < n->entry_offset)
+                if (so < n->entry_offset) {
+                        log_debug("GOODBYE seek offset before entry offset");
                         return -EBADMSG;
+                }
 
                 d->seek_offset = so;
                 d->seek_end_offset = so + read_le64(&item->size);
@@ -1623,8 +1657,10 @@ static int ca_decoder_do_seek(CaDecoder *d, CaDecoderNode *n) {
 
                 /* We know the end of the whole shebang, jump to its last le64_t to read the goodbye object offset */
 
-                if (n->end_offset < sizeof(CaFormatGoodbyeTail))
+                if (n->end_offset < sizeof(CaFormatGoodbyeTail)) {
+                        log_debug("GOODBYE end offset shorter than tail.");
                         return -EBADMSG;
+                }
 
                 d->seek_offset = n->end_offset - sizeof(CaFormatGoodbyeTail);
                 d->seek_end_offset = n->end_offset;
@@ -1665,6 +1701,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         const CaFormatACLDefault *acl_default = NULL;
         const CaFormatSELinux *selinux = NULL;
         const CaFormatFCaps *fcaps = NULL;
+        const CaFormatQuotaProjID *quota_projid = NULL;
         uint64_t offset = 0;
         bool done = false;
         mode_t mode;
@@ -1744,6 +1781,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
                         if (l > CA_FORMAT_USER_SIZE_MAX)
                                 return -EBADMSG;
 
@@ -1757,8 +1796,14 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                         if (!user)
                                 return -EBADMSG;
 
+                        /* If the UID is 0 then the user name should be supressed if "root". However, if it's anything
+                         * else that's OK. The latter case happens in case UID shifting is used, as the user name
+                         * always reflects the host system's user database (due to the nature of NSS), while the
+                         * encoded numeric UID reflects the shifted one. */
+
                         if ((d->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) &&
-                            read_le64(&entry->uid) == 0)
+                            read_le64(&entry->uid) == 0 &&
+                            streq(user->name, "root"))
                                 return -EBADMSG;
 
                         offset += l;
@@ -1777,6 +1822,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
                         if (l > CA_FORMAT_GROUP_SIZE_MAX)
                                 return -EBADMSG;
 
@@ -1791,7 +1838,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
 
                         if ((d->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) &&
-                            read_le64(&entry->gid) == 0)
+                            read_le64(&entry->gid) == 0 &&
+                            streq(group->name, "root"))
                                 return -EBADMSG;
 
                         offset += l;
@@ -1807,6 +1855,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
                         if (n->have_acl)
                                 return -EBADMSG;
                         if (l > CA_FORMAT_XATTR_SIZE_MAX)
@@ -1819,8 +1869,10 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return CA_DECODER_REQUEST;
 
                         x = validate_format_xattr(d, p);
-                        if (!x)
+                        if (!x) {
+                                log_debug("Invalid XATTR record.");
                                 return -EBADMSG;
+                        }
 
                         /* Check whether things are properly ordered */
                         if (n->xattrs_last && strcmp((char*) x->name_and_value, (char*) n->xattrs_last->format.name_and_value) <= 0)
@@ -1872,6 +1924,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                         if (selinux)
                                 return -EBADMSG;
                         if (fcaps)
+                                return -EBADMSG;
+                        if (quota_projid)
                                 return -EBADMSG;
 
                         if (l > CA_FORMAT_ACL_USER_SIZE_MAX)
@@ -1935,6 +1989,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
 
                         if (l > CA_FORMAT_ACL_GROUP_SIZE_MAX)
                                 return -EBADMSG;
@@ -1989,6 +2045,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
 
                         if (l != sizeof(CaFormatACLGroupObj))
                                 return -EBADMSG;
@@ -2019,6 +2077,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
 
                         if (l != sizeof(CaFormatACLDefault))
                                 return -EBADMSG;
@@ -2045,6 +2105,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
                         if (l > CA_FORMAT_SELINUX_SIZE_MAX)
                                 return -EBADMSG;
 
@@ -2066,6 +2128,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                                 return -EBADMSG;
                         if (fcaps)
                                 return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
                         if (l > CA_FORMAT_FCAPS_SIZE_MAX)
                                 return -EBADMSG;
 
@@ -2077,6 +2141,27 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
 
                         fcaps = validate_format_fcaps(d, p);
                         if (!fcaps)
+                                return -EBADMSG;
+
+                        offset += l;
+                        break;
+
+                case CA_FORMAT_QUOTA_PROJID:
+                        if (!entry)
+                                return -EBADMSG;
+                        if (quota_projid)
+                                return -EBADMSG;
+                        if (l != sizeof(CaFormatQuotaProjID))
+                                return -EBADMSG;
+
+                        r = ca_decoder_object_is_complete(p, sz);
+                        if (r < 0)
+                                return r;
+                        if (r == 0)
+                                return CA_DECODER_REQUEST;
+
+                        quota_projid = validate_format_quota_projid(d, p);
+                        if (!quota_projid)
                                 return -EBADMSG;
 
                         offset += l;
@@ -2168,8 +2253,6 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                 case CA_FORMAT_GOODBYE:
                         if (!entry)
                                 return -EBADMSG;
-                        if (!S_ISDIR(read_le64(&entry->mode)))
-                                return -EBADMSG;
                         if (l < offsetof(CaFormatGoodbye, items) + sizeof(CaFormatGoodbyeTail))
                                 return -EBADMSG;
 
@@ -2190,7 +2273,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
                         break;
 
                 default:
-                        log_error("Got unexpected object: %016" PRIx64, t);
+                        log_debug("Got unexpected object: %016" PRIx64, t);
                         return -EBADMSG;
                 }
 
@@ -2225,6 +2308,8 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         if ((S_ISBLK(mode) || S_ISCHR(mode)) && !device)
                 return -EBADMSG;
         if (!S_ISREG(mode) && fcaps)
+                return -EBADMSG;
+        if (!(S_ISREG(mode) || S_ISDIR(mode)) && quota_projid)
                 return -EBADMSG;
 
         /* Both FAT and chattr(1) flags are only defined for regular files and directories */
@@ -2261,6 +2346,7 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
         assert(!n->fcaps);
         assert(!n->symlink_target);
         assert(!n->selinux_label);
+        assert(!n->have_quota_projid);
 
         n->entry = memdup(entry, sizeof(CaFormatEntry));
         if (!n->entry)
@@ -2301,6 +2387,11 @@ static int ca_decoder_parse_entry(CaDecoder *d, CaDecoderNode *n) {
 
                 n->fcaps_size = read_le64(&fcaps->header.size) - offsetof(CaFormatFCaps, data);
                 n->have_fcaps = true;
+        }
+
+        if (quota_projid) {
+                n->quota_projid = read_le64(&quota_projid->projid);
+                n->have_quota_projid = true;
         }
 
         if (symlink) {
@@ -2581,7 +2672,7 @@ static int ca_decoder_parse_filename(CaDecoder *d, CaDecoderNode *n) {
                 return CA_DECODER_STEP;
 
         default:
-                log_error("Got unexpected object: %016" PRIx64, t);
+                log_debug("Got unexpected object: %016" PRIx64, t);
                 return -EBADMSG;
         }
 }
@@ -2820,6 +2911,14 @@ static int ca_decoder_realize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNod
                                  ca_feature_flags_to_chattr(d->replay_feature_flags) & APPLY_EARLY_FS_FL);
                 if (r < 0)
                         return r;
+
+                if (child->have_quota_projid &&
+                    (d->replay_feature_flags & CA_FORMAT_WITH_QUOTA_PROJID)) {
+
+                        r = write_quota_projid(child->fd, child->quota_projid);
+                        if (r < 0)
+                                return r;
+                }
         }
 
         return 0;
@@ -3198,8 +3297,7 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
 
                         source_fd = ca_location_open(l);
                         if (source_fd == -ENOENT) {
-                                log_error_errno(source_fd,
-                                                "Can't open reflink source %s: %m", ca_location_format(l));
+                                log_debug_errno(source_fd, "Can't open reflink source %s: %m", ca_location_format(l));
                                 goto next;
                         }
                         if (source_fd < 0)
@@ -3211,7 +3309,7 @@ static int ca_decoder_node_reflink(CaDecoder *d, CaDecoderNode *n) {
                                 goto next;
                         if (r == -EXDEV) /* cross-device reflinks aren't supported */
                                 goto next;
-                        if (IN_SET(r, -ENOTTY, -EOPNOTSUPP)) /* reflinks not supported */
+                        if (ERRNO_IS_UNSUPPORTED(-r)) /* reflinks not supported */
                                 break;
                         if (r < 0)
                                 return r;
@@ -3908,7 +4006,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
 
                 /* If we have restored the time validate it after all uses, since the backing file system might not
                  * provide the granularity we need, but we shouldn't permit that since we care about
-                 * reproducability. */
+                 * reproducibility. */
 
                 if (child->fd >= 0)
                         r = fstat(child->fd, &st);
@@ -3989,7 +4087,7 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 if (parent) {
                         r = ca_decoder_realize_child(d, parent, n);
                         if (r < 0)
-                                return r;
+                                return log_debug_errno(r, "Failed to realize child: %m");
                 }
 
                 if (mode == (mode_t) -1)
@@ -4118,7 +4216,7 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
 
                         r = ca_decoder_finalize_child(d, n, saved_child);
                         if (r < 0)
-                                return r;
+                                return log_debug_errno(r, "Failed to finalize child: %m");
 
                         ca_decoder_enter_state(d, CA_DECODER_IN_DIRECTORY);
                         return CA_DECODER_STEP;
@@ -4586,7 +4684,6 @@ int ca_decoder_current_size(CaDecoder *d, uint64_t *ret) {
 }
 
 int ca_decoder_current_uid(CaDecoder *d, uid_t *ret) {
-        uid_t uid, shifted_uid;
         CaDecoderNode *n;
 
         if (!d)
@@ -4606,17 +4703,11 @@ int ca_decoder_current_uid(CaDecoder *d, uid_t *ret) {
         if (!n->entry)
                 return -ENODATA;
 
-        uid = (uid_t) read_le64(&n->entry->uid);
-        shifted_uid = ca_decoder_shift_uid(d, uid);
-        if (!uid_is_valid(shifted_uid))
-                return -EINVAL;
-
-        *ret = shifted_uid;
+        *ret = (uid_t) read_le64(&n->entry->uid);
         return 0;
 }
 
 int ca_decoder_current_gid(CaDecoder *d, gid_t *ret) {
-        gid_t gid, shifted_gid;
         CaDecoderNode *n;
 
         if (!d)
@@ -4636,12 +4727,7 @@ int ca_decoder_current_gid(CaDecoder *d, gid_t *ret) {
         if (!n->entry)
                 return -ENODATA;
 
-        gid = (gid_t) read_le64(&n->entry->gid);
-        shifted_gid = ca_decoder_shift_gid(d, gid);
-        if (!gid_is_valid(shifted_gid))
-                return -EINVAL;
-
-        *ret = shifted_gid;
+        *ret = (gid_t) read_le64(&n->entry->gid);
         return 0;
 }
 
@@ -4660,10 +4746,31 @@ int ca_decoder_current_user(CaDecoder *d, const char **ret) {
         if (!n)
                 return -EUNATCH;
 
-        if (!n->user_name)
+        if (n->user_name)
+                *ret = n->user_name;
+        else if (d->feature_flags & (CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_16BIT_UIDS)) {
+                uid_t uid, shifted_uid;
+
+                /* As special case, the "root" user is not encoded as user name string if the UID is also
+                 * encoded. Thus, let's synthesize the name here again. Note that the user name is based on the UID as
+                 * encoded on the underlying file system — i.e. not the shifted UID. This means we first have to shift
+                 * back here. */
+
+                if (!n->entry)
+                        return -ENODATA;
+
+                uid = (uid_t) read_le64(&n->entry->uid);
+                shifted_uid = ca_decoder_shift_uid(d, uid);
+                if (!uid_is_valid(shifted_uid))
+                        return -EINVAL;
+
+                if (shifted_uid != 0)
+                        return -ENODATA;
+
+                *ret = "root";
+        } else
                 return -ENODATA;
 
-        *ret = n->user_name;
         return 0;
 }
 
@@ -4682,10 +4789,26 @@ int ca_decoder_current_group(CaDecoder *d, const char **ret) {
         if (!n)
                 return -EUNATCH;
 
-        if (!n->group_name)
+        if (n->group_name)
+                *ret = n->group_name;
+        else if (d->feature_flags & (CA_FORMAT_WITH_32BIT_UIDS|CA_FORMAT_WITH_16BIT_UIDS)) {
+                gid_t gid, shifted_gid;
+
+                if (!n->entry)
+                        return -ENODATA;
+
+                gid = (gid_t) read_le64(&n->entry->gid);
+                shifted_gid = ca_decoder_shift_gid(d, gid);
+                if (!gid_is_valid(shifted_gid))
+                        return -EINVAL;
+
+                if (shifted_gid != 0)
+                        return -ENODATA;
+
+                *ret = "root";
+        } else
                 return -ENODATA;
 
-        *ret = n->group_name;
         return 0;
 }
 
@@ -4845,6 +4968,25 @@ eof:
         if (ret_size)
                 *ret_size = 0;
 
+        return 0;
+}
+
+int ca_decoder_current_quota_projid(CaDecoder *d, uint32_t *ret) {
+        CaDecoderNode *n;
+
+        if (!d)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        n = ca_decoder_current_node(d);
+        if (!n)
+                return -EUNATCH;
+
+        if (!n->have_quota_projid)
+                return -ENODATA;
+
+        *ret = n->quota_projid;
         return 0;
 }
 

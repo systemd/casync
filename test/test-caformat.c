@@ -126,6 +126,22 @@ int main(int argc, char *argv[]) {
                         break;
                 }
 
+                case CA_FORMAT_SELINUX: {
+                        CaFormatSELinux *selinux;
+
+                        frame_size = read_le64(&h->size);
+                        if (sz < frame_size)
+                                continue;
+
+                        selinux = (CaFormatSELinux*) h;
+
+                        printf("\tSELinux Label: %s\n", selinux->label);
+
+                        realloc_buffer_advance(&buffer, frame_size);
+                        frame_size = 0;
+                        break;
+                }
+
                 case CA_FORMAT_PAYLOAD:
 
                         frame_size = offsetof(CaFormatPayload, data);

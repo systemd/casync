@@ -30,6 +30,8 @@ libshared_sources = files('''
         caformat-util.c
         caformat-util.h
         caformat.h
+        camatch.c
+        camatch.h
         caindex.c
         caindex.h
         calocation.c
@@ -77,6 +79,8 @@ libshared_sources = files('''
         notify.h
         parse-util.c
         parse-util.h
+        quota-projid.c
+        quota-projid.h
         realloc-buffer.c
         realloc-buffer.h
         reflink.c

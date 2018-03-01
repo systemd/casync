@@ -11,6 +11,7 @@
 #include "caformat.h"
 #include "calocation.h"
 #include "caseed.h"
+#include "def.h"
 #include "realloc-buffer.h"
 #include "rm-rf.h"
 #include "util.h"
@@ -63,7 +64,7 @@ CaSeed *ca_seed_new(void) {
 
         s->chunker = (CaChunker) CA_CHUNKER_INIT;
 
-        assert_se(ca_feature_flags_normalize(CA_FORMAT_DEFAULT, &s->feature_flags) >= 0);
+        s->feature_flags = CA_FORMAT_DEFAULT & SUPPORTED_FEATURE_MASK;
 
         return s;
 }
@@ -257,7 +258,7 @@ static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void
         if (r < 0)
                 return r;
 
-        t = ca_location_format(location);
+        t = ca_location_format_full(location, CA_LOCATION_WITH_ALL);
         if (!t)
                 return -ENOMEM;
 
@@ -274,11 +275,41 @@ static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void
         (void) mkdirat(s->cache_fd, four, 0777);
 
         if (symlinkat(t, s->cache_fd, combined) < 0) {
-                if (errno != EEXIST)
-                        return -errno;
+                _cleanup_(unlink_and_freep) char *temp = NULL;
+                _cleanup_(safe_closep) int fd = -1;
+                ssize_t n;
+                size_t k;
+
+                if (errno == EEXIST)
+                        return 0;
+
+                if (errno != ENAMETOOLONG)
+                        return log_debug_errno(errno, "Failed to create seed entry symlink %s → %s: %m", combined, t);
+
+                r = tempfn_random(combined, &temp);
+                if (r < 0)
+                        return log_debug_errno(r, "Failed to allocate temporary path for %s: %m", combined);
+
+                fd = openat(s->cache_fd, temp, O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC|O_NOFOLLOW, 0666);
+                if (fd < 0)
+                        return log_debug_errno(errno, "Failed to create seed entry file %s: %m", combined);
+
+                k = strlen(t);
+                n = write(fd, t, k);
+                if (n < 0)
+                        return log_debug_errno(errno, "Failed to write seed entry file %s: %m", combined);
+                if ((size_t) n != k) {
+                        log_debug("Short write while writing seed entry file %s: %m", combined);
+                        return -EIO;
+                }
+
+                if (renameat(s->cache_fd, temp, s->cache_fd, combined) < 0)
+                        return log_debug_errno(errno, "Failed to move seed entry file %s into place: %m", combined);
+
+                temp = mfree(temp);
         }
 
-        return 0;
+        return 1;
 }
 
 static int ca_seed_cache_chunks(CaSeed *s) {
@@ -525,7 +556,30 @@ int ca_seed_get(CaSeed *s,
         combined = strjoina(four, "/", id);
 
         r = readlinkat_malloc(s->cache_fd, combined, &target);
-        if (r < 0)
+        if (r == -EINVAL) {
+                _cleanup_(safe_closep) int fd = -1;
+                ReallocBuffer buffer = {};
+
+                fd = openat(s->cache_fd, combined, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+                if (fd < 0)
+                        return log_debug_errno(errno, "Failed to read from seed file %s: %m", combined);
+
+                r = realloc_buffer_read_full(&buffer, fd, 1024U*1024U);
+                if (r < 0)
+                        return r;
+
+                /* Safety check: let's make sure there's no embedded NUL byte */
+                r = realloc_buffer_memchr(&buffer, 0);
+                if (r >= 0)
+                        return -EINVAL;
+                if (r != -ENXIO)
+                        return r;
+
+                if (!realloc_buffer_append_byte(&buffer, 0))
+                        return -ENOMEM;
+
+                target = realloc_buffer_steal(&buffer);
+        } else if (r < 0)
                 return r;
 
         /* fprintf(stderr, "GOT %s → %s\n", combined, target); */
@@ -533,13 +587,14 @@ int ca_seed_get(CaSeed *s,
         r = ca_location_parse(target, &l);
         free(target);
         if (r < 0)
-                return r;
+                return log_debug_errno(r, "Failed to parse location '%s': %m", target);
 
         if (l->size == UINT64_MAX) /* If the size is not specified, then this is a hardlink entry */
                 return -ENOENT;
 
         if (l->size > s->chunker.chunk_size_max) {
                 ca_location_unref(l);
+                log_debug("Location size is larger than what chunker says.");
                 return -EINVAL;
         }
         size = l->size;
@@ -549,7 +604,7 @@ int ca_seed_get(CaSeed *s,
         if (step == -ENXIO) /* location doesn't exist anymore? Then the seed has been modified */
                 return -ESTALE;
         if (step < 0)
-                return step;
+                return log_debug_errno(step, "Failed to seek to seed location: %m");
 
         p = realloc_buffer_acquire(&s->buffer, size);
         if (!p)

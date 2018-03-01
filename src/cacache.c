@@ -276,7 +276,7 @@ int ca_cache_get(CaCache *c, CaLocation *location, CaChunkID *ret_chunk_id, CaOr
                 return -EINVAL;
 
         /* The first item of the origin must match our lookup key. If it doesn't something's bad. */
-        if (!ca_location_equal(location, ca_origin_get(origin, 0), false))
+        if (!ca_location_equal(location, ca_origin_get(origin, 0), CA_LOCATION_WITH_MTIME|CA_LOCATION_WITH_FEATURE_FLAGS))
                 return -EINVAL;
 
         if (ret_chunk_id)
@@ -335,7 +335,7 @@ int ca_cache_put(CaCache *c, CaOrigin *origin, const CaChunkID *chunk_id) {
                 const char *f;
                 char *p;
 
-                /* If there's only a single item, then let's try to create this as symlink, is it is the cheapest
+                /* If there's only a single item, then let's try to create this as symlink, it is the cheapest
                  * option */
 
                 f = ca_location_format(first_location);
@@ -367,7 +367,7 @@ int ca_cache_put(CaCache *c, CaOrigin *origin, const CaChunkID *chunk_id) {
         if (r < 0)
                 return r;
 
-        fd = openat(c->fd, temp, O_CREAT|O_WRONLY|O_CLOEXEC|O_EXCL|O_NOFOLLOW|O_EXCL, 0666);
+        fd = openat(c->fd, temp, O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC|O_NOFOLLOW, 0666);
         if (fd < 0)
                 return -errno;
 

@@ -8,6 +8,9 @@
 #include "realloc-buffer.h"
 #include "util.h"
 
+/* Safety net: don't permit buffers beyond 1G in size */
+#define REALLOC_BUFFER_MAX (1024UL*1024LU*1024LU)
+
 void* realloc_buffer_acquire(ReallocBuffer *b, size_t size) {
         size_t ns, na, ne;
         void *p;
@@ -24,9 +27,11 @@ void* realloc_buffer_acquire(ReallocBuffer *b, size_t size) {
 
                 return b->data ?: b;
         }
+        if (_unlikely_(size > REALLOC_BUFFER_MAX))
+                return NULL;
 
         ne = b->start + size;
-        if (ne < b->start) /* overflow? */
+        if (_unlikely_(ne < b->start)) /* overflow? */
                 return NULL;
 
         if (ne <= b->allocated) {
@@ -35,8 +40,10 @@ void* realloc_buffer_acquire(ReallocBuffer *b, size_t size) {
         }
 
         na = b->allocated * 2;
-        if (na < b->allocated) /* overflow? */
+        if (_unlikely_(na < b->allocated)) /* overflow? */
                 return NULL;
+        if (_unlikely_(na > REALLOC_BUFFER_MAX))
+                na = REALLOC_BUFFER_MAX;
 
         ns = MAX(na, size);
         ns = ALIGN_TO(ns, page_size());
@@ -74,6 +81,8 @@ void *realloc_buffer_acquire0(ReallocBuffer *b, size_t size) {
                 b->start = b->end = 0;
                 return b->data ?: b;
         }
+        if (_unlikely_(size > REALLOC_BUFFER_MAX))
+                return NULL;
 
         if (size < b->allocated) {
                 memset(b->data, 0, size);
@@ -85,8 +94,10 @@ void *realloc_buffer_acquire0(ReallocBuffer *b, size_t size) {
         }
 
         na = b->allocated * 2;
-        if (na <= b->allocated) /* overflow? */
+        if (_unlikely_(na < b->allocated)) /* overflow? */
                 return NULL;
+        if (_unlikely_(na > REALLOC_BUFFER_MAX))
+                na = REALLOC_BUFFER_MAX;
 
         ns = MAX(na, size);
         ns = ALIGN_TO(ns, page_size());
@@ -114,7 +125,7 @@ void *realloc_buffer_extend(ReallocBuffer *b, size_t add) {
         old_size = realloc_buffer_size(b);
 
         new_size = old_size + add;
-        if (new_size < old_size) /* overflow? */
+        if (_unlikely_(new_size < old_size)) /* overflow? */
                 return NULL;
 
         p = realloc_buffer_acquire(b, new_size);
@@ -169,9 +180,9 @@ int realloc_buffer_advance(ReallocBuffer *b, size_t sz) {
                 return 0;
 
         ns = b->start + sz;
-        if (ns < b->start) /* Overflow? */
+        if (_unlikely_(ns < b->start)) /* Overflow? */
                 return -EINVAL;
-        if (ns > b->end)
+        if (_unlikely_(ns > b->end))
                 return -EINVAL;
 
         if (ns == b->end)
@@ -188,7 +199,7 @@ int realloc_buffer_shorten(ReallocBuffer *b, size_t sz) {
 
         if (!b)
                 return -EINVAL;
-        if (sz > realloc_buffer_size(b))
+        if (_unlikely_(sz > realloc_buffer_size(b)))
                 return -EINVAL;
         if (sz == 0)
                 return 0;
@@ -210,7 +221,7 @@ int realloc_buffer_truncate(ReallocBuffer *b, size_t sz) {
                 return 0;
         }
 
-        if (sz > realloc_buffer_size(b))
+        if (_unlikely_(sz > realloc_buffer_size(b)))
                 return -EINVAL;
 
         b->end = b->start + sz;
@@ -243,6 +254,21 @@ int realloc_buffer_read_size(ReallocBuffer *b, int fd, size_t add) {
         return l > 0;
 }
 
+int realloc_buffer_read_full(ReallocBuffer *b, int fd, size_t limit) {
+        int r;
+
+        /* Reads from "fd" until EOF is hit, but never more than "limit" */
+
+        for (;;) {
+                if (limit != (size_t) -1 && realloc_buffer_size(b) > limit)
+                        return -E2BIG;
+
+                r = realloc_buffer_read(b, fd);
+                if (r <= 0)
+                        return r;
+        }
+}
+
 int realloc_buffer_read_target(ReallocBuffer *b, int fd, size_t target_size) {
         int r;
 
@@ -260,11 +286,8 @@ int realloc_buffer_read_target(ReallocBuffer *b, int fd, size_t target_size) {
                         return 1;
 
                 r = realloc_buffer_read_size(b, fd, target_size - c);
-                if (r < 0)
+                if (r <= 0)
                         return r;
-
-                if (r == 0)
-                        return 0;
         }
 }
 
@@ -356,8 +379,7 @@ int realloc_buffer_write_maybe(ReallocBuffer *b, int fd) {
 }
 
 int realloc_buffer_printf(ReallocBuffer *b, const char *fmt, ...) {
-        va_list ap;
-        size_t m = 64;
+        size_t m = 256;
 
         if (!b)
                 return -EINVAL;
@@ -365,6 +387,7 @@ int realloc_buffer_printf(ReallocBuffer *b, const char *fmt, ...) {
                 return -EINVAL;
 
         for (;;) {
+                va_list ap;
                 size_t mm;
                 void *p;
                 int n;
@@ -391,4 +414,32 @@ int realloc_buffer_printf(ReallocBuffer *b, const char *fmt, ...) {
                 m = mm;
         }
 
+}
+
+int realloc_buffer_memchr(ReallocBuffer *buffer, uint8_t c) {
+        const uint8_t *p, *q;
+        size_t l, d;
+        int ret;
+
+        /* Looks for byte 'c' in the buffer. Returns -ENXIO when we can't find the byte. Returns an index >= 0 if
+         * found. Returns -EOVERFLOW if found but the index doesn't fit in "int" */
+
+        l = realloc_buffer_size(buffer);
+        if (l <= 0)
+                return -ENXIO;
+
+        p = realloc_buffer_data(buffer);
+        q = memchr(p, c, l);
+        if (!q)
+                return -ENXIO;
+
+        d = (size_t) (q - p);
+        ret = (int) d;
+
+        if (_unlikely_(ret < 0))
+                return -EOVERFLOW;
+        if (_unlikely_((size_t) ret != d))
+                return -EOVERFLOW;
+
+        return ret;
 }

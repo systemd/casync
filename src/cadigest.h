@@ -20,6 +20,11 @@ typedef enum CaDigestType {
 int ca_digest_new(CaDigestType t, CaDigest **ret);
 CaDigest *ca_digest_free(CaDigest *d);
 
+static inline void ca_digest_freep(CaDigest **d) {
+        if (d)
+                ca_digest_free(*d);
+}
+
 int ca_digest_ensure_allocated(CaDigest **d, CaDigestType t);
 
 void ca_digest_write(CaDigest *d, const void *p, size_t l);

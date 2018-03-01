@@ -12,15 +12,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/vfs.h>
 #include <sys/types.h>
+#include <sys/vfs.h>
 #include <time.h>
 #include <unistd.h>
 
+#include <linux/btrfs.h>
+#include <linux/fs.h>
 #include <linux/magic.h>
 #include <linux/types.h>
-#include <linux/fs.h>
-#include <linux/btrfs.h>
 
 #include "gcc-macro.h"
 #include "log.h"
@@ -138,6 +138,18 @@ static inline int safe_closep(int *fd) {
 
 static inline void safe_close_nonstdp(int *fd) {
         safe_close_above(STDERR_FILENO, *fd);
+}
+
+static inline FILE *safe_fclose(FILE *f) {
+        if (f)
+                fclose(f);
+
+        return NULL;
+}
+
+static inline void safe_fclosep(FILE **f) {
+        if (f && *f)
+                fclose(*f);
 }
 
 typedef uint16_t le16_t;
@@ -751,6 +763,19 @@ int is_dir(const char* path, bool follow);
 #define BTRFS_IOC_SUBVOL_SETFLAGS _IOW(BTRFS_IOCTL_MAGIC, 26, __u64)
 #endif
 
+#ifndef FS_IOC_FSGETXATTR
+struct fsxattr {
+        uint32_t fsx_xflags;
+        uint32_t fsx_extsize;
+        uint32_t fsx_nextents;
+        uint32_t fsx_projid;
+        uint32_t fsx_cowextsize;
+        uint8_t  fsx_pad[8];
+};
+#define FS_IOC_FSGETXATTR _IOR ('X', 31, struct fsxattr)
+#define FS_IOC_FSSETXATTR _IOW ('X', 32, struct fsxattr)
+#endif
+
 #define NSEC_PER_SEC (UINT64_C(1000000000))
 
 /* Cleanup functions */
@@ -785,5 +810,20 @@ static inline void unlink_and_free(char *p) {
 DEFINE_TRIVIAL_CLEANUP_FUNC(char*, unlink_and_free);
 
 int free_and_strdup(char **p, const char *s);
+
+/* A check against a list of errors commonly used to indicate that a syscall/ioctl/other kernel operation we request is
+ * not supported locally. We maintain a generic list for this here, instead of adjusting the possible error codes to
+ * exactly what the calls might return for the simple reasons that due to FUSE and many differing in-kernel
+ * implementations of the same calls in various file systems and such the error codes seen varies wildly, and we'd like
+ * to cover them all to some degree and be somewhat safe for the future too. */
+#define ERRNO_IS_UNSUPPORTED(error) \
+        IN_SET(error, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL)
+
+#define LARGE_LINE_MAX (64U*1024U)
+
+int read_line(FILE *f, size_t limit, char **ret);
+
+char *delete_trailing_chars(char *s, const char *bad);
+char *strstrip(char *s);
 
 #endif

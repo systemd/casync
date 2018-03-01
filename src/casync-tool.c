@@ -22,6 +22,7 @@
 #include "caremote.h"
 #include "castore.h"
 #include "casync.h"
+#include "def.h"
 #include "gc.h"
 #include "notify.h"
 #include "parse-util.h"
@@ -45,6 +46,7 @@ static bool arg_verbose = false;
 static bool arg_dry_run = false;
 static bool arg_exclude_nodump = true;
 static bool arg_exclude_submounts = false;
+static bool arg_exclude_file = true;
 static bool arg_reflink = true;
 static bool arg_hardlink = false;
 static bool arg_punch_holes = true;
@@ -56,6 +58,7 @@ static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
 static char *arg_cache = NULL;
+static bool arg_cache_auto = false;
 static size_t arg_chunk_size_min = 0;
 static size_t arg_chunk_size_avg = 0;
 static size_t arg_chunk_size_max = 0;
@@ -95,11 +98,13 @@ static void help(void) {
                "                             Pick compression algorithm (zstd, xz or gzip)\n"
                "     --seed=PATH             Additional file or directory to use as seed\n"
                "     --cache=PATH            Directory to use as encoder cache\n"
+               "  -c --cache-auto            Pick encoder cache directory automatically\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote\n"
                "                             communication\n"
                "     --exclude-nodump=no     Don't exclude files with chattr(1)'s +d 'nodump'\n"
                "                             flag when creating archive\n"
                "     --exclude-submounts=yes Exclude submounts when creating archive\n"
+               "     --exclude-file=no       Don't respect .caexclude files in file tree\n"
                "     --reflink=no            Don't create reflinks from seeds when extracting\n"
                "     --hardlink=yes          Create hardlinks from seeds when extracting\n"
                "     --punch-holes=no        Don't create sparse files when extracting\n"
@@ -168,6 +173,7 @@ static void help(void) {
                "     --with=acl              Store file access control lists\n"
                "     --with=selinux          Store SELinux file labels\n"
                "     --with=fcaps            Store file capabilities\n"
+               "     --with=quota-projid     Store ext4/XFS quota project ID\n"
                "     (and similar: --without=16bit-uids, --without=32bit-uids, ...)\n",
                program_invocation_short_name);
 }
@@ -284,6 +290,29 @@ static int parse_what_selector(const char *arg, enum arg_what *what) {
         return 1;
 }
 
+static int dump_with_flags(void) {
+        uint64_t i;
+        int r;
+
+        puts("Supported --with= and --without= flags:");
+
+        for (i = 0; i < sizeof(uint64_t)*8; i++) {
+                _cleanup_free_ char *s = NULL;
+                uint64_t flag = UINT64_C(1) << i;
+
+                if (!(flag & SUPPORTED_WITH_MASK))
+                        continue;
+
+                r = ca_with_feature_flags_format(flag, &s);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to convert feature flag to string: %m");
+
+                puts(s);
+        }
+
+        return 0;
+}
+
 static int parse_argv(int argc, char *argv[]) {
 
         enum {
@@ -298,6 +327,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_WHAT,
                 ARG_EXCLUDE_NODUMP,
                 ARG_EXCLUDE_SUBMOUNTS,
+                ARG_EXCLUDE_FILE,
                 ARG_UNDO_IMMUTABLE,
                 ARG_PUNCH_HOLES,
                 ARG_REFLINK,
@@ -323,12 +353,14 @@ static int parse_argv(int argc, char *argv[]) {
                 { "chunk-size",        required_argument, NULL, ARG_CHUNK_SIZE        },
                 { "seed",              required_argument, NULL, ARG_SEED              },
                 { "cache",             required_argument, NULL, ARG_CACHE             },
+                { "cache-auto",        no_argument,       NULL, 'c'                   },
                 { "rate-limit-bps",    required_argument, NULL, ARG_RATE_LIMIT_BPS    },
                 { "with",              required_argument, NULL, ARG_WITH              },
                 { "without",           required_argument, NULL, ARG_WITHOUT           },
                 { "what",              required_argument, NULL, ARG_WHAT              },
                 { "exclude-nodump",    required_argument, NULL, ARG_EXCLUDE_NODUMP    },
                 { "exclude-submounts", required_argument, NULL, ARG_EXCLUDE_SUBMOUNTS },
+                { "exclude-file",      required_argument, NULL, ARG_EXCLUDE_FILE      },
                 { "undo-immutable",    required_argument, NULL, ARG_UNDO_IMMUTABLE    },
                 { "delete",            required_argument, NULL, ARG_DELETE            },
                 { "punch-holes",       required_argument, NULL, ARG_PUNCH_HOLES       },
@@ -352,7 +384,7 @@ static int parse_argv(int argc, char *argv[]) {
         if (getenv_bool("CASYNC_VERBOSE") > 0)
                 arg_verbose = true;
 
-        while ((c = getopt_long(argc, argv, "hvn", options, NULL)) >= 0) {
+        while ((c = getopt_long(argc, argv, "hvnc", options, NULL)) >= 0) {
 
                 switch (c) {
 
@@ -412,6 +444,10 @@ static int parse_argv(int argc, char *argv[]) {
 
                         break;
 
+                case 'c':
+                        arg_cache_auto = true;
+                        break;
+
                 case ARG_RATE_LIMIT_BPS:
                         r = parse_size(optarg, &arg_rate_limit_bps);
                         if (r < 0)
@@ -426,6 +462,9 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_WITH: {
                         uint64_t u;
 
+                        if (streq(optarg, "help"))
+                                return dump_with_flags();
+
                         r = ca_with_feature_flags_parse_one(optarg, &u);
                         if (r < 0) {
                                 log_error("Failed to parse --with= feature flag: %s", optarg);
@@ -438,6 +477,9 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_WITHOUT: {
                         uint64_t u;
+
+                        if (streq(optarg, "help"))
+                                return dump_with_flags();
 
                         r = ca_with_feature_flags_parse_one(optarg, &u);
                         if (r < 0) {
@@ -457,22 +499,26 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_EXCLUDE_NODUMP:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                log_error("Failed to parse --exclude-nodump= parameter: %s", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --exclude-nodump= parameter: %s", optarg);
 
                         arg_exclude_nodump = r;
                         break;
 
                 case ARG_EXCLUDE_SUBMOUNTS:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                log_error("Failed to parse --exclude-submounts= parameter: %s", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --exclude-submounts= parameter: %s", optarg);
 
                         arg_exclude_submounts = r;
+                        break;
+
+                case ARG_EXCLUDE_FILE:
+                        r = parse_boolean(optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --exclude-file= parameter: %s", optarg);
+
+                        arg_exclude_file = r;
                         break;
 
                 case ARG_UNDO_IMMUTABLE:
@@ -699,6 +745,8 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
                 flags |= CA_FORMAT_EXCLUDE_NODUMP;
         if (arg_exclude_submounts)
                 flags |= CA_FORMAT_EXCLUDE_SUBMOUNTS;
+        if (arg_exclude_file)
+                flags |= CA_FORMAT_EXCLUDE_FILE;
 
         flags |= ca_feature_flags_from_digest_type(arg_digest);
 
@@ -802,8 +850,9 @@ static int verbose_print_feature_flags(CaSync *s) {
                 return log_error_errno(r, "Failed to format feature flags: %m");
 
         log_info("Using feature flags: %s", strnone(t));
-        log_info("Excluding files with chattr(1) -d flag: %s", yes_no(flags & CA_FORMAT_EXCLUDE_NODUMP));
+        log_info("Excluding files and directories with chattr(1) -d flag: %s", yes_no(flags & CA_FORMAT_EXCLUDE_NODUMP));
         log_info("Excluding submounts: %s", yes_no(flags & CA_FORMAT_EXCLUDE_SUBMOUNTS));
+        log_info("Excluding files and directories listed in .caexclude: %s", yes_no(flags & CA_FORMAT_EXCLUDE_FILE));
         log_info("Digest algorithm: %s", ca_digest_type_to_string(ca_feature_flags_to_digest_type(flags)));
 
         printed = true;
@@ -841,6 +890,7 @@ static int verbose_print_done_make(CaSync *s) {
 
         r = ca_sync_get_covering_feature_flags(s, &covering);
         if (r != -ENODATA) {
+                _cleanup_free_ char *t = NULL;
                 uint64_t selected, too_much;
 
                 if (r < 0)
@@ -850,9 +900,15 @@ static int verbose_print_done_make(CaSync *s) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to determine used flags: %m");
 
+                r = ca_with_feature_flags_format(selected, &t);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to format feature flags: %m");
+
+                log_info("Selected feature flags: %s", strnone(t));
+
                 too_much = selected & ~covering;
                 if (too_much != 0) {
-                        _cleanup_free_ char *t = NULL;
+                        t = mfree(t);
 
                         r = ca_with_feature_flags_format(too_much, &t);
                         if (r < 0)
@@ -1100,9 +1156,10 @@ static int verb_make(int argc, char *argv[]) {
                         return log_oom();
         }
 
-        if (!input || streq(input, "-"))
+        if (!input || streq(input, "-")) {
                 input_fd = STDIN_FILENO;
-        else {
+                input = NULL;
+        } else {
                 CaLocatorClass input_class;
 
                 input_class = ca_classify_locator(input);
@@ -1152,6 +1209,11 @@ static int verb_make(int argc, char *argv[]) {
         if (operation == _MAKE_OPERATION_INVALID) {
                 log_error("Failed to determine what to make. Use --what=archive, --what=archive-index or --what=blob-index.");
                 return -EINVAL;
+        }
+
+        if (!IN_SET(operation, MAKE_ARCHIVE_INDEX, MAKE_ARCHIVE) && (arg_cache_auto || arg_cache)) {
+                log_error("Caching only supported when archiving files trees.");
+                return -EOPNOTSUPP;
         }
 
         if (IN_SET(operation, MAKE_ARCHIVE_INDEX, MAKE_BLOB_INDEX)) {
@@ -1207,9 +1269,20 @@ static int verb_make(int argc, char *argv[]) {
                         return log_error_errno(r, "Failed to set store: %m");
         }
 
-        r = load_feature_flags(s, operation == MAKE_BLOB_INDEX ? 0 : CA_FORMAT_WITH_MASK);
+        r = load_feature_flags(s, operation == MAKE_BLOB_INDEX ? 0 : SUPPORTED_WITH_MASK);
         if (r < 0)
                 return r;
+
+        if (arg_cache_auto && !arg_cache) {
+                if (!input) {
+                        log_error("Can't automatically derive cache path if no input path is given.");
+                        return -EOPNOTSUPP;
+                }
+
+                arg_cache = strjoin(input, "/.cacac");
+                if (!arg_cache)
+                        return log_oom();
+        }
 
         r = ca_sync_enable_archive_digest(s, !arg_cache);
         if (r < 0)
@@ -1511,7 +1584,7 @@ static int verb_extract(int argc, char *argv[]) {
         if (r < 0)
                 return r;
 
-        r = load_feature_flags(s, CA_FORMAT_WITH_MASK);
+        r = load_feature_flags(s, SUPPORTED_WITH_MASK);
         if (r < 0)
                 return r;
 
@@ -1628,8 +1701,15 @@ static int mtree_escape(const char *p, char **ret) {
         return mtree_escape_full(p, (size_t) -1, ret);
 }
 
+static const char *empty_to_dot(const char *p) {
+        /* Internally, we encode the top-level archived path as "", let's output it as "." since empty strings are hard
+         * to handle for users. */
+
+        return isempty(p) ? "." : p;
+}
+
 static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
-        _cleanup_free_ char *path = NULL;
+        _cleanup_free_ char *path = NULL, *escaped = NULL;
         mode_t mode;
         int r;
 
@@ -1641,10 +1721,14 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
         if (r < 0)
                 return log_error_errno(r, "Failed to query current path: %m");
 
+        r = mtree_escape(path, &escaped);
+        if (r < 0)
+                return log_oom();
+
         if (streq(arg0, "list")) {
                 char ls_mode[LS_FORMAT_MODE_MAX];
 
-                printf("%s %s\n", ls_format_mode(mode, ls_mode), path);
+                printf("%s %s\n", ls_format_mode(mode, ls_mode), empty_to_dot(escaped));
 
                 if (!arg_recursive && *toplevel_shown) {
                         r = ca_sync_seek_next_sibling(s);
@@ -1661,7 +1745,14 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 uid_t uid = UID_INVALID;
                 gid_t gid = GID_INVALID;
                 dev_t rdev = (dev_t) -1;
-                char *escaped;
+                unsigned flags = (unsigned) -1;
+                uint32_t fat_attrs = (uint32_t) -1;
+                uint64_t features;
+                size_t i;
+
+                r = ca_sync_get_feature_flags(s, &features);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to read feature flags: %m");
 
                 (void) ca_sync_current_target(s, &target);
                 (void) ca_sync_current_mtime(s, &mtime);
@@ -1671,13 +1762,10 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 (void) ca_sync_current_user(s, &user);
                 (void) ca_sync_current_group(s, &group);
                 (void) ca_sync_current_rdev(s, &rdev);
+                (void) ca_sync_current_chattr(s, &flags);
+                (void) ca_sync_current_fat_attrs(s, &fat_attrs);
 
-                r = mtree_escape(path, &escaped);
-                if (r < 0)
-                        return log_oom();
-
-                fputs(isempty(escaped) ? "." : escaped, stdout);
-                free(escaped);
+                fputs(empty_to_dot(escaped), stdout);
 
                 if (S_ISLNK(mode))
                         fputs(" type=link", stdout);
@@ -1700,11 +1788,12 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                         printf(" size=%" PRIu64, size);
 
                 if (target) {
+                        escaped = mfree(escaped);
+
                         if (mtree_escape(target, &escaped) < 0)
                                 return log_oom();
 
                         printf(" link=%s", escaped);
-                        free(escaped);
                 }
 
                 if (rdev != (dev_t) -1)
@@ -1718,19 +1807,58 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                         printf(" gid=" GID_FMT, gid);
 
                 if (user) {
+                        escaped = mfree(escaped);
+
                         if (mtree_escape(user, &escaped) < 0)
                                 return log_oom();
 
                         printf(" uname=%s", escaped);
-                        free(escaped);
                 }
 
                 if (group) {
+                        escaped = mfree(escaped);
+
                         if (mtree_escape(group, &escaped) < 0)
                                 return log_oom();
 
                         printf(" gname=%s", escaped);
-                        free(escaped);
+                }
+
+                if (features & (CA_FORMAT_WITH_FLAG_HIDDEN|CA_FORMAT_WITH_FLAG_SYSTEM|CA_FORMAT_WITH_FLAG_ARCHIVE|
+                                CA_FORMAT_WITH_FLAG_APPEND|CA_FORMAT_WITH_FLAG_NODUMP|CA_FORMAT_WITH_FLAG_IMMUTABLE)) {
+
+                        static const struct {
+                                uint64_t flag;
+                                const char *name;
+                        } table[] = {
+                                { CA_FORMAT_WITH_FLAG_HIDDEN,    "hidden"     },
+                                { CA_FORMAT_WITH_FLAG_SYSTEM,    "system"     },
+                                { CA_FORMAT_WITH_FLAG_ARCHIVE,   "archive"    },
+                                { CA_FORMAT_WITH_FLAG_APPEND,    "sappend"    },
+                                { CA_FORMAT_WITH_FLAG_NODUMP,    "nodump"     },
+                                { CA_FORMAT_WITH_FLAG_IMMUTABLE, "simmutable" },
+                        };
+
+                        const char *comma = "";
+
+                        printf(" flags=");
+
+                        for (i = 0; i < ELEMENTSOF(table); i++) {
+                                bool b;
+
+                                if ((features & table[i].flag) == 0)
+                                        continue;
+
+                                if (table[i].flag & CA_FORMAT_WITH_FAT_ATTRS)
+                                        b = fat_attrs & ca_feature_flags_to_fat_attrs(table[i].flag);
+                                else if (table[i].flag & CA_FORMAT_WITH_CHATTR)
+                                        b = flags & ca_feature_flags_to_chattr(table[i].flag);
+                                else
+                                        assert_not_reached("Flag table bogus");
+
+                                printf("%s%s%s", comma, b ? "" : "no", table[i].name);
+                                comma = ",";
+                        }
                 }
 
                 if (mtime != UINT64_MAX)
@@ -1748,10 +1876,11 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 char ls_mode[LS_FORMAT_MODE_MAX], ls_flags[LS_FORMAT_CHATTR_MAX], ls_fat_attrs[LS_FORMAT_FAT_ATTRS_MAX];
                 uid_t uid = UID_INVALID;
                 gid_t gid = GID_INVALID;
+                uint32_t quota_projid;
+                bool has_quota_projid;
                 dev_t rdev = (dev_t) -1;
                 unsigned flags = (unsigned) -1;
                 uint32_t fat_attrs = (uint32_t) -1;
-                char *escaped;
                 const char *xname;
                 const void *xvalue;
                 size_t xsize;
@@ -1770,15 +1899,12 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 (void) ca_sync_current_fat_attrs(s, &fat_attrs);
                 (void) ca_sync_current_archive_offset(s, &offset);
 
-                if (mtree_escape(path, &escaped) < 0)
-                        return log_oom();
+                has_quota_projid = ca_sync_current_quota_projid(s, &quota_projid) >= 0;
 
                 printf("    File: %s\n"
                        "    Mode: %s\n",
-                       isempty(escaped) ? "." : escaped,
+                       empty_to_dot(escaped),
                        strna(ls_format_mode(mode, ls_mode)));
-
-                escaped = mfree(escaped);
 
                 if (flags != (unsigned) -1)
                         printf("FileAttr: %s\n", strna(ls_format_chattr(flags, ls_flags)));
@@ -1806,12 +1932,12 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 if (uid_is_valid(uid) || user) {
                         printf("    User: ");
 
-                        if (uid == 0)
-                                user = "root";
+                        if (user) {
+                                escaped = mfree(escaped);
 
-                        if (user)
                                 if (mtree_escape(user, &escaped) < 0)
                                         return log_oom();
+                        }
 
                         if (uid_is_valid(uid) && user)
                                 printf("%s (" UID_FMT ")\n", escaped, uid);
@@ -1819,19 +1945,17 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                                 printf(UID_FMT "\n", uid);
                         else
                                 printf("%s\n", escaped);
-
-                        escaped = mfree(escaped);
                 }
 
                 if (gid_is_valid(gid) || group) {
                         printf("   Group: ");
 
-                        if (gid == 0)
-                                group = "root";
+                        if (group) {
+                                escaped = mfree(escaped);
 
-                        if (group)
                                 if (mtree_escape(group, &escaped) < 0)
                                         return log_oom();
+                        }
 
                         if (gid_is_valid(gid) && group)
                                 printf("%s (" GID_FMT ")\n", escaped, gid);
@@ -1839,16 +1963,18 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                                 printf(GID_FMT "\n", gid);
                         else
                                 printf("%s\n", escaped);
-
-                        escaped = mfree(escaped);
                 }
 
+                if (has_quota_projid)
+                        printf("  ProjID: %" PRIu32 "\n", quota_projid);
+
                 if (target) {
+                        escaped = mfree(escaped);
+
                         if (mtree_escape(target, &escaped) < 0)
                                 return log_oom();
 
                         printf("  Target: %s\n", escaped);
-                        escaped = mfree(escaped);
                 }
 
                 if (rdev != (dev_t) -1)
@@ -1879,7 +2005,7 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                         return 0;
         }
 
-        return 0;
+        return 1;
 }
 
 static int verb_list(int argc, char *argv[]) {
@@ -1893,11 +2019,11 @@ static int verb_list(int argc, char *argv[]) {
 
         ListOperation operation = _LIST_OPERATION_INVALID;
         const char *seek_path = NULL;
-        int r;
         _cleanup_(safe_close_nonstdp) int input_fd = -1;
         _cleanup_free_ char *input = NULL;
         _cleanup_(ca_sync_unrefp) CaSync *s = NULL;
         bool toplevel_shown = false;
+        int r;
 
         if (argc > 3) {
                 log_error("Input path/URL and subtree path expected.");
@@ -1937,9 +2063,10 @@ static int verb_list(int argc, char *argv[]) {
                         return log_oom();
         }
 
-        if (!input || streq(input, "-"))
+        if (!input || streq(input, "-")) {
                 input_fd = STDIN_FILENO;
-        else {
+                input = NULL;
+        } else {
                 CaLocatorClass input_class = _CA_LOCATOR_CLASS_INVALID;
 
                 input_class = ca_classify_locator(input);
@@ -1976,9 +2103,23 @@ static int verb_list(int argc, char *argv[]) {
 
                 } else if (S_ISREG(st.st_mode)) {
 
-                        if (operation == _LIST_OPERATION_INVALID)
+                        if (operation == _LIST_OPERATION_INVALID) {
+
+                                /* If the user specified an input file name to a regular file, and the suffix is
+                                 * neither .catar nor .caidx then he probably expected us to treat the file as source
+                                 * rather then encoded file. But we don't support this really: we only support
+                                 * directories as input. Eventually we should probably do something smarter here, for
+                                 * example implying as source the path's parent directory, and then seek to the file
+                                 * passed. For now, let's prohibit this, so that all options are open. */
+
+                                if (input) {
+                                        log_error("Input should be a directory, .catar or .caidx file. Refusing.");
+                                        return -EINVAL;
+                                }
+
                                 operation = LIST_ARCHIVE;
-                        else if (!IN_SET(operation, LIST_ARCHIVE, LIST_ARCHIVE_INDEX)) {
+
+                        } else if (!IN_SET(operation, LIST_ARCHIVE, LIST_ARCHIVE_INDEX)) {
                                 log_error("Input is a regular file, but attempted to list it as directory.");
                                 return -EINVAL;
                         }
@@ -1987,9 +2128,6 @@ static int verb_list(int argc, char *argv[]) {
                         return -EINVAL;
                 }
         }
-
-        if (streq_ptr(input, "-"))
-                input = mfree(input);
 
         if (operation == _LIST_OPERATION_INVALID) {
                 log_error("Failed to determine what to list. Use --what=archive, archive-index, or directory.");
@@ -2054,7 +2192,7 @@ static int verb_list(int argc, char *argv[]) {
         if (r < 0)
                 return r;
 
-        r = load_feature_flags(s, CA_FORMAT_WITH_MASK);
+        r = load_feature_flags(s, SUPPORTED_WITH_MASK);
         if (r < 0)
                 return r;
 
@@ -2103,7 +2241,7 @@ static int verb_list(int argc, char *argv[]) {
 
                 case CA_SYNC_NEXT_FILE: {
                         r = list_one_file(argv[0], s, &toplevel_shown);
-                        if (r < 0)
+                        if (r <= 0)
                                 return r;
                         break;
                 }
@@ -2363,7 +2501,7 @@ static int verb_digest(int argc, char *argv[]) {
         if (r < 0)
                 return r;
 
-        r = load_feature_flags(s, IN_SET(operation, DIGEST_BLOB, DIGEST_BLOB_INDEX) ? 0 : CA_FORMAT_WITH_MASK);
+        r = load_feature_flags(s, IN_SET(operation, DIGEST_BLOB, DIGEST_BLOB_INDEX) ? 0 : SUPPORTED_WITH_MASK);
         if (r < 0)
                 return r;
 

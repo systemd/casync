@@ -56,6 +56,10 @@ void* realloc_buffer_extend(ReallocBuffer *b, size_t size);
 void* realloc_buffer_extend0(ReallocBuffer *b, size_t size);
 void* realloc_buffer_append(ReallocBuffer *b, const void *p, size_t size);
 
+static inline void* realloc_buffer_append_byte(ReallocBuffer *b, uint8_t q) {
+        return realloc_buffer_append(b, &q, sizeof(q));
+}
+
 void realloc_buffer_free(ReallocBuffer *b);
 
 static inline void realloc_buffer_empty(ReallocBuffer *b) {
@@ -72,6 +76,8 @@ static inline int realloc_buffer_read(ReallocBuffer *b, int fd) {
         return realloc_buffer_read_size(b, fd, (size_t) -1);
 }
 
+int realloc_buffer_read_full(ReallocBuffer *b, int fd, size_t limit);
+
 int realloc_buffer_write(ReallocBuffer *b, int fd);
 int realloc_buffer_write_maybe(ReallocBuffer *b, int fd);
 
@@ -82,5 +88,7 @@ void* realloc_buffer_steal(ReallocBuffer *b);
 void* realloc_buffer_donate(ReallocBuffer *b, void *p, size_t size);
 
 int realloc_buffer_printf(ReallocBuffer *b, const char *fmt, ...) _printf_(2,3);
+
+int realloc_buffer_memchr(ReallocBuffer *buffer, uint8_t c);
 
 #endif

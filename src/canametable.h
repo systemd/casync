@@ -7,6 +7,7 @@
 #include <sys/types.h>
 
 #include "util.h"
+#include "realloc-buffer.h"
 
 /* A name table object. Contains a list of CaNameItem that carry the hash of a filename plus the start and end archive
  * offsets of the serializations of these files. The object is considered immutable, unless only a single reference is
@@ -44,6 +45,8 @@ DEFINE_TRIVIAL_CLEANUP_FUNC(CaNameTable*, ca_name_table_unref);
 int ca_name_table_make_writable(CaNameTable **t, size_t add);
 int ca_name_table_add(CaNameTable **t, CaNameItem **ret);
 
+int ca_name_table_format_realloc_buffer(CaNameTable *t, ReallocBuffer *buffer);
+
 char* ca_name_table_format(CaNameTable *t);
 int ca_name_table_parse(const char **text, CaNameTable **ret);
 
@@ -72,5 +75,7 @@ int ca_name_table_make_bst(CaNameTable *t, CaNameTable **ret);
 
 int ca_name_table_dump(FILE *f, CaNameTable *t);
 int ca_name_table_dump_recursive(FILE *f, CaNameTable *t);
+
+bool ca_name_table_equal(CaNameTable *a, CaNameTable *b);
 
 #endif

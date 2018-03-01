@@ -29,7 +29,7 @@ if [ `id -u` == 0 ] ; then
     cp -aT @top_srcdir@ $SCRATCH_DIR/src/casync
 else
     # If we lack privileges we use rsync rather than cp to copy, as it will just skip over device nodes
-    rsync -a @top_srcdir@/ $SCRATCH_DIR/src/casync
+    rsync -a --exclude=.cacac @top_srcdir@/ $SCRATCH_DIR/src/casync
 fi
 
 cd $SCRATCH_DIR/src

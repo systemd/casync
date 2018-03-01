@@ -184,7 +184,7 @@ CaSync *ca_sync_new_encode(void) {
                 return NULL;
 
         s->direction = CA_SYNC_ENCODE;
-        assert_se(ca_feature_flags_normalize(CA_FORMAT_DEFAULT, &s->feature_flags) >= 0);
+        s->feature_flags = CA_FORMAT_DEFAULT & SUPPORTED_FEATURE_MASK;
 
         return s;
 }
@@ -1836,6 +1836,20 @@ static int ca_sync_cache_get(CaSync *s, CaLocation *location) {
         return r;
 }
 
+static int ca_sync_need_data(CaSync *s) {
+        assert(s);
+
+        /* Returns true if we actually need to generate any data, i.e. when we are supposed to write an index or
+         * archive, or a store to write to is configured, or at least one form of digest is turned on. It neither is
+         * the case (because we just want to list files/directories) then we can avoid generating data and speed things
+         * up */
+
+        return s->index || s->remote_index ||
+                s->archive_fd >= 0 || s->remote_archive ||
+                s->wstore || s->cache_store ||
+                s->archive_digest || s->hardlink_digest || s->payload_digest;
+}
+
 static int ca_sync_step_encode(CaSync *s) {
         int r, step;
         bool next_step;
@@ -1920,7 +1934,7 @@ static int ca_sync_step_encode(CaSync *s) {
                 assert_se(a = ca_origin_get(s->current_cache_origin, 0));
                 assert_se(b = ca_origin_get(s->buffer_origin, 0));
 
-                if (ca_location_equal(a, b, false)) {
+                if (ca_location_equal(a, b, CA_LOCATION_WITH_MTIME|CA_LOCATION_WITH_FEATURE_FLAGS)) {
                         uint64_t sz;
 
                         /* Yay, this location checked out. Let's advance both our buffer (and its origin), and the
@@ -2056,8 +2070,8 @@ static int ca_sync_step_encode(CaSync *s) {
         case CA_ENCODER_PAYLOAD:
         case CA_ENCODER_DATA: {
                 _cleanup_(ca_location_unrefp) CaLocation *location = NULL;
-                const void *p;
                 size_t l, extra_offset = 0;
+                const void *p = NULL;
 
                 switch (s->cache_state) {
 
@@ -2113,7 +2127,7 @@ static int ca_sync_step_encode(CaSync *s) {
 
                         assert_se(cached_location = ca_origin_get(s->current_cache_origin, 0));
 
-                        if (!ca_location_equal(location, cached_location, false)) {
+                        if (!ca_location_equal(location, cached_location, CA_LOCATION_WITH_MTIME|CA_LOCATION_WITH_FEATURE_FLAGS)) {
                                 /* We are not where we should be. Bummer. */
                                 log_debug("Cache item out of date, location didn't match (on encoder). %s != %s",
                                           ca_location_format(location), ca_location_format(cached_location));
@@ -2199,12 +2213,16 @@ static int ca_sync_step_encode(CaSync *s) {
                         assert_not_reached("Unexpected cache state");
                 }
 
-                r = ca_encoder_get_data(s->encoder, UINT64_MAX, &p, &l);
+                if (ca_sync_need_data(s))
+                        r = ca_encoder_get_data(s->encoder, UINT64_MAX, &p, &l);
+                else
+                        r = ca_encoder_get_data(s->encoder, UINT64_MAX, NULL, &l);
                 if (r < 0)
                         return log_debug_errno(r, "Failed to acquire data: %m");
 
                 /* Apply the extra offset, if there's any */
-                p = (const uint8_t*) p + extra_offset;
+                if (p)
+                        p = (const uint8_t*) p + extra_offset;
                 l -= extra_offset;
 
                 if (s->cache) {
@@ -2223,17 +2241,19 @@ static int ca_sync_step_encode(CaSync *s) {
                                 return r;
                 }
 
-                r = ca_sync_write_chunks(s, p, l, location);
-                if (r < 0)
-                        return r;
+                if (p) {
+                        r = ca_sync_write_chunks(s, p, l, location);
+                        if (r < 0)
+                                return r;
 
-                r = ca_sync_write_archive(s, p, l);
-                if (r < 0)
-                        return r;
+                        r = ca_sync_write_archive(s, p, l);
+                        if (r < 0)
+                                return r;
 
-                r = ca_sync_write_remote_archive(s, p, l);
-                if (r < 0)
-                        return r;
+                        r = ca_sync_write_remote_archive(s, p, l);
+                        if (r < 0)
+                                return r;
+                }
 
         done:
                 return step == CA_ENCODER_NEXT_FILE ? CA_SYNC_NEXT_FILE :
@@ -3223,7 +3243,7 @@ int ca_sync_get_local(
                 if (r == -ENOENT)
                         continue;
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to acquire chunk from seed: %m");
 
                 if (desired_compression == CA_CHUNK_COMPRESSED) {
                         realloc_buffer_empty(&s->compress_buffer);
@@ -3702,6 +3722,26 @@ int ca_sync_current_xattr(CaSync *s, CaIterate where, const char **ret_name, con
                 return ca_encoder_current_xattr(s->encoder, where, ret_name, ret_value, ret_size);
         if (s->direction == CA_SYNC_DECODE && s->decoder)
                 return ca_decoder_current_xattr(s->decoder, where, ret_name, ret_value, ret_size);
+
+        return -ENOTTY;
+}
+
+int ca_sync_current_quota_projid(CaSync *s, uint32_t *ret) {
+        CaSeed *seed;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        seed = ca_sync_current_seed(s);
+        if (seed)
+                return -ENODATA;
+
+        if (s->direction == CA_SYNC_ENCODE && s->encoder)
+                return ca_encoder_current_quota_projid(s->encoder, ret);
+        if (s->direction == CA_SYNC_DECODE && s->decoder)
+                return ca_decoder_current_quota_projid(s->decoder, ret);
 
         return -ENOTTY;
 }

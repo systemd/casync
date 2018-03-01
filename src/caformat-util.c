@@ -25,6 +25,9 @@ const char *ca_format_type_name(uint64_t u) {
         case CA_FORMAT_FCAPS:
                 return "fcaps";
 
+        case CA_FORMAT_QUOTA_PROJID:
+                return "quota-projid";
+
         case CA_FORMAT_ACL_USER:
                 return "acl-user";
 
@@ -101,12 +104,13 @@ static const struct {
         { "flag-sync",        CA_FORMAT_WITH_FLAG_SYNC        },
         { "flag-nocomp",      CA_FORMAT_WITH_FLAG_NOCOMP      },
         { "flag-projinherit", CA_FORMAT_WITH_FLAG_PROJINHERIT },
-        { "flag-subvolume",   CA_FORMAT_WITH_SUBVOLUME        },
-        { "flag-subvolume-ro",CA_FORMAT_WITH_SUBVOLUME_RO     },
+        { "subvolume",        CA_FORMAT_WITH_SUBVOLUME        },
+        { "subvolume-ro",     CA_FORMAT_WITH_SUBVOLUME_RO     },
         { "xattrs",           CA_FORMAT_WITH_XATTRS           },
         { "acl",              CA_FORMAT_WITH_ACL              },
         { "selinux",          CA_FORMAT_WITH_SELINUX          },
         { "fcaps",            CA_FORMAT_WITH_FCAPS            },
+        { "quota-projid",     CA_FORMAT_WITH_QUOTA_PROJID     },
         { "best",             CA_FORMAT_WITH_BEST             },
         { "unix",             CA_FORMAT_WITH_UNIX             },
         { "fat",              CA_FORMAT_WITH_FAT              },
@@ -133,6 +137,13 @@ int ca_with_feature_flags_format(uint64_t features, char **ret) {
         char *s = NULL;
         size_t i;
 
+        /* Refuse this if there are any bits we don't know */
+        if (features & ~CA_FORMAT_FEATURE_FLAGS_MAX)
+                return -EINVAL;
+
+        /* We only format --with= and --without= flags here */
+        features &= CA_FORMAT_WITH_MASK;
+
         for (i = 0; i < ELEMENTSOF(with_feature_map); i++) {
                 uint64_t f;
 
@@ -152,10 +163,7 @@ int ca_with_feature_flags_format(uint64_t features, char **ret) {
                 features &= ~f;
         }
 
-        if ((features & ~(CA_FORMAT_EXCLUDE_NODUMP|CA_FORMAT_EXCLUDE_SUBMOUNTS|CA_FORMAT_SHA512_256)) != 0) {
-                free(s);
-                return -EINVAL;
-        }
+        assert(features == 0);
 
         *ret = s;
         return 0;
@@ -409,7 +417,8 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_XATTRS|
                         CA_FORMAT_WITH_ACL|
                         CA_FORMAT_WITH_SELINUX|
-                        CA_FORMAT_WITH_FCAPS;
+                        CA_FORMAT_WITH_FCAPS|
+                        CA_FORMAT_WITH_QUOTA_PROJID;
 
         case (statfs_f_type_t) XFS_SUPER_MAGIC:
                 return
@@ -434,7 +443,8 @@ uint64_t ca_feature_flags_from_magic(statfs_f_type_t magic) {
                         CA_FORMAT_WITH_XATTRS|
                         CA_FORMAT_WITH_ACL|
                         CA_FORMAT_WITH_SELINUX|
-                        CA_FORMAT_WITH_FCAPS;
+                        CA_FORMAT_WITH_FCAPS|
+                        CA_FORMAT_WITH_QUOTA_PROJID;
 
         case (statfs_f_type_t) BTRFS_SUPER_MAGIC:
                 return

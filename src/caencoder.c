@@ -30,11 +30,13 @@
 #include "caformat-util.h"
 #include "caformat.h"
 #include "camakebst.h"
+#include "camatch.h"
 #include "canametable.h"
 #include "cautil.h"
 #include "chattr.h"
 #include "def.h"
 #include "fssize.h"
+#include "quota-projid.h"
 #include "realloc-buffer.h"
 #include "siphash24.h"
 #include "util.h"
@@ -44,6 +46,14 @@
 
 /* #undef ENXIO */
 /* #define ENXIO __LINE__ */
+
+/* Encodes whether we found a ".caexclude" file in this directory, and if we did, whether we loaded it */
+typedef enum CaEncoderHasExcludeFile {
+        CA_ENCODER_HAS_EXCLUDE_FILE_DONT_KNOW = -1,
+        CA_ENCODER_HAS_EXCLUDE_FILE_NO = 0,
+        CA_ENCODER_HAS_EXCLUDE_FILE_YES,
+        CA_ENCODER_HAS_EXCLUDE_FILE_LOADED,
+} CaEncoderHasExcludeFile;
 
 typedef struct CaEncoderExtendedAttribute {
         char *name;
@@ -124,11 +134,19 @@ typedef struct CaEncoderNode {
         int generation;
         int generation_valid; /* tri-state */
 
+        /* The quota project ID, on file systems that support this (ext4, XFS) */
+        uint32_t quota_projid;
+        bool quota_projid_valid;
+
         /* If this is a directory: file name lookup data */
         CaNameTable *name_table;
 
         /* For detecting mount boundaries */
         int mount_id;
+
+        /* Whether there's a ".caexclude" file in this directory, and whether it's loaded */
+        CaEncoderHasExcludeFile has_exclude_file;
+        CaMatch *exclude_match;
 } CaEncoderNode;
 
 typedef enum CaEncoderState {
@@ -205,7 +223,7 @@ CaEncoder *ca_encoder_new(void) {
         if (!e)
                 return NULL;
 
-        assert_se(ca_feature_flags_normalize(CA_FORMAT_DEFAULT, &e->feature_flags) >= 0);
+        e->feature_flags = CA_FORMAT_DEFAULT & SUPPORTED_FEATURE_MASK;
         e->time_granularity = 1;
 
         return e;
@@ -259,6 +277,7 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
         n->acl_default_mask_permissions = UINT64_MAX;
 
         n->fcaps = mfree(n->fcaps);
+        n->quota_projid_valid = false;
 
 #if HAVE_SELINUX
         if (n->selinux_label) {
@@ -275,6 +294,9 @@ static void ca_encoder_node_free(CaEncoderNode *n) {
 
         n->mount_id = -1;
         n->generation_valid = 1;
+
+        n->has_exclude_file = CA_ENCODER_HAS_EXCLUDE_FILE_DONT_KNOW;
+        n->exclude_match = ca_match_unref(n->exclude_match);
 }
 
 CaEncoder *ca_encoder_unref(CaEncoder *e) {
@@ -372,6 +394,7 @@ int ca_encoder_set_base_fd(CaEncoder *e, int fd) {
                 .acl_default_mask_permissions = UINT64_MAX,
                 .mount_id = -1,
                 .generation_valid = -1,
+                .has_exclude_file = CA_ENCODER_HAS_EXCLUDE_FILE_DONT_KNOW,
         };
 
         e->n_nodes = 1;
@@ -447,6 +470,16 @@ static const struct dirent *ca_encoder_node_current_dirent(CaEncoderNode *n) {
         return n->dirents[n->dirent_idx];
 }
 
+static const char *ca_encoder_node_current_child_name(CaEncoderNode *n) {
+        const struct dirent *de;
+
+        de = ca_encoder_node_current_dirent(n);
+        if (!de)
+                return NULL;
+
+        return de->d_name;
+}
+
 static int scandir_filter(const struct dirent *de) {
         assert(de);
 
@@ -484,6 +517,50 @@ static int ca_encoder_node_read_dirents(CaEncoderNode *n) {
         n->dirent_idx = 0;
 
         return 1;
+}
+
+static int dirent_bsearch_func(const void *key, const void *member) {
+        const char *k = key;
+        const struct dirent ** const m = (const struct dirent ** const) member;
+
+        return strcmp(k, (*m)->d_name);
+}
+
+static int ca_encoder_node_load_exclude_file(CaEncoderNode *n) {
+        int r;
+        assert(n);
+
+        if (!S_ISDIR(n->stat.st_mode))
+                return -ENOTDIR;
+        if (n->fd < 0)
+                return -EBADFD;
+
+        if (n->has_exclude_file == CA_ENCODER_HAS_EXCLUDE_FILE_DONT_KNOW) {
+                struct dirent **found;
+
+                r = ca_encoder_node_read_dirents(n);
+                if (r < 0)
+                        return r;
+
+                found = bsearch(".caexclude", n->dirents, n->n_dirents, sizeof(struct dirent*), dirent_bsearch_func);
+                n->has_exclude_file = found ? CA_ENCODER_HAS_EXCLUDE_FILE_YES : CA_ENCODER_HAS_EXCLUDE_FILE_NO;
+        }
+
+        if (n->has_exclude_file == CA_ENCODER_HAS_EXCLUDE_FILE_YES) {
+                _cleanup_(ca_match_unrefp) CaMatch *match = NULL;
+
+                r = ca_match_new_from_file(n->fd, ".caexclude", &match);
+                if (r < 0)
+                        return r;
+
+                r = ca_match_merge(&n->exclude_match, match);
+                if (r < 0)
+                        return r;
+
+                n->has_exclude_file = CA_ENCODER_HAS_EXCLUDE_FILE_LOADED;
+        }
+
+        return 0;
 }
 
 static int ca_encoder_node_read_device_size(CaEncoderNode *n) {
@@ -719,13 +796,42 @@ static int ca_encoder_node_read_generation(
 
         if (ioctl(n->fd, FS_IOC_GETVERSION, &n->generation) < 0) {
 
-                if (!IN_SET(errno, ENOTTY, ENOSYS, EBADF, EOPNOTSUPP, EINVAL))
+                if (!ERRNO_IS_UNSUPPORTED(errno))
                         return -errno;
 
                 n->generation_valid = false;
         } else
                 n->generation_valid = true;
 
+        return 0;
+}
+
+static int ca_encoder_node_read_quota_projid(
+                CaEncoder *e,
+                CaEncoderNode *n) {
+
+        int r;
+
+        assert(e);
+        assert(n);
+
+        if (!S_ISDIR(n->stat.st_mode) && !S_ISREG(n->stat.st_mode))
+                return 0;
+        if (n->fd < 0)
+                return -EBADFD;
+        if (n->quota_projid_valid) /* Already read? */
+                return 0;
+        if (!(e->feature_flags & CA_FORMAT_WITH_QUOTA_PROJID))
+                return 0;
+
+        if (IN_SET(n->magic, EXT4_SUPER_MAGIC, XFS_SUPER_MAGIC, FUSE_SUPER_MAGIC)) {
+                r = read_quota_projid(n->fd, &n->quota_projid);
+                if (r < 0)
+                        return r;
+        } else
+                n->quota_projid = 0;
+
+        n->quota_projid_valid = true;
         return 0;
 }
 
@@ -1606,6 +1712,7 @@ static CaEncoderNode* ca_encoder_init_child(CaEncoder *e) {
                 .acl_default_mask_permissions = UINT64_MAX,
                 .mount_id = -1,
                 .generation_valid = -1,
+                .has_exclude_file = CA_ENCODER_HAS_EXCLUDE_FILE_DONT_KNOW,
         };
 
         return n;
@@ -1699,11 +1806,13 @@ static int ca_encoder_leave_child(CaEncoder *e) {
 }
 
 static int ca_encoder_shall_store_child_node(CaEncoder *e, CaEncoderNode *n) {
+        _cleanup_(ca_match_unrefp) CaMatch *match = NULL;
         CaEncoderNode *child;
         int r;
 
         assert(e);
         assert(n);
+        assert(S_ISDIR(n->stat.st_mode));
 
         /* Check whether this node is one we should care for or skip */
 
@@ -1737,6 +1846,22 @@ static int ca_encoder_shall_store_child_node(CaEncoder *e, CaEncoderNode *n) {
                 return r;
         if ((e->feature_flags & CA_FORMAT_EXCLUDE_SUBMOUNTS) && child->mount_id >= 0 && n->mount_id >= 0 && child->mount_id != n->mount_id)
                 return false;
+
+        /* Load and check the child against our .caexclude file if we have one */
+        r = ca_encoder_node_load_exclude_file(n);
+        if (r < 0)
+                return log_debug_errno(r, "Failed to load exclude file: %m");
+
+        r = ca_match_test(n->exclude_match, ca_encoder_node_current_child_name(n), S_ISDIR(child->stat.st_mode), &match);
+        if (r < 0)
+                return log_debug_errno(r, "Failed to test child '%s' against exclude list: %m", ca_encoder_node_current_child_name(n));
+        if (r > 0)
+                return false;
+
+        /* Merge the match calculated for this subtree into the child's match object */
+        r = ca_match_merge(&child->exclude_match, match);
+        if (r < 0)
+                return log_debug_errno(r, "Failed to merge subtree match: %m");
 
         return true;
 }
@@ -2419,6 +2544,10 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         if (r < 0)
                 return r;
 
+        r = ca_encoder_node_read_quota_projid(e, n);
+        if (r < 0)
+                return r;
+
         if (e->feature_flags & (CA_FORMAT_WITH_16BIT_UIDS|CA_FORMAT_WITH_32BIT_UIDS)) {
                 uid_t shifted_uid;
                 gid_t shifted_gid;
@@ -2496,10 +2625,11 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 size += offsetof(CaFormatGroup, name) +
                         strlen(e->cached_group_name) + 1;
 
-        for (i = 0; i < n->n_xattrs; i++)
-                size += offsetof(CaFormatXAttr, name_and_value) +
-                        strlen(n->xattrs[i].name) + 1 +
-                        n->xattrs[i].data_size;
+        if (e->feature_flags & CA_FORMAT_WITH_XATTRS)
+                for (i = 0; i < n->n_xattrs; i++)
+                        size += offsetof(CaFormatXAttr, name_and_value) +
+                                strlen(n->xattrs[i].name) + 1 +
+                                n->xattrs[i].data_size;
 
         size += ca_encoder_format_acl_user_size(n->acl_user, n->n_acl_user);
         size += ca_encoder_format_acl_group_size(n->acl_group, n->n_acl_group);
@@ -2519,8 +2649,11 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
         if (n->selinux_label_valid && n->selinux_label)
                 size += offsetof(CaFormatSELinux, label) + strlen(n->selinux_label) + 1;
 
-        if (n->fcaps)
+        if (n->fcaps && (e->feature_flags & CA_FORMAT_WITH_FCAPS))
                 size += offsetof(CaFormatFCaps, data) + n->fcaps_size;
+
+        if (n->quota_projid_valid && n->quota_projid != 0)
+                size += sizeof(CaFormatQuotaProjID);
 
         if (S_ISREG(n->stat.st_mode))
                 size += offsetof(CaFormatPayload, data);
@@ -2569,17 +2702,19 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 p = stpcpy(p, e->cached_group_name) + 1;
         }
 
-        for (i = 0; i < n->n_xattrs; i++) {
-                CaFormatHeader header = {
-                        .type = htole64(CA_FORMAT_XATTR),
-                        .size = htole64(offsetof(CaFormatXAttr, name_and_value) +
-                                        strlen(n->xattrs[i].name) + 1 +
-                                        n->xattrs[i].data_size),
-                };
+        if (e->feature_flags & CA_FORMAT_WITH_XATTRS) {
+                for (i = 0; i < n->n_xattrs; i++) {
+                        CaFormatHeader header = {
+                                .type = htole64(CA_FORMAT_XATTR),
+                                .size = htole64(offsetof(CaFormatXAttr, name_and_value) +
+                                                strlen(n->xattrs[i].name) + 1 +
+                                                n->xattrs[i].data_size),
+                        };
 
-                p = mempcpy(p, &header, sizeof(header));
-                p = stpcpy(p, n->xattrs[i].name) + 1;
-                p = mempcpy(p, n->xattrs[i].data, n->xattrs[i].data_size);
+                        p = mempcpy(p, &header, sizeof(header));
+                        p = stpcpy(p, n->xattrs[i].name) + 1;
+                        p = mempcpy(p, n->xattrs[i].data, n->xattrs[i].data_size);
+                }
         }
 
         p = ca_encoder_format_acl_user_append(e, p, CA_FORMAT_ACL_USER, n->acl_user, n->n_acl_user);
@@ -2624,7 +2759,7 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
                 p = stpcpy(p, n->selinux_label) + 1;
         }
 
-        if (n->fcaps) {
+        if (n->fcaps && (e->feature_flags & CA_FORMAT_WITH_FCAPS)) {
                 CaFormatHeader header = {
                         .type = htole64(CA_FORMAT_FCAPS),
                         .size = htole64(offsetof(CaFormatFCaps, data) + n->fcaps_size),
@@ -2632,6 +2767,16 @@ static int ca_encoder_get_entry_data(CaEncoder *e, CaEncoderNode *n) {
 
                 p = mempcpy(p, &header, sizeof(header));
                 p = mempcpy(p, n->fcaps, n->fcaps_size);
+        }
+
+        if (n->quota_projid_valid && n->quota_projid != 0) {
+                CaFormatQuotaProjID projid = {
+                        .header.type = htole64(CA_FORMAT_QUOTA_PROJID),
+                        .header.size = htole64(sizeof(CaFormatQuotaProjID)),
+                        .projid = htole64(n->quota_projid),
+                };
+
+                p = mempcpy(p, &projid, sizeof(projid));
         }
 
         if (S_ISREG(n->stat.st_mode)) {
@@ -3086,7 +3231,7 @@ int ca_encoder_current_user(CaEncoder *e, const char **ret) {
         if (!ret)
                 return -EINVAL;
 
-        if (!(e->feature_flags & (CA_FORMAT_WITH_USER_NAMES)))
+        if (!(e->feature_flags & CA_FORMAT_WITH_USER_NAMES))
                 return -ENODATA;
 
         n = ca_encoder_current_node(e);
@@ -3097,10 +3242,13 @@ int ca_encoder_current_user(CaEncoder *e, const char **ret) {
         if (r < 0)
                 return r;
 
-        if (!e->cached_user_name || e->cached_uid != n->stat.st_uid)
+        if (e->cached_user_name && e->cached_uid == n->stat.st_uid)
+                *ret = e->cached_user_name;
+        else if (n->stat.st_uid == 0)
+                *ret = "root";
+        else
                 return -ENODATA;
 
-        *ret = e->cached_user_name;
         return 0;
 }
 
@@ -3113,7 +3261,7 @@ int ca_encoder_current_group(CaEncoder *e, const char **ret) {
         if (!ret)
                 return -EINVAL;
 
-        if (!(e->feature_flags & (CA_FORMAT_WITH_USER_NAMES)))
+        if (!(e->feature_flags & CA_FORMAT_WITH_USER_NAMES))
                 return -ENODATA;
 
         n = ca_encoder_current_node(e);
@@ -3124,10 +3272,13 @@ int ca_encoder_current_group(CaEncoder *e, const char **ret) {
         if (r < 0)
                 return r;
 
-        if (!e->cached_group_name || e->cached_gid != n->stat.st_gid)
+        if (e->cached_group_name && e->cached_gid == n->stat.st_gid)
+                *ret = e->cached_group_name;
+        else if (n->stat.st_gid == 0)
+                *ret = "root";
+        else
                 return -ENODATA;
 
-        *ret = e->cached_group_name;
         return 0;
 }
 
@@ -3281,6 +3432,25 @@ eof:
         return 0;
 }
 
+int ca_encoder_current_quota_projid(CaEncoder *e, uint32_t *ret) {
+        CaEncoderNode *n;
+
+        if (!e)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        n = ca_encoder_current_node(e);
+        if (!n)
+                return -EUNATCH;
+
+        if (!n->quota_projid_valid)
+                return -ENODATA;
+
+        *ret = n->quota_projid;
+        return 0;
+}
+
 int ca_encoder_current_payload_offset(CaEncoder *e, uint64_t *ret) {
         CaEncoderNode *n;
 
@@ -3400,15 +3570,10 @@ int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret) {
         if (e->archive_offset != UINT64_MAX)
                 l->archive_offset = e->archive_offset + add;
 
+        l->feature_flags = e->feature_flags;
+
         *ret = l;
         return 0;
-}
-
-static int dirent_bsearch_func(const void *key, const void *member) {
-        const char *k = key;
-        const struct dirent ** const m = (const struct dirent ** const) member;
-
-        return strcmp(k, (*m)->d_name);
 }
 
 static int ca_encoder_node_seek_child(CaEncoder *e, CaEncoderNode *n, const char *name) {
@@ -3572,7 +3737,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
         case CA_LOCATION_ENTRY:
                 r = ca_encoder_seek_path_and_enter(e, location->path);
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to seek to path %s and enter: %m", location->path);
 
                 node = ca_encoder_current_node(e);
                 assert(node);
@@ -3596,6 +3761,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
                 }
 
                 /* …and a new one for ourselves (if we are a directory that is). */
+                node->name_table = ca_name_table_unref(node->name_table);
                 r = ca_encoder_initialize_name_table(e, node, location->offset);
                 if (r < 0)
                         return r;
@@ -3621,7 +3787,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 r = ca_encoder_seek_path_and_enter(e, location->path);
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to seek to path %s and enter: %m", location->path);
 
                 node = ca_encoder_current_node(e);
                 assert(node);
@@ -3672,7 +3838,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 r = ca_encoder_seek_path(e, location->path);
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to seek to path %s: %m", location->path);
 
                 node = ca_encoder_current_node(e);
                 assert(node);
@@ -3701,7 +3867,7 @@ int ca_encoder_seek_location(CaEncoder *e, CaLocation *location) {
 
                 r = ca_encoder_seek_path_and_enter(e, location->path);
                 if (r < 0)
-                        return r;
+                        return log_debug_errno(r, "Failed to seek to path %s and enter: %m", location->path);
 
                 node = ca_encoder_current_node(e);
                 assert(node);

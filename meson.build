@@ -295,10 +295,13 @@ test_sources = '''
         test-cachunker-histogram
         test-cadigest
         test-caencoder
+        test-calocation
         test-camakebst
+        test-camatch
         test-caorigin
         test-casync
         test-cautil
+        test-feature-flags
         test-util
 '''.split()
 

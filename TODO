@@ -4,7 +4,6 @@ SHORT-TERM:
 
 TO MAKE IT USEFUL FOR BACKUPS:
 * encryption: aes256 of rotating hash function + HMAC for identifying chunks + individually encrypted chunks
-* speed up repeated image generation: maintain persistent cache for directory trees that permits lookups by a path location as key, returning a chunk id and "newest covering mtime"
 
 LATER:
 * verify
@@ -26,10 +25,9 @@ LATER:
 * implicitly generate index + chunks when accessing base trees or archives through native protocol
 * rework caindex to read multiple chunks per read (use reallocbuffer like elsewhere)
 * permit 511 (or 4095?) redundant NUL bytes at the end of archive and index files, so that they could in theory stored on block devices
-* seed: cache GOODBYE name table data so that we can regenerate the right bits when needed
 * optionally import from/export to classic tar ball (and zip?)
 * optionally interpret aufs/union mount whiteout files?
-* fuse: expose acls and fcaps, selinux
+* fuse: expose acls and fcaps, selinux, quota projid
 * fuse: possibly translate user names on access
 * fuse: provide "mount.casync" compat symlink so that people can list casync mounts in /etc/fstab
 * encoder: change seeking to be more like decoder's seeking (i.e. delay returned events until the next ca_encoder_step() call)
@@ -37,11 +35,17 @@ LATER:
 * send progress information via sd_notify(), so that people can wrap casync nicely in UIs
 * maybe turn "recursive" mode into a numeric value specifying how far to descend?
 * make "casync stat" work on a directory with a subpath
-* save/restore xfs/ext4 projid
 * tweak chunker: shift cut to last "marker".
 * define sane errors we can show user messages about
 * introduce a --best-effort mode when replaying, which means we'll ignore what we can't apply
-* add "--cache-auto" mode, that works like "--cache" but finds a suitable place for the cache automatically
-* use CaNameTable logic in seed, so that we can safely regenerate *any* chunk
 * when building the cache, also build a seed
-* make sure that "casync list" on a directory doesn't read any files
+* recognize NULL chunks and handle them specially
+* make archive digest generation optional
+* add "index" digest
+* maybe add a concept of "packfiles", to contain multiple chunks in one?
+* add libsmbclient backend (so that Lennart can backup to his synology NAS in the easiest way)
+* make sure "casync list /etc/fstab" does something useful
+* rework CaSeed logic to use CaCache as backend, and then add a new command "casync cache" or so, to explicitly generate a cache/seed
+* support blake2 as hashes
+* parallelize image generation: when storing chunks in the store do so in a thread
+* in "casync stat" output show which flags enable what
