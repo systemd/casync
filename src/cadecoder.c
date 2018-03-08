@@ -3681,7 +3681,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         else {
                                 assert(dir_fd >= 0);
 
-                                r = fchmodat(dir_fd, name, new_mode, AT_SYMLINK_NOFOLLOW);
+                                r = fchmodat(dir_fd, name, new_mode, 0);
                         }
                         if (r < 0)
                                 return -errno;
@@ -3696,7 +3696,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         else {
                                 assert(dir_fd >= 0);
 
-                                r = fchmodat(dir_fd, name, read_le64(&child->entry->mode) & 07777, AT_SYMLINK_NOFOLLOW);
+                                r = fchmodat(dir_fd, name, read_le64(&child->entry->mode) & 07777, 0);
                         }
                         if (r < 0)
                                 return -errno;
