@@ -29,7 +29,7 @@
 #include "signal-handler.h"
 #include "util.h"
 
-#ifdef HAVE_UDEV
+#if HAVE_UDEV
 #include <libudev.h>
 #include "udev-util.h"
 #endif
