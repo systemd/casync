@@ -47,6 +47,7 @@ touch casync/zzz-late/testc
 rm casync/NEWS
 
 # And update an existing one
+chmod +w casync/README.md
 echo xxx >> casync/README.md
 
 @top_builddir@/casync list > $SCRATCH_DIR/testx.list
