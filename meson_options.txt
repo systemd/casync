@@ -7,5 +7,7 @@ option('selinux', type : 'boolean', value : true,
        description : 'build the SELinux backend (requires libselinux-devel)')
 option('udev', type : 'boolean', value : true,
        description : 'build the libudev integration (requires libudev-devel)')
+option('udevdir', type : 'string',
+       description : 'udev directory containing rules.d to install rules into')
 option('man', type : 'boolean', value : true,
        description : 'build and install man pages (requires sphinx-build')

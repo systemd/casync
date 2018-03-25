@@ -149,7 +149,11 @@ subdir('test')
 
 includes = include_directories('src')
 
-udevdir = dependency('udev', required : false).get_pkgconfig_variable('udevdir')
+udevdir = get_option('udevdir')
+if udevdir == ''
+        udevdir = dependency('udev',
+                             required : false).get_pkgconfig_variable('udevdir')
+endif
 udevrulesdir = join_paths(udevdir, 'rules.d')
 
 subdir('doc')
