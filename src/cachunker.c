@@ -205,6 +205,25 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
         assert(c);
         assert(p);
 
+        /* fixed size chunker */
+
+        if (c->chunk_size_min == c->chunk_size_avg && c->chunk_size_max == c->chunk_size_avg) {
+                size_t m;
+                size_t fixed_size = c->chunk_size_avg;
+
+                /* Append to window to make it full */
+                m = MIN(fixed_size - c->chunk_size, n);
+
+                c->chunk_size += m;
+
+                if (c->chunk_size < fixed_size)
+                        return (size_t) -1;
+
+                k = m;
+
+                goto now;
+        }
+
         /* Scans the specified bytes for chunk borders. Returns (size_t) -1 if no border was discovered, otherwise the
          * chunk size. */
 
