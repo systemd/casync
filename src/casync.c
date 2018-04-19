@@ -93,6 +93,7 @@ typedef struct CaSync {
         char *base_path, *temporary_base_path;
         char *boundary_path;
         char *archive_path, *temporary_archive_path;
+        char *exclude_from;
 
         mode_t base_mode;
         mode_t make_mode;
@@ -198,6 +199,21 @@ CaSync *ca_sync_new_decode(void) {
 
         s->direction = CA_SYNC_DECODE;
         return s;
+}
+
+int ca_sync_set_exclude_from(CaSync *s, const char *path) {
+
+        if (!s)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_ENCODE)
+                return -EINVAL;
+
+        s->exclude_from = strdup(path);
+        if (!s->exclude_from)
+                return -ENOMEM;
+
+        return 0;
 }
 
 int ca_sync_set_chunk_size_min(CaSync *s, uint64_t v) {
@@ -1317,6 +1333,14 @@ static int ca_sync_start(CaSync *s) {
                 if (r < 0) {
                         s->encoder = ca_encoder_unref(s->encoder);
                         return r;
+                }
+
+                if (s->exclude_from) {
+                        r = ca_encoder_set_exclude_from(s->encoder, s->exclude_from);
+                        if (r < 0) {
+                                s->encoder = ca_encoder_unref(s->encoder);
+                                return r;
+                        }
                 }
 
                 s->base_fd = -1;

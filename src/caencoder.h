@@ -36,6 +36,9 @@ int ca_encoder_set_uid_range(CaEncoder *e, uid_t u);
 int ca_encoder_set_base_fd(CaEncoder *e, int fd);
 int ca_encoder_get_base_fd(CaEncoder *e);
 
+/* Path to exclude filter */
+int ca_encoder_set_exclude_from(CaEncoder *e, const char *path);
+
 int ca_encoder_step(CaEncoder *e);
 
 /* Output: archive stream data */

@@ -526,6 +526,30 @@ static int dirent_bsearch_func(const void *key, const void *member) {
         return strcmp(k, (*m)->d_name);
 }
 
+int ca_encoder_set_exclude_from(CaEncoder *e, const char *path)  {
+        CaEncoderNode *root;
+        _cleanup_(ca_match_unrefp) CaMatch *match = NULL;
+        int r;
+
+        if (!e)
+                return -EINVAL;
+
+        if (!path)
+                return -EINVAL;
+
+        root = ca_encoder_current_node(e);
+
+        r = ca_match_new_from_file(root->fd, path, &match);
+        if (r < 0)
+                return r;
+
+        r = ca_match_merge(&root->exclude_match, match);
+        if (r < 0)
+                return r;
+
+        return 0;
+}
+
 static int ca_encoder_node_load_exclude_file(CaEncoderNode *n) {
         int r;
         assert(n);

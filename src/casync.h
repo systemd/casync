@@ -92,6 +92,9 @@ int ca_sync_add_seed_path(CaSync *sync, const char *path);
 int ca_sync_set_cache_fd(CaSync *sync, int fd);
 int ca_sync_set_cache_path(CaSync *sync, const char *path);
 
+/* Path to exclude filter */
+int ca_sync_set_exclude_from(CaSync *s, const char *path);
+
 int ca_sync_step(CaSync *sync);
 int ca_sync_poll(CaSync *s, uint64_t timeout_nsec, const sigset_t *ss);
 
