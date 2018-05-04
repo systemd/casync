@@ -2972,7 +2972,7 @@ static int verb_mkdev(int argc, char *argv[]) {
 
         r = udev_monitor_filter_add_match_subsystem_devtype(monitor, "block", NULL);
         if (r < 0) {
-                log_error_errno(r, "Failed to addd udev match: %m");
+                log_error_errno(r, "Failed to add udev match: %m");
                 goto finish;
         }
 
