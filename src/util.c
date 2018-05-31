@@ -9,6 +9,7 @@
 #include <time.h>
 #include <linux/fs.h>
 #include <linux/msdos_fs.h>
+#include <linux/falloc.h>
 
 #if USE_SYS_RANDOM_H
 #  include <sys/random.h>
