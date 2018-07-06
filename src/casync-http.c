@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 #include <getopt.h>
 #include <stddef.h>
+#include <unistd.h>
 
 #include "caprotocol.h"
 #include "caremote.h"
@@ -31,6 +32,45 @@ typedef enum ProcessUntil {
         PROCESS_UNTIL_HAVE_REQUEST,
         PROCESS_UNTIL_FINISHED,
 } ProcessUntil;
+
+static CURLcode robust_curl_easy_perform(CURL *curl) {
+        uint64_t sleep_base_usec = 100 * 1000;
+        unsigned trial = 1;
+        unsigned limit = 10;
+        CURLcode c;
+
+        assert(curl);
+
+        while (trial < limit) {
+
+                c = curl_easy_perform(curl);
+
+                switch (c) {
+
+                case CURLE_COULDNT_CONNECT: {
+                        uint64_t sleep_usec;
+
+                        /* Although this is not considered as a transient error by curl,
+                         * this error can happen momentarily while casync is retrieving
+                         * all the chunks from a remote. In this case we want to give
+                         * a break to the server and retry later.
+                         */
+
+                        sleep_usec = sleep_base_usec * trial;
+                        log_info("Could not connect, retrying in %" PRIu64 " ms", sleep_usec / 1000);
+                        usleep(sleep_usec);
+                        trial++;
+                        break;
+                }
+
+                default:
+                        return c;
+                        break;
+                }
+        }
+
+        return c;
+}
 
 static int process_remote(CaRemote *rr, ProcessUntil until) {
         int r;
@@ -277,7 +317,7 @@ static int acquire_file(CaRemote *rr,
         if (arg_verbose)
                 log_info("Acquiring %s...", url);
 
-        if (curl_easy_perform(curl) != CURLE_OK) {
+        if (robust_curl_easy_perform(curl) != CURLE_OK) {
                 log_error("Failed to acquire %s", url);
                 return -EIO;
         }
@@ -529,7 +569,7 @@ static int run(int argc, char *argv[]) {
                 if (arg_verbose)
                         log_info("Acquiring %s...", url_buffer);
 
-                if (curl_easy_perform(curl) != CURLE_OK) {
+                if (robust_curl_easy_perform(curl) != CURLE_OK) {
                         log_error("Failed to acquire %s", url_buffer);
                         r = -EIO;
                         goto finish;
