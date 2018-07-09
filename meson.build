@@ -74,8 +74,10 @@ conf.set('SIZEOF_UID_T', cc.sizeof('uid_t', prefix : '#include <sys/types.h>'))
 conf.set('SIZEOF_GID_T', cc.sizeof('gid_t', prefix : '#include <sys/types.h>'))
 
 foreach ident : [
-        ['renameat2',         '''#include <stdio.h>'''],
-        ['copy_file_range',   '''#include <sys/syscall.h>
+        ['renameat2',         '''#define _GNU_SOURCE
+                                 #include <stdio.h>'''],
+        ['copy_file_range',   '''#define _GNU_SOURCE
+                                 #include <sys/syscall.h>
                                  #include <unistd.h>'''],
 ]
         have = cc.has_function(ident[0], args : '-D_GNU_SOURCE', prefix : ident[1])
