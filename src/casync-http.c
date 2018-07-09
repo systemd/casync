@@ -10,6 +10,8 @@
 #include "realloc-buffer.h"
 #include "util.h"
 
+static volatile sig_atomic_t quit = false;
+
 static bool arg_verbose = false;
 static curl_off_t arg_rate_limit_bps = 0;
 
@@ -453,6 +455,12 @@ static int run(int argc, char *argv[]) {
                 const char *store_url;
                 CaChunkID id;
 
+                if (quit) {
+                        log_info("Got exit signal, quitting.");
+                        r = 0;
+                        goto finish;
+                }
+
                 if (n_stores == 0)  /* No stores? Then we did all we could do */
                         break;
 
@@ -644,15 +652,25 @@ static int parse_argv(int argc, char *argv[]) {
         return 1;
 }
 
+static void exit_signal_handler(int signo) {
+        quit = true;
+}
+
 int main(int argc, char* argv[]) {
-        static const struct sigaction sa = {
+        static const struct sigaction ign_sa = {
                 .sa_handler = SIG_IGN,
                 .sa_flags = SA_RESTART,
+        };
+        static const struct sigaction exit_sa = {
+                .sa_handler = exit_signal_handler,
         };
 
         int r;
 
-        assert_se(sigaction(SIGPIPE, &sa, NULL) >= 0);
+        assert_se(sigaction(SIGPIPE, &ign_sa, NULL) >= 0);
+        assert_se(sigaction(SIGINT, &exit_sa, NULL) >= 0);
+        assert_se(sigaction(SIGTERM, &exit_sa, NULL) >= 0);
+        assert_se(sigaction(SIGHUP, &exit_sa, NULL) >= 0);
 
         r = parse_argv(argc, argv);
         if (r <= 0)
