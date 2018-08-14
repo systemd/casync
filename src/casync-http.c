@@ -273,7 +273,7 @@ static int acquire_file(CaRemote *rr,
         }
 
         if (arg_verbose)
-                log_error("Acquiring %s...", url);
+                log_info("Acquiring %s...", url);
 
         if (curl_easy_perform(curl) != CURLE_OK) {
                 log_error("Failed to acquire %s", url);
