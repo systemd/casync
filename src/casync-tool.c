@@ -1870,6 +1870,19 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                         /* End this in a newline — unless this is a regular file,
                          * in which case we'll print the payload checksum shortly */
                         putchar('\n');
+
+                /*
+                 * After each directory entry, we "go back" to the top-level.
+                 * This is necessary because the mtree(8) format assumes that
+                 * directories are listed hierarchically and that entries
+                 * succeeding a directory are lexically its children. In casync
+                 * we generate full pathnames and don't use this structure, so
+                 * we need to avoid other tools from misunderstanding the paths
+                 * we generate.
+                 */
+                if (S_ISDIR(mode))
+                        puts("..");
+
         } else {
                 const char *target = NULL, *user = NULL, *group = NULL;
                 uint64_t mtime = UINT64_MAX, size = UINT64_MAX, offset = UINT64_MAX;
