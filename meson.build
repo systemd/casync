@@ -78,7 +78,7 @@ foreach ident : [
         ['copy_file_range',   '''#include <sys/syscall.h>
                                  #include <unistd.h>'''],
 ]
-        have = cc.has_function(ident[0], prefix : ident[1])
+        have = cc.has_function(ident[0], args : '-D_GNU_SOURCE', prefix : ident[1])
         conf.set10('HAVE_' + ident[0].to_upper(), have)
 endforeach
 
