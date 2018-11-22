@@ -980,7 +980,7 @@ static int verbose_print_done_extract(CaSync *s) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to determine number of punch holes bytes: %m");
 
-                log_error("Zero bytes written as sparse files: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_info("Zero bytes written as sparse files: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_reflink_bytes(s, &n_bytes);
@@ -988,7 +988,7 @@ static int verbose_print_done_extract(CaSync *s) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to determine number of reflink bytes: %m");
 
-                log_error("Bytes cloned through reflinks: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_info("Bytes cloned through reflinks: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_hardlink_bytes(s, &n_bytes);
@@ -996,7 +996,7 @@ static int verbose_print_done_extract(CaSync *s) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to determine number of hardlink bytes: %m");
 
-                log_error("Bytes cloned through hardlinks: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_info("Bytes cloned through hardlinks: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_local_requests(s, &n_requests);
@@ -1004,7 +1004,7 @@ static int verbose_print_done_extract(CaSync *s) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to determine number of successful local store requests: %m");
 
-                log_error("Chunk requests fulfilled from local store: %" PRIu64, n_requests);
+                log_info("Chunk requests fulfilled from local store: %" PRIu64, n_requests);
         }
 
         r = ca_sync_get_local_request_bytes(s, &n_bytes);
@@ -1012,7 +1012,7 @@ static int verbose_print_done_extract(CaSync *s) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to determine size of successful local store requests: %m");
 
-                log_error("Bytes used from local store: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_info("Bytes used from local store: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_seed_requests(s, &n_requests);
@@ -1020,7 +1020,7 @@ static int verbose_print_done_extract(CaSync *s) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to determine number of successful local seed requests: %m");
 
-                log_error("Chunk requests fulfilled from local seed: %" PRIu64, n_requests);
+                log_info("Chunk requests fulfilled from local seed: %" PRIu64, n_requests);
         }
 
         r = ca_sync_get_seed_request_bytes(s, &n_bytes);
@@ -1028,7 +1028,7 @@ static int verbose_print_done_extract(CaSync *s) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to determine size of successful local seed requests: %m");
 
-                log_error("Bytes used from local seed: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_info("Bytes used from local seed: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         r = ca_sync_get_remote_requests(s, &n_requests);
@@ -1036,7 +1036,7 @@ static int verbose_print_done_extract(CaSync *s) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to determine number of successful remote store requests: %m");
 
-                log_error("Chunk requests fulfilled from remote store: %" PRIu64, n_requests);
+                log_info("Chunk requests fulfilled from remote store: %" PRIu64, n_requests);
         }
 
         r = ca_sync_get_remote_request_bytes(s, &n_bytes);
@@ -1044,7 +1044,7 @@ static int verbose_print_done_extract(CaSync *s) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to determine size of successful remote store requests: %m");
 
-                log_error("Bytes used from remote store: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
+                log_info("Bytes used from remote store: %s", format_bytes(buffer, sizeof(buffer), n_bytes));
         }
 
         return 1;
