@@ -8,6 +8,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <linux/fs.h>
+#include <linux/falloc.h>
 #include <linux/msdos_fs.h>
 
 #if USE_SYS_RANDOM_H
