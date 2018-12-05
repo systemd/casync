@@ -103,7 +103,7 @@ conf.set_quoted('CASYNC_PROTOCOL_PATH', protocoldir)
 liblzma = dependency('liblzma',
                      version : '>= 5.1.0')
 libcurl = dependency('libcurl',
-                     version : '>= 7.32.0')
+                     version : '>= 7.29.0')
 openssl = dependency('openssl',
                      version : '>= 1.0')
 
