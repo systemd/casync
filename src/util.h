@@ -214,9 +214,9 @@ static inline uint64_t random_u64(void) {
         return u;
 }
 
-#define random_bytes(p, n) dev_urandom(p, n);
+#define random_bytes(p, n) dev_urandom(p, n)
 
-#define assert_cc(expr) static_assert(expr, #expr);
+#define assert_cc(expr) static_assert(expr, #expr)
 
 #define CASE_F(X) case X:
 #define CASE_F_1(CASE, X) CASE_F(X)
