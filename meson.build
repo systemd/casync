@@ -62,6 +62,15 @@ foreach arg : c_args
         endif
 endforeach
 
+want_ossfuzz = get_option('oss-fuzz')
+want_libfuzzer = get_option('llvm-fuzz')
+if want_ossfuzz and want_libfuzzer
+        error('only one of oss-fuzz and llvm-fuzz can be specified')
+endif
+fuzzer_build = want_ossfuzz or want_libfuzzer
+
+add_languages('cpp', required : fuzzer_build)
+
 conf = configuration_data()
 conf.set_quoted('PACKAGE_VERSION', meson.project_version())
 
@@ -139,6 +148,12 @@ conf.set10('HAVE_UDEV', get_option('udev'))
 
 threads = dependency('threads')
 math = cc.find_library('m')
+
+if want_libfuzzer
+        fuzzing_engine = meson.get_compiler('cpp').find_library('Fuzzer')
+elif want_ossfuzz
+        fuzzing_engine = meson.get_compiler('cpp').find_library('FuzzingEngine')
+endif
 
 config_h = configure_file(
         output : 'config.h',
@@ -315,27 +330,56 @@ non_test_sources = '''
         test-calc-digest
 '''.split()
 
+test_dependencies = [
+        libacl,
+        liblzma,
+        libselinux,
+        libz,
+        libzstd,
+        math,
+        openssl,
+        threads]
+
 foreach test_name : test_sources + non_test_sources
         exe = executable(
                 test_name,
                 'test/@0@.c'.format(test_name),
-                link_with : libshared,
                 include_directories : includes,
-                dependencies : [
-                        libacl,
-                        liblzma,
-                        libselinux,
-                        libz,
-                        libzstd,
-                        math,
-                        openssl,
-                        threads])
+                link_with : libshared,
+                dependencies : test_dependencies)
 
         if test_sources.contains(test_name)
                 test(test_name, exe,
                      timeout : 3 * 60)
         endif
 endforeach
+
+fuzzer_exes = []
+
+foreach tuple : fuzzers
+        sources = tuple[0]
+
+        deps = test_dependencies
+        if fuzzer_build
+                deps += fuzzing_engine
+        else
+                sources += fuzz_main_c
+        endif
+
+        name = sources[0].split('/')[-1].split('.')[0]
+
+        fuzzer_exes += executable(
+                name,
+                sources,
+                include_directories : [includes, include_directories('test/fuzz')],
+                link_with : libshared,
+                dependencies : deps,
+                install : false)
+endforeach
+
+run_target('fuzzers',
+        depends : fuzzer_exes,
+        command : ['true'])
 
 ############################################################
 
