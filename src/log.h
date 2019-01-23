@@ -36,3 +36,5 @@ static inline int log_oom(void) {
                           __FILE__, __LINE__, __PRETTY_FUNCTION__, x);  \
                 abort();                                                \
         } while(false)
+
+void set_log_level(int level);
