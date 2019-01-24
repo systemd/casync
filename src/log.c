@@ -8,9 +8,9 @@
 #include "log.h"
 #include "util.h"
 
-static int get_log_level(void) {
-        static int cached_log_level = -1;
+static int cached_log_level = -1;
 
+static int get_log_level(void) {
         if (cached_log_level < 0) {
                 const char *e;
 
@@ -38,6 +38,10 @@ static int get_log_level(void) {
         return cached_log_level;
 }
 
+void set_log_level(int level) {
+        cached_log_level = level;
+}
+
 static int log_fullv(
                 int level,
                 int error,
@@ -56,7 +60,11 @@ static int log_fullv(
         if (error != 0)
                 errno = abs(error);
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
         vfprintf(stderr, fmt, ap);
+#pragma GCC diagnostic pop
+
         errno = orig_errno;
         return -abs(error);
 }

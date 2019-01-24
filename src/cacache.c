@@ -143,7 +143,6 @@ static int ca_cache_open(CaCache *c) {
 }
 
 int ca_cache_get(CaCache *c, CaLocation *location, CaChunkID *ret_chunk_id, CaOrigin **ret_origin) {
-        _cleanup_(ca_location_unrefp) CaLocation *patched_location = NULL;
         _cleanup_(realloc_buffer_free) ReallocBuffer buffer = {};
         _cleanup_(ca_origin_unrefp) CaOrigin *origin = NULL;
         char path[CA_CHUNK_ID_PATH_SIZE(NULL, ".cachi")];

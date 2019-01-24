@@ -45,7 +45,7 @@ typedef enum CaCacheState {
         CA_SYNC_CACHE_IDLE,      /* We are not at a position where it might make sense to check the cache */
 } CaCacheState;
 
-typedef struct CaSync {
+struct CaSync {
         CaDirection direction;
         bool started;
 
@@ -148,7 +148,7 @@ typedef struct CaSync {
         uint64_t chunk_size_max;
 
         CaCompressionType compression_type;
-} CaSync;
+};
 
 static CaSync *ca_sync_new(void) {
         CaSync *s;

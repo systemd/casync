@@ -24,7 +24,6 @@ c_args = '''
         -Werror=old-style-definition
         -Werror=pointer-arith
         -Winit-self
-        -Wdeclaration-after-statement
         -Wfloat-equal
         -Wsuggest-attribute=noreturn
         -Werror=missing-prototypes
