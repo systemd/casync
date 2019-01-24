@@ -179,7 +179,7 @@ int rm_rf_children(int fd, RemoveFlags flags, struct stat *root_dev) {
 
 int rm_rf_at(int dir_fd, const char *path, RemoveFlags flags) {
         struct statfs s;
-        int fd, r;
+        int fd, r, k;
 
         assert(dir_fd == AT_FDCWD || dir_fd >= 0);
         assert(path);
@@ -224,11 +224,9 @@ int rm_rf_at(int dir_fd, const char *path, RemoveFlags flags) {
         r = rm_rf_children(fd, flags, NULL);
 
         if (flags & REMOVE_ROOT) {
-                r = unlinkat_immutable(dir_fd, path, AT_REMOVEDIR, flags);
-                if (r < 0) {
-                        if (r == 0 && r != -ENOENT)
-                                r = r;
-                }
+                k = unlinkat_immutable(dir_fd, path, AT_REMOVEDIR, flags);
+                if (k < 0 && k != -ENOENT && r >= 0)
+                        r = k;
         }
 
         return r;
