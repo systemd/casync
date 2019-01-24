@@ -6,11 +6,11 @@
 #include "gc.h"
 #include "set.h"
 
-typedef struct CaChunkCollection {
+struct CaChunkCollection {
         size_t n_used;
 
         Set *used_chunks;
-} CaChunkCollection;
+};
 
 static void chunk_hash_func(const void *p, struct siphash *state) {
         const CaChunkID *id = p;
