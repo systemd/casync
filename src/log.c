@@ -60,7 +60,11 @@ static int log_fullv(
         if (error != 0)
                 errno = abs(error);
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
         vfprintf(stderr, fmt, ap);
+#pragma GCC diagnostic pop
+
         errno = orig_errno;
         return -abs(error);
 }
