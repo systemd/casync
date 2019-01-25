@@ -8,8 +8,9 @@ project('casync', 'c',
                 'prefix=/usr',
                 'sysconfdir=/etc',
                 'localstatedir=/var',
+                'auto_features=enabled',
         ],
-        meson_version : '>= 0.40')
+        meson_version : '>= 0.47')
 
 cc = meson.get_compiler('c')
 
@@ -110,18 +111,27 @@ docdir = join_paths(datadir, 'doc/casync')
 protocoldir = join_paths(prefixdir, 'lib/casync/protocols')
 conf.set_quoted('CASYNC_PROTOCOL_PATH', protocoldir)
 
-liblzma = dependency('liblzma',
-                     version : '>= 5.1.0')
+liblzma = dependency(
+        'liblzma',
+        version : '>= 5.1.0',
+        required : get_option('liblzma'))
+conf.set10('HAVE_LIBLZMA', liblzma.found())
+
+libz = dependency(
+        'zlib',
+        required : get_option('libz'))
+conf.set10('HAVE_LIBZ', libz.found())
+
+libzstd = dependency(
+        'libzstd',
+        version : '>= 0.8.1',
+        required : get_option('libzstd'))
+conf.set10('HAVE_LIBZSTD', libzstd.found())
+
 libcurl = dependency('libcurl',
                      version : '>= 7.29.0')
 openssl = dependency('openssl',
                      version : '>= 1.0')
-
-libz = dependency('zlib')
-
-libzstd = dependency('libzstd',
-                      version : '>= 0.8.1')
-
 libacl = cc.find_library('acl')
 
 if get_option('fuse')
@@ -242,6 +252,9 @@ substs = configuration_data()
 substs.set_quoted('top_builddir', meson.build_root())
 substs.set_quoted('top_srcdir', meson.source_root())
 substs.set('bindir_unquoted', bindir)
+substs.set10('HAVE_LIBLZMA', liblzma.found())
+substs.set10('HAVE_LIBZ',    libz.found())
+substs.set10('HAVE_LIBZSTD', libzstd.found())
 
 test_script_sh = configure_file(
         output : 'test-script.sh',

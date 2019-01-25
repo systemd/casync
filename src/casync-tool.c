@@ -22,6 +22,7 @@
 #include "caremote.h"
 #include "castore.h"
 #include "casync.h"
+#include "compressor.h"
 #include "def.h"
 #include "gc.h"
 #include "notify.h"
@@ -660,6 +661,11 @@ static int parse_argv(int argc, char *argv[]) {
                         cc = ca_compression_type_from_string(optarg);
                         if (cc < 0)
                                 return log_error_errno(cc, "Failed to parse --compression= parameter: %s", optarg);
+
+                        if (!compressor_is_supported(cc))
+                                return log_error_errno(EINVAL,
+                                                       "Compiled without support for %s compression",
+                                                       ca_compression_type_to_string(cc));
 
                         arg_compression = cc;
                         break;

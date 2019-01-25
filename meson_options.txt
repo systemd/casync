@@ -11,6 +11,12 @@ option('udevrulesdir', type : 'string', value: '',
        description: 'Path where udev rules are installed to (Defaults to udevdir specified in udev.pc)')
 option('man', type : 'boolean', value : true,
        description : 'build and install man pages (requires sphinx-build')
+option('libzstd', type : 'feature',
+       description : 'link to libzstd')
+option('liblzma', type : 'feature',
+       description : 'link to liblzma (for XZ compression)')
+option('libz', type : 'feature',
+       description : 'link to zlib')
 
 option('oss-fuzz', type : 'boolean', value : 'false',
        description : 'build against oss-fuzz')
