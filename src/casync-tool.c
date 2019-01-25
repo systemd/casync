@@ -81,7 +81,9 @@ static void help(void) {
 #if HAVE_FUSE
                "%1$s [OPTIONS...] mount [ARCHIVE|ARCHIVE_INDEX] PATH\n"
 #endif
-               "%1$s [OPTIONS...] mkdev [BLOB|BLOB_INDEX] [NODE]\n\n"
+               "%1$s [OPTIONS...] mkdev [BLOB|BLOB_INDEX] [NODE]\n"
+               "%1$s [OPTIONS...] gc BLOB_INDEX|ARCHIVE_INDEX...\n"
+               "\n"
                "Content-Addressable Data Synchronization Tool\n\n"
                "  -h --help                  Show this help\n"
                "     --version               Show brief version information\n"
