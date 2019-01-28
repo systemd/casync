@@ -779,10 +779,8 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
                 return log_error_errno(r, "Failed to set compression: %m");
 
         r = ca_sync_set_delete(s, arg_delete);
-        if (r < 0 && r != -ENOTTY) {
-                fprintf(stderr, "Failed to set deletion flag: %s\n", strerror(-r));
-                return r;
-        }
+        if (r < 0 && r != -ENOTTY)
+                return log_error_errno(r, "Failed to set deletion flag: %m");
 
         return 0;
 }
@@ -824,7 +822,7 @@ static int load_chunk_size(CaSync *s) {
         if (r < 0)
                 return log_error_errno(r, "Failed to read maximum chunk size: %m");
 
-        log_error("Selected chunk sizes: min=%" PRIu64 "..avg=%" PRIu64 "..max=%" PRIu64, cmin, cavg, cmax);
+        log_info("Selected chunk sizes: min=%" PRIu64 "..avg=%" PRIu64 "..max=%" PRIu64, cmin, cavg, cmax);
         return 1;
 }
 
