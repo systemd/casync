@@ -197,6 +197,11 @@ static bool shall_break(CaChunker *c, uint32_t v) {
         return (v % c->discriminator) == (c->discriminator - 1);
 }
 
+static bool CA_CHUNKER_IS_FIXED_SIZE(CaChunker *c) {
+        return c->chunk_size_min == c->chunk_size_avg &&
+                c->chunk_size_max == c->chunk_size_avg;
+}
+
 size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
         const uint8_t *q = p;
         uint32_t v;
@@ -205,22 +210,19 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
         assert(c);
         assert(p);
 
-        /* fixed size chunker */
-
-        if (c->chunk_size_min == c->chunk_size_avg && c->chunk_size_max == c->chunk_size_avg) {
-                size_t m;
-                size_t fixed_size = c->chunk_size_avg;
+        if (CA_CHUNKER_IS_FIXED_SIZE(c)) {
+                /* Special case: fixed size chunker */
+                size_t m, fixed_size = c->chunk_size_avg;
 
                 /* Append to window to make it full */
+                assert(c->chunk_size < fixed_size);
                 m = MIN(fixed_size - c->chunk_size, n);
-
                 c->chunk_size += m;
 
                 if (c->chunk_size < fixed_size)
                         return (size_t) -1;
 
                 k = m;
-
                 goto now;
         }
 
