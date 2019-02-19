@@ -1058,25 +1058,28 @@ static int verbose_print_done_extract(CaSync *s) {
 
         if (n_local_requests != UINT64_MAX)
                 log_info("Chunk requests fulfilled from local store: %" PRIu64 " (%" PRIu64 "%%)",
-                         n_local_requests, n_local_requests * 100U / total_requests);
+                         n_local_requests,
+                         total_requests > 0 ? n_local_requests * 100U / total_requests : 0);
         if (n_local_bytes != UINT64_MAX)
                 log_info("Bytes used from local store: %s (%" PRIu64 "%%)",
                          format_bytes(buffer, sizeof(buffer), n_local_bytes),
-                         n_local_bytes * 100U / total_bytes);
+                         total_bytes > 0 ? n_local_bytes * 100U / total_bytes : 0);
         if (n_seed_requests != UINT64_MAX)
                 log_info("Chunk requests fulfilled from local seed: %" PRIu64 " (%" PRIu64 "%%)",
-                         n_seed_requests, n_seed_requests * 100U / total_requests);
+                         n_seed_requests,
+                         total_requests > 0 ? n_seed_requests * 100U / total_requests : 0);
         if (n_seed_bytes != UINT64_MAX)
                 log_info("Bytes used from local seed: %s (%" PRIu64 "%%)",
                          format_bytes(buffer, sizeof(buffer), n_seed_bytes),
-                         n_seed_bytes * 100U / total_bytes);
+                         total_bytes > 0 ? n_seed_bytes * 100U / total_bytes : 0);
         if (n_remote_requests != UINT64_MAX)
                 log_info("Chunk requests fulfilled from remote store: %" PRIu64 " (%" PRIu64 "%%)",
-                         n_remote_requests, n_remote_requests * 100U / total_requests);
+                         n_remote_requests,
+                         total_requests > 0 ? n_remote_requests * 100U / total_requests : 0);
         if (n_remote_bytes != UINT64_MAX)
                 log_info("Bytes used from remote store: %s (%" PRIu64 "%%)",
                          format_bytes(buffer, sizeof(buffer), n_remote_bytes),
-                         n_remote_bytes * 100U / total_bytes);
+                         total_bytes > 0 ? n_remote_bytes * 100U / total_bytes : 0);
 
         return 1;
 }
