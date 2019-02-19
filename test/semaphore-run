@@ -1,19 +1,45 @@
-#!/bin/sh
+#!/bin/bash
 # SPDX-License-Identifier: LGPL-2.1+
 
-DEVPKGS="pkg-config liblzma-dev libcurl4-openssl-dev libssl-dev libacl1-dev libfuse-dev zlib1g-dev libzstd-dev libudev-dev"
+DEVPKGS=(
+    pkg-config
+    liblzma-dev
+    libcurl4-openssl-dev
+    libssl-dev
+    libacl1-dev
+    libfuse-dev
+    zlib1g-dev
+    libzstd-dev
+    libudev-dev
+)
 
 echo
 echo "============= Installing amd64 build dependencies =============="
 set -eu
 (
     set -x
-    sudo apt-get install -y software-properties-common
-    sudo add-apt-repository -y ppa:pitti/systemd-semaphore
+
+    sudo rm /etc/apt/sources.list.d/*
+
+    sudo apt install -y software-properties-common
+    sudo add-apt-repository -y ppa:jonathonf/python-3.6
+    sudo add-apt-repository -y ppa:ginggs/backports
+    sudo apt -y update
+    sudo apt -y --no-install-recommends install \
+         python3.6 \
+         squashfs-tools
+
     sudo dpkg --add-architecture i386
     sudo apt-get update
 
-    sudo apt-get install -y $DEVPKGS rsync python3 meson python-sphinx
+    sudo apt -y --no-install-recommends install \
+         rsync \
+         python3-pip \
+         python3-setuptools \
+         python3-wheel \
+         python-sphinx \
+         "${DEVPKGS[@]}"
+    python3.6 -m pip install --user meson ninja
 )
 
 echo
@@ -35,30 +61,30 @@ echo
 echo "============= Running amd64 tests as root =============="
 (
     set -x
-    sudo ninja -C build test
+    sudo $(which ninja) -C build test
 )
 
 echo
 echo "============= Installing i386 build dependencies =============="
-# help apt to figure out replacing GI dependencies (we don't need them
-# anyway, but a lot of stuff is pre-installed in semaphore)
-(
-    set -x
-    sudo apt-get purge --auto-remove -y python3-gi gir1.2-glib-2.0
-)
 
 # library -dev packages are not co-installable for multiple architectures,
 # so this can't go into the setup step
 (
     set -x
-    sudo apt-get install -y --no-install-recommends gcc-multilib $(echo "$DEVPKGS " | sed 's/\b /:i386 /g')
+    # both arch versions provide /usr/bin/curl-config, which can't go well
+    sudo apt remove -y libcurl4-openssl-dev
+    sudo apt-get install -y --no-install-recommends \
+         gcc-multilib \
+         libgcc-5-dev:i386 \
+         "${DEVPKGS[@]/%/:i386}"
 )
 
 echo
 echo "============= Building i386 =============="
 (
     set -x
-    CFLAGS=-m32 LDFLAGS=-m32 meson build-i386
+    export PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu
+    CC=gcc-5 CFLAGS=-m32 LDFLAGS=-m32 meson build-i386
     ninja -C build-i386
 )
 
@@ -73,5 +99,5 @@ echo
 echo "============= Running i386 tests as root =============="
 (
     set -x
-    sudo linux32 ninja -C build-i386 test
+    sudo linux32 $(which ninja) -C build-i386 test
 )
