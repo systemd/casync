@@ -1079,7 +1079,7 @@ int ca_sync_add_store_path(CaSync *s, const char *path) {
                 return r;
         }
 
-        array = realloc_multiply(s->rstores, sizeof(CaStore*), s->n_rstores+1);
+        array = reallocarray(s->rstores, sizeof(CaStore*), s->n_rstores+1);
         if (!array) {
                 ca_store_unref(store);
                 return -ENOMEM;
@@ -1110,7 +1110,7 @@ int ca_sync_add_store_remote(CaSync *s, const char *url) {
                 return r;
         }
 
-        array = realloc_multiply(s->remote_rstores, sizeof(CaRemote*),  s->n_remote_rstores+1);
+        array = reallocarray(s->remote_rstores, sizeof(CaRemote*),  s->n_remote_rstores+1);
         if (!array) {
                 ca_remote_unref(remote);
                 return -ENOMEM;
@@ -1145,7 +1145,7 @@ static int ca_sync_extend_seeds_array(CaSync *s) {
 
         assert(s);
 
-        new_seeds = realloc_multiply(s->seeds, sizeof(CaSeed*), s->n_seeds+1);
+        new_seeds = reallocarray(s->seeds, sizeof(CaSeed*), s->n_seeds+1);
         if (!new_seeds)
                 return -ENOMEM;
 
