@@ -4,6 +4,8 @@
 #define foocutmarkhfoo
 
 #include <inttypes.h>
+#include <stdbool.h>
+#include <sys/types.h>
 
 typedef struct CaCutmark {
         uint64_t value;  /* Numeric value of the cutmark */
@@ -12,5 +14,9 @@ typedef struct CaCutmark {
 } CaCutmark;
 
 int ca_cutmark_parse(CaCutmark *c, const char *p);
+
+void ca_cutmark_sort(CaCutmark *c, size_t n);
+
+int ca_cutmark_cmp(const CaCutmark *a, const CaCutmark *b);
 
 #endif

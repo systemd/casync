@@ -163,3 +163,33 @@ done:
 
         return 0;
 }
+
+int ca_cutmark_cmp(const CaCutmark *a, const CaCutmark *b) {
+        int r;
+
+        if (a == b)
+                return 0;
+        if (!a)
+                return -1;
+        if (!b)
+                return 1;
+
+        r = CMP(a->value, b->value);
+        if (r != 0)
+                return r;
+
+        r = CMP(a->mask, b->mask);
+        if (r != 0)
+                return r;
+
+        return CMP(a->delta, b->delta);
+}
+
+void ca_cutmark_sort(CaCutmark *c, size_t n) {
+
+        if (n <= 1)
+                return;
+
+        assert(c);
+        qsort(c, n, sizeof(CaCutmark), (__compar_fn_t) ca_cutmark_cmp);
+}

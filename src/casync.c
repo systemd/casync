@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1+ */
 
+#include <byteswap.h>
 #include <fcntl.h>
 #include <sys/poll.h>
 #include <sys/stat.h>
@@ -152,6 +153,10 @@ struct CaSync {
 
         uint64_t first_chunk_request_nsec;
         uint64_t last_chunk_request_nsec;
+
+        /* List of defined cutmarks */
+        CaCutmark *cutmarks;
+        size_t n_cutmarks;
 };
 
 #define CA_SYNC_IS_STARTED(s) ((s)->start_nsec != 0)
@@ -507,6 +512,8 @@ CaSync *ca_sync_unref(CaSync *s) {
         ca_file_root_unref(s->archive_root);
 
         ca_digest_free(s->chunk_digest);
+
+        free(s->cutmarks);
 
         return mfree(s);
 }
@@ -1697,50 +1704,39 @@ static int ca_sync_write_chunks(CaSync *s, const void *p, size_t l, CaLocation *
 
         while (l > 0) {
                 _cleanup_(ca_origin_unrefp) CaOrigin *chunk_origin = NULL;
+                size_t chunk_size;
                 const void *chunk;
-                size_t chunk_size, k;
+                int verdict;
 
-                k = ca_chunker_scan(&s->chunker, true, p, l);
-                if (k == (size_t) -1) {
-                        if (!realloc_buffer_append(&s->buffer, p, l))
-                                return -ENOMEM;
+                verdict = ca_chunker_extract_chunk(&s->chunker, &s->buffer, &p, &l, &chunk, &chunk_size);
+                if (verdict < 0)
+                        return verdict;
+                if (verdict == CA_CHUNKER_NOT_YET)
                         return 0;
-                }
-
-                if (realloc_buffer_size(&s->buffer) == 0) {
-                        chunk = p;
-                        chunk_size = k;
-                } else {
-                        if (!realloc_buffer_append(&s->buffer, p, k))
-                                return -ENOMEM;
-
-                        chunk = realloc_buffer_data(&s->buffer);
-                        chunk_size = realloc_buffer_size(&s->buffer);
-                }
 
                 if (s->buffer_origin) {
-                        if (chunk_size == ca_origin_bytes(s->buffer_origin)) {
-                                chunk_origin = s->buffer_origin;
-                                s->buffer_origin = NULL;
-                        } else {
-                                r = ca_origin_extract_bytes(s->buffer_origin, chunk_size, &chunk_origin);
-                                if (r < 0)
-                                        return r;
-
-                                r = ca_origin_advance_bytes(s->buffer_origin, chunk_size);
-                                if (r < 0)
-                                        return r;
-                        }
+                        r = ca_origin_extract_bytes(s->buffer_origin, chunk_size, &chunk_origin);
+                        if (r < 0)
+                                return r;
                 }
 
                 r = ca_sync_write_one_chunk(s, chunk, chunk_size, chunk_origin);
                 if (r < 0)
                         return r;
 
-                realloc_buffer_empty(&s->buffer);
+                /* If the verdict was "indirect", then chunk/chunk_size don't point into p/l but into the
+                 * temporary buffer "buffer". In that case, we need to advance it after using it. */
+                if (verdict == CA_CHUNKER_INDIRECT) {
+                        r = realloc_buffer_advance(&s->buffer, chunk_size);
+                        if (r < 0)
+                                return r;
+                }
 
-                p = (const uint8_t*) p + k;
-                l -= k;
+                if (s->buffer_origin) {
+                        r = ca_origin_advance_bytes(s->buffer_origin, chunk_size);
+                        if (r < 0)
+                                return r;
+                }
         }
 
         return 0;
@@ -4520,5 +4516,147 @@ int ca_sync_current_cache_added(CaSync *s, uint64_t *ret) {
                 return -ENODATA;
 
         *ret = s->n_cache_added;
+        return 0;
+}
+
+int ca_sync_set_cutmarks(CaSync *s, const CaCutmark *c, size_t n) {
+        if (!s)
+                return -EINVAL;
+
+        if (n == 0) {
+                s->cutmarks = mfree(s->cutmarks);
+                s->n_cutmarks = 0;
+        } else {
+                _cleanup_free_ CaCutmark *copy = NULL;
+                size_t i;
+
+                if (!c)
+                        return -EINVAL;
+
+                copy = newdup(CaCutmark, c, n);
+                if (!copy)
+                        return -ENOMEM;
+
+                /* Bring into a defined order */
+                ca_cutmark_sort(copy, n);
+
+                if (copy[0].mask == 0)
+                        return -EINVAL;
+
+                /* Refuse duplicate and bad entries */
+                for (i = 1; i < n; i++) {
+                        if (ca_cutmark_cmp(copy + i - 1, copy + i) == 0)
+                                return -ENOTUNIQ;
+
+                        if (copy[i].mask == 0)
+                                return -EINVAL;
+                }
+
+                free_and_replace(s->cutmarks, copy);
+                s->n_cutmarks = n;
+        }
+
+        /* Propagate to chunker */
+        s->chunker.cutmarks = s->cutmarks;
+        s->chunker.n_cutmarks = s->n_cutmarks;
+
+        return 0;
+}
+
+int ca_sync_set_cutmarks_catar(CaSync *s) {
+
+        /* Set the cutmarks in a way suitable for catar streams */
+
+        static const CaCutmark catar_cutmarks[] = {
+                {
+                        /* Cut before each new directory entry */
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+                        .value = CA_FORMAT_ENTRY,
+#else
+                        .value = __builtin_bswap64(CA_FORMAT_ENTRY),
+#endif
+                        .mask = UINT64_C(0xFFFFFFFFFFFFFFFF),
+                        .delta = -8,
+                },
+        };
+
+        if (!s)
+                return -EINVAL;
+
+        s->cutmarks = mfree(s->cutmarks);
+        s->n_cutmarks = 0;
+
+        s->chunker.cutmarks = catar_cutmarks;
+        s->chunker.n_cutmarks = ELEMENTSOF(catar_cutmarks);
+
+        return 0;
+}
+
+int ca_sync_set_cutmark_delta_max(CaSync *s, uint64_t m) {
+        if (!s)
+                return -EINVAL;
+        if (m == 0)
+                return -EINVAL;
+
+        s->chunker.cutmark_delta_max = m;
+        return 0;
+}
+
+int ca_sync_get_cutmarks(CaSync *s, const CaCutmark **ret_cutmarks, size_t *ret_n) {
+        if (!s)
+                return -EINVAL;
+        if (!ret_cutmarks)
+                return -EINVAL;
+        if (!ret_n)
+                return -EINVAL;
+
+        /* We return the cutmarks configured in the chunker instead of the ones configured in the CaSync
+         * object, since the latter are not set if we use the 'catar' default cutmarks. */
+
+        *ret_cutmarks = s->chunker.cutmarks;
+        *ret_n = s->chunker.n_cutmarks;
+        return 0;
+}
+
+int ca_sync_get_cutmark_delta_max(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        *ret = ca_chunker_cutmark_delta_max(&s->chunker);
+        return 0;
+}
+
+int ca_sync_current_cutmark_delta_sum(CaSync *s, int64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_ENCODE)
+                return -ENODATA;
+        if (!s->wstore && !s->cache_store && !s->index)
+                return -ENODATA;
+
+        *ret = s->chunker.cutmark_delta_sum;
+        return 0;
+}
+
+int ca_sync_current_cutmarks_applied(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->direction != CA_SYNC_ENCODE)
+                return -ENODATA;
+        if (!s->wstore && !s->cache_store && !s->index)
+                return -ENODATA;
+
+        if (s->chunker.n_cutmarks == 0)
+                return -ENODATA;
+
+        *ret = s->chunker.n_cutmarks_applied;
         return 0;
 }

@@ -9,6 +9,7 @@
 #include "cachunk.h"
 #include "cachunkid.h"
 #include "cacommon.h"
+#include "cacutmark.h"
 #include "caorigin.h"
 
 typedef struct CaSync CaSync;
@@ -122,6 +123,16 @@ int ca_sync_make_chunk_id(CaSync *s, const void *p, size_t l, CaChunkID *ret);
 int ca_sync_set_chunk_size_min(CaSync *s, uint64_t v);
 int ca_sync_set_chunk_size_avg(CaSync *s, uint64_t v);
 int ca_sync_set_chunk_size_max(CaSync *s, uint64_t v);
+
+int ca_sync_set_cutmarks(CaSync *s, const CaCutmark *c, size_t n);
+int ca_sync_set_cutmarks_catar(CaSync *s);
+int ca_sync_set_cutmark_delta_max(CaSync *s, uint64_t m);
+
+int ca_sync_get_cutmarks(CaSync *s, const CaCutmark **ret_cutmarks, size_t *ret_n);
+int ca_sync_get_cutmark_delta_max(CaSync *s, uint64_t *ret);
+
+int ca_sync_current_cutmark_delta_sum(CaSync *s, int64_t *ret);
+int ca_sync_current_cutmarks_applied(CaSync *s, uint64_t *ret);
 
 int ca_sync_get_chunk_size_avg(CaSync *s, uint64_t *ret);
 int ca_sync_get_chunk_size_min(CaSync *s, uint64_t *ret);
