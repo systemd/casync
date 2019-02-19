@@ -7,6 +7,8 @@
 #include <sys/types.h>
 #include <stdbool.h>
 
+#include "cacutmark.h"
+
 /* The default average chunk size */
 #define CA_CHUNK_SIZE_AVG_DEFAULT ((size_t) (64U*1024U))
 
@@ -32,6 +34,12 @@ typedef struct CaChunker {
         size_t discriminator;
 
         uint8_t window[CA_CHUNKER_WINDOW_SIZE];
+
+        const CaCutmark *cutmarks;  /* List of defined cutmarks to look for */
+        size_t n_cutmarks;
+
+        ssize_t last_cutmark; /* The byte offset we have seen the last cutmark at, relative to the current byte index */
+        uint64_t qword_be;    /* The last 8 byte we read, always shifted through and hence in BE format. */
 } CaChunker;
 
 /* The default initializer for the chunker. We pick an average chunk size equivalent to 64K */

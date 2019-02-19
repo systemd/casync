@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: LGPL-2.1+ */
 
 #include <assert.h>
-#include <unistd.h>
+#include <endian.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 #include "cachunker.h"
 #include "util.h"
@@ -142,11 +143,100 @@ static int test_set_size(void) {
         return 0;
 }
 
+static const ssize_t CUTMARK_BUFFER_SIZE = (1024*1024);
+
+static void test_cutmarks(void) {
+        struct CaChunker x = CA_CHUNKER_INIT;
+        struct CaCutmark marks[] = {
+                {
+                  .value = htole64(UINT64_C(0xEBCDABCDABCDABCF)),
+                  .mask  = htole64(UINT64_C(0xFFFFFFFFFFFFFFFF)),
+                  .delta = -8,
+                },
+                {
+                  .value = htole64(UINT64_C(0x00EFFEFFEE000000)),
+                  .mask  = htole64(UINT64_C(0x00FFFFFFFF000000)),
+                  .delta = -2,
+                },
+                {
+                  .value = htole64(UINT64_C(0x1122113311441155)),
+                  .mask  = htole64(UINT64_C(0xFFFFFFFFFFFFFFFF)),
+                  .delta = 3,
+                },
+
+        };
+
+        _cleanup_free_ uint8_t *buffer = NULL;
+        uint8_t *p;
+        size_t n, offset = 0, i;
+        unsigned found = 0;
+        uint32_t z;
+
+        x.cutmarks = marks;
+        x.n_cutmarks = ELEMENTSOF(marks);
+
+        buffer = new0(uint8_t, CUTMARK_BUFFER_SIZE);
+        assert_se(buffer);
+
+        /* Fill an array with (constant) rubbish */
+        srand(0);
+        for (i = 0; i < (size_t) CUTMARK_BUFFER_SIZE; i++)
+                buffer[i] = (uint8_t) rand();
+
+        /* Insert the cutmarks at five places */
+        z = le64toh(marks[1].value) >> 24;
+        memcpy(buffer + 444, &marks[0].value, 8);
+        memcpy(buffer + CUTMARK_BUFFER_SIZE/3-9, &z, 4);
+        memcpy(buffer + CUTMARK_BUFFER_SIZE/2+7, &marks[0].value, 8);
+        memcpy(buffer + CUTMARK_BUFFER_SIZE/3*2+5, &marks[2].value, 8);
+        memcpy(buffer + CUTMARK_BUFFER_SIZE - 333, &z, 4);
+
+        p = buffer;
+        n = CUTMARK_BUFFER_SIZE;
+
+        for (;;) {
+                size_t k;
+                ssize_t cm;
+
+                k = ca_chunker_scan(&x, p, n);
+
+                if (k == (size_t) -1) {
+                        offset += n;
+                        p += n;
+                        n = 0;
+                } else {
+                        offset += k;
+                        p += k;
+                        n -= k;
+                }
+
+                cm = offset - x.last_cutmark;
+
+                if (cm == 444)
+                        found |= 1;
+                else if (cm == CUTMARK_BUFFER_SIZE/3-9+3)
+                        found |= 2;
+                else if (cm == CUTMARK_BUFFER_SIZE/2+7)
+                        found |= 4;
+                else if (cm == CUTMARK_BUFFER_SIZE/3*2+5+8+3)
+                        found |= 8;
+                else if (cm == CUTMARK_BUFFER_SIZE - 333+3)
+                        found |= 16;
+
+                if (n == 0)
+                        break;
+        }
+
+        /* Make sure we found all three cutmarks */
+        assert_se(found == 31);
+}
+
 int main(int argc, char *argv[]) {
 
         test_rolling();
         test_chunk();
         test_set_size();
+        test_cutmarks();
 
         return 0;
 }

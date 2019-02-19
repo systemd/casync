@@ -202,13 +202,74 @@ static bool CA_CHUNKER_IS_FIXED_SIZE(CaChunker *c) {
                 c->chunk_size_max == c->chunk_size_avg;
 }
 
+static bool is_cutmark(
+                uint64_t qword,
+                const CaCutmark *cutmarks,
+                size_t n_cutmarks,
+                int64_t *ret_delta) {
+
+        size_t i;
+
+        for (i = 0; i < n_cutmarks; i++) {
+                const CaCutmark *m = cutmarks + i;
+
+                if (((qword ^ m->value) & m->mask) == 0) {
+                        *ret_delta = m->delta;
+                        return true;
+                }
+        }
+
+        *ret_delta = 0;
+        return false;
+}
+
+static void find_cutmarks(CaChunker *c, const void *p, size_t n) {
+        const uint8_t *q = p;
+
+        /* Find "cutmarks", i.e. special magic values that may appear in the
+         * stream that make particularly good places for cutting up things into
+         * chunks. When our chunker finds a position to cut we'll check if a
+         * cutmark was recently seen, and if so the cut will be moved to that
+         * place. */
+
+        if (c->n_cutmarks == 0) /* Shortcut: no cutmark magic cutmark values defined */
+                return;
+
+        for (; n > 0; q++, n--) {
+                /* Let's put together a qword overlapping every byte of the file, in BE ordering. */
+                c->qword_be = (c->qword_be << 8) | *q;
+
+                if (c->last_cutmark >= (ssize_t) sizeof(c->qword_be)) {
+                        int64_t delta;
+
+                        if (is_cutmark(be64toh(c->qword_be), c->cutmarks, c->n_cutmarks, &delta)) {
+                                c->last_cutmark = -delta;
+                                continue;
+                        }
+                }
+
+                c->last_cutmark++;
+        }
+}
+
+static void chunker_cut(CaChunker *c) {
+        assert(c);
+
+        c->h = 0;
+        c->window_size = 0;
+        c->chunk_size = 0;
+}
+
 size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
         const uint8_t *q = p;
+        size_t k, idx;
         uint32_t v;
-        size_t k = 0, idx;
 
         assert(c);
         assert(p);
+
+        /* Scans the specified bytes for chunk borders. Returns (size_t) -1 if
+         * no border was discovered, otherwise the chunk size. */
 
         if (CA_CHUNKER_IS_FIXED_SIZE(c)) {
                 /* Special case: fixed size chunker */
@@ -219,15 +280,19 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
                 m = MIN(fixed_size - c->chunk_size, n);
                 c->chunk_size += m;
 
+                /* Note that we don't search for cutmarks if we are in fixed
+                 * size mode, since there's no point, we'll not move the cuts
+                 * anyway, since the chunks shall be fixed size. */
+
                 if (c->chunk_size < fixed_size)
                         return (size_t) -1;
 
-                k = m;
-                goto now;
+                chunker_cut(c);
+                return m;
         }
 
-        /* Scans the specified bytes for chunk borders. Returns (size_t) -1 if no border was discovered, otherwise the
-         * chunk size. */
+        if (c->window_size == 0) /* Reset cutmark location after each cut */
+                c->last_cutmark = c->chunk_size;
 
         if (c->window_size < CA_CHUNKER_WINDOW_SIZE) {
                 size_t m;
@@ -242,8 +307,10 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
                 c->chunk_size += m;
 
                 /* If the window isn't full still, return early */
-                if (c->window_size < CA_CHUNKER_WINDOW_SIZE)
+                if (c->window_size < CA_CHUNKER_WINDOW_SIZE) {
+                        find_cutmarks(c, p, m);
                         return (size_t) -1;
+                }
 
                 /* Window is full, we are now ready to go. */
                 v = ca_chunker_start(c, c->window, c->window_size);
@@ -251,7 +318,8 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
 
                 if (shall_break(c, v))
                         goto now;
-        }
+        } else
+                k = 0;
 
         idx = c->chunk_size % CA_CHUNKER_WINDOW_SIZE;
 
@@ -270,12 +338,11 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
                 q++, n--;
         }
 
+        find_cutmarks(c, p, k);
         return (size_t) -1;
 
 now:
-        c->h = 0;
-        c->chunk_size = 0;
-        c->window_size = 0;
-
+        find_cutmarks(c, p, k);
+        chunker_cut(c);
         return k;
 }
