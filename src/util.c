@@ -429,6 +429,14 @@ int unhexchar(char c) {
         return -EINVAL;
 }
 
+int undecchar(char c) {
+
+        if (c >= '0' && c <= '9')
+                return c - '0';
+
+        return -EINVAL;
+}
+
 char *hexmem(const void *p, size_t l) {
         const uint8_t *x;
         char *r, *z;

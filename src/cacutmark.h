@@ -11,4 +11,6 @@ typedef struct CaCutmark {
         int64_t delta;   /* Where to cut, as an offset (possibly negative) relative to the position right after the 64bit value. */
 } CaCutmark;
 
+int ca_cutmark_parse(CaCutmark *c, const char *p);
+
 #endif

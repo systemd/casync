@@ -23,6 +23,7 @@ libshared_sources = files('''
         cacommon.h
         cacompression.c
         cacompression.h
+        cacutmark.c
         cacutmark.h
         cadecoder.c
         cadecoder.h

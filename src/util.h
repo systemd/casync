@@ -246,6 +246,7 @@ static inline uint64_t random_u64(void) {
 
 char hexchar(int x);
 int unhexchar(char c);
+int undecchar(char c);
 char octchar(int x);
 
 char *hexmem(const void *p, size_t l);

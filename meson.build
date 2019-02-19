@@ -326,6 +326,7 @@ test_sources = '''
         test-cachunk
         test-cachunker
         test-cachunker-histogram
+        test-cacutmark
         test-cadigest
         test-caencoder
         test-calocation
