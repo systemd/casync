@@ -4,18 +4,19 @@
 SCRATCH_DIR=${TMPDIR:-/var/tmp}/test-casync.$RANDOM
 mkdir -p $SCRATCH_DIR/src
 
+mkdir $SCRATCH_DIR/src/casync
 if [ $UID = 0 ]; then
-    cp -aT @top_srcdir@ $SCRATCH_DIR/src/casync
+    cp -a @top_srcdir@/{test-files,src} $SCRATCH_DIR/src/casync/
 else
     # If we lack privileges we use rsync rather than cp to copy, as it will just skip over device nodes
-    rsync -a --exclude=.cacac @top_srcdir@/ $SCRATCH_DIR/src/casync
+    rsync -a --exclude=.cacac @top_srcdir@/{test-files,src} $SCRATCH_DIR/src/casync/
 fi
 
 cd $SCRATCH_DIR/src
 
-@top_builddir@/casync list > $SCRATCH_DIR/test.list
-@top_builddir@/casync mtree > $SCRATCH_DIR/test.mtree
-@top_builddir@/casync digest > $SCRATCH_DIR/test.digest
+@top_builddir@/casync list   >$SCRATCH_DIR/test.list
+@top_builddir@/casync mtree  >$SCRATCH_DIR/test.mtree
+@top_builddir@/casync digest >$SCRATCH_DIR/test.digest
 
 # Make three versions of the caidx: one with no cache, one with an unpopulated cache, and one with a populated cache
 @top_builddir@/casync make $SCRATCH_DIR/test1.caidx
@@ -26,12 +27,12 @@ cmp $SCRATCH_DIR/test1.caidx $SCRATCH_DIR/test2.caidx
 cmp $SCRATCH_DIR/test1.caidx $SCRATCH_DIR/test3.caidx
 
 for f in test1 test2 test3 ; do
-    @top_builddir@/casync list $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.list
-    @top_builddir@/casync mtree $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.mtree
-    @top_builddir@/casync digest $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.digest
+    @top_builddir@/casync list   $SCRATCH_DIR/$f.caidx >$SCRATCH_DIR/$f.list
+    @top_builddir@/casync mtree  $SCRATCH_DIR/$f.caidx >$SCRATCH_DIR/$f.mtree
+    @top_builddir@/casync digest $SCRATCH_DIR/$f.caidx >$SCRATCH_DIR/$f.digest
 
-    diff -q $SCRATCH_DIR/test.list $SCRATCH_DIR/$f.list
-    diff -q $SCRATCH_DIR/test.mtree $SCRATCH_DIR/$f.mtree
+    diff -q $SCRATCH_DIR/test.list   $SCRATCH_DIR/$f.list
+    diff -q $SCRATCH_DIR/test.mtree  $SCRATCH_DIR/$f.mtree
     diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/$f.digest
 done
 
@@ -44,11 +45,11 @@ mkdir casync/zzz-late
 touch casync/zzz-late/testc
 
 # Also remove a file
-rm casync/NEWS
+rm casync/src/notify.*
 
 # And update an existing one
-chmod +w casync/README.md
-echo xxx >> casync/README.md
+chmod +w casync/src/compressor.c
+echo xxx >>casync/src/compressor.c
 
 @top_builddir@/casync list > $SCRATCH_DIR/testx.list
 @top_builddir@/casync mtree > $SCRATCH_DIR/testx.mtree

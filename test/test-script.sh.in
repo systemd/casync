@@ -14,11 +14,12 @@ export CASYNC_PROTOCOL_PATH=@top_builddir@
 SCRATCH_DIR=${TMPDIR:-/var/tmp}/test-casync.$RANDOM
 mkdir -p $SCRATCH_DIR/src
 
+mkdir $SCRATCH_DIR/src/casync
 if [ $UID = 0 ]; then
-    cp -aT @top_srcdir@ $SCRATCH_DIR/src/casync
+    cp -a @top_srcdir@/{test-files,src} $SCRATCH_DIR/src/casync/
 else
     # If we lack privileges we use rsync rather than cp to copy, as it will just skip over device nodes
-    rsync -a --exclude=.cacac @top_srcdir@/ $SCRATCH_DIR/src/casync
+    rsync -a --exclude=.cacac @top_srcdir@/{test-files,src} $SCRATCH_DIR/src/casync/
 fi
 
 cd $SCRATCH_DIR/src
