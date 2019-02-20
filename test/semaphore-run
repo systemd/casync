@@ -61,7 +61,7 @@ echo
 echo "============= Running amd64 tests as root =============="
 (
     set -x
-    sudo $(which ninja) -C build test
+    sudo CASYNC_TEST_NBD=0 $(which ninja) -C build test
 )
 
 echo
@@ -99,5 +99,5 @@ echo
 echo "============= Running i386 tests as root =============="
 (
     set -x
-    sudo linux32 $(which ninja) -C build-i386 test
+    sudo CASYNC_TEST_NBD=0 linux32 $(which ninja) -C build-i386 test
 )

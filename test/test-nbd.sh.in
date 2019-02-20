@@ -32,7 +32,7 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/extract2.digest
 if [ $UID = 0 ]; then
     modprobe nbd ||:
 
-    if test -e /dev/nbd0 ; then
+    if [ -e /dev/nbd0 -a ${CASYNC_TEST_NBD:-1} = 1 ]; then
         MKDEV_PID=`@top_builddir@/notify-wait @top_builddir@/casync $PARAMS mkdev $SCRATCH_DIR/test.caibx $SCRATCH_DIR/test-node`
 
         dd if=$SCRATCH_DIR/test-node bs=102400 count=80 | @top_builddir@/test-calc-digest $DIGEST > $SCRATCH_DIR/mkdev.digest
