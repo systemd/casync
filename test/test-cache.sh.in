@@ -51,9 +51,9 @@ rm casync/src/notify.*
 chmod +w casync/src/compressor.c
 echo xxx >>casync/src/compressor.c
 
-@top_builddir@/casync list > $SCRATCH_DIR/testx.list
-@top_builddir@/casync mtree > $SCRATCH_DIR/testx.mtree
-@top_builddir@/casync digest > $SCRATCH_DIR/testx.digest
+@top_builddir@/casync list   >$SCRATCH_DIR/testx.list
+@top_builddir@/casync mtree  >$SCRATCH_DIR/testx.mtree
+@top_builddir@/casync digest >$SCRATCH_DIR/testx.digest
 
 @top_builddir@/casync make $SCRATCH_DIR/test4.caidx
 @top_builddir@/casync make --cache $SCRATCH_DIR/test.cache $SCRATCH_DIR/test5.caidx
@@ -65,12 +65,12 @@ cmp $SCRATCH_DIR/test4.caidx $SCRATCH_DIR/test6.caidx
 cmp $SCRATCH_DIR/test4.caidx $SCRATCH_DIR/test7.caidx
 
 for f in test4 test5 test6 test7; do
-    @top_builddir@/casync list $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.list
-    @top_builddir@/casync mtree $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.mtree
-    @top_builddir@/casync digest $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.digest
+    @top_builddir@/casync list   $SCRATCH_DIR/$f.caidx >$SCRATCH_DIR/$f.list
+    @top_builddir@/casync mtree  $SCRATCH_DIR/$f.caidx >$SCRATCH_DIR/$f.mtree
+    @top_builddir@/casync digest $SCRATCH_DIR/$f.caidx >$SCRATCH_DIR/$f.digest
 
-    diff -q $SCRATCH_DIR/testx.list $SCRATCH_DIR/$f.list
-    diff -q $SCRATCH_DIR/testx.mtree $SCRATCH_DIR/$f.mtree
+    diff -q $SCRATCH_DIR/testx.list   $SCRATCH_DIR/$f.list
+    diff -q $SCRATCH_DIR/testx.mtree  $SCRATCH_DIR/$f.mtree
     diff -q $SCRATCH_DIR/testx.digest $SCRATCH_DIR/$f.digest
 done
 
