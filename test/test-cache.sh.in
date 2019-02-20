@@ -4,7 +4,7 @@
 SCRATCH_DIR=${TMPDIR:-/var/tmp}/test-casync.$RANDOM
 mkdir -p $SCRATCH_DIR/src
 
-if [ `id -u` == 0 ] ; then
+if [ $UID = 0 ]; then
     cp -aT @top_srcdir@ $SCRATCH_DIR/src/casync
 else
     # If we lack privileges we use rsync rather than cp to copy, as it will just skip over device nodes
@@ -63,7 +63,7 @@ cmp $SCRATCH_DIR/test4.caidx $SCRATCH_DIR/test5.caidx
 cmp $SCRATCH_DIR/test4.caidx $SCRATCH_DIR/test6.caidx
 cmp $SCRATCH_DIR/test4.caidx $SCRATCH_DIR/test7.caidx
 
-for f in test4 test5 test6 test7 ; do
+for f in test4 test5 test6 test7; do
     @top_builddir@/casync list $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.list
     @top_builddir@/casync mtree $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.mtree
     @top_builddir@/casync digest $SCRATCH_DIR/$f.caidx > $SCRATCH_DIR/$f.digest

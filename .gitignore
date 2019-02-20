@@ -5,6 +5,7 @@
 *.pyc
 *.stamp
 *.swp
+.gdb_history
 *~
 /*.tar.bz2
 /*.tar.gz

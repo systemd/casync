@@ -1,31 +1,20 @@
 #!/bin/bash -ex
 # SPDX-License-Identifier: LGPL-2.1+
 
-if [ -z "$1" ] ; then
-    DIGEST=sha512-256
-else
-    DIGEST="$1"
+DIGEST=${1:-sha512-256}
+COMPRESSION=${2:-zstd}
+
+PARAMS="-v --digest=$DIGEST --compression=$COMPRESSION"
+if [ $UID != 0 ]; then
+    PARAMS="$PARAMS --without=privileged"
 fi
 
-if [ -z "$2" ] ; then
-    COMPRESSION=zstd
-else
-    COMPRESSION="$2"
-fi
-
-if [ `id -u` == 0 ] ; then
-    PARAMS="-v --digest=$DIGEST --compression=$COMPRESSION"
-else
-    PARAMS="-v --without=privileged --digest=$DIGEST --compression=$COMPRESSION"
-fi
-
-CASYNC_PROTOCOL_PATH=@top_builddir@
-export CASYNC_PROTOCOL_PATH
+export CASYNC_PROTOCOL_PATH=@top_builddir@
 
 SCRATCH_DIR=${TMPDIR:-/var/tmp}/test-casync.$RANDOM
 mkdir -p $SCRATCH_DIR/src
 
-if [ `id -u` == 0 ] ; then
+if [ $UID = 0 ]; then
     cp -aT @top_srcdir@ $SCRATCH_DIR/src/casync
 else
     # If we lack privileges we use rsync rather than cp to copy, as it will just skip over device nodes
@@ -136,11 +125,8 @@ diff -q $SCRATCH_DIR/original-seek.mtree $SCRATCH_DIR/extract-seek-caidx.mtree
 
 ### Test SSH Remoting
 
-CASYNC_SSH_PATH=@top_srcdir@/test/pseudo-ssh
-export CASYNC_SSH_PATH
-
-CASYNC_REMOTE_PATH=@top_builddir@/casync
-export CASYNC_REMOTE_PATH
+export CASYNC_SSH_PATH=@top_srcdir@/test/pseudo-ssh
+export CASYNC_REMOTE_PATH=@top_builddir@/casync
 
 @top_builddir@/casync $PARAMS list localhost:$SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test-remote.caidx.list
 @top_builddir@/casync $PARAMS mtree localhost:$SCRATCH_DIR/test.caidx > $SCRATCH_DIR/test-remote.caidx.mtree
@@ -180,8 +166,7 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test2.catar.digest
 
 HTTP_PORT=$((10000 + $$ % 10000))
 
-CASYNC_PROTOCOL_PATH=@top_builddir@
-export CASYNC_PROTOCOL_PATH
+export CASYNC_PROTOCOL_PATH=@top_builddir@
 
 HTTP_PID=`@top_builddir@/notify-wait  @top_srcdir@/test/http-server.py $SCRATCH_DIR $HTTP_PORT`
 

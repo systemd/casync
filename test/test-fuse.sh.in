@@ -9,7 +9,7 @@ export CASYNC_PROTOCOL_PATH
 SCRATCH_DIR=${TMPDIR:-/var/tmp}/test-casync.$RANDOM
 mkdir -p $SCRATCH_DIR/src
 
-if [ `id -u` == 0 ] ; then
+if [ $UID = 0 ]; then
     cp -a @top_srcdir@ $SCRATCH_DIR/src
 else
     # If we lack privileges we use rsync rather than cp to copy, as it will just skip over device nodes
@@ -28,9 +28,9 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test.caidx.digest
 
 diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/extract.digest
 
-if [ `id -u` == 0 ] ; then
+if [ $UID = 0 ]; then
     modprobe fuse ||:
-    if test -e /dev/fuse ; then
+    if [ -e /dev/fuse ]; then
         MOUNT_PID=`@top_builddir@/notify-wait @top_builddir@/casync $PARAMS mount $SCRATCH_DIR/test.caidx $SCRATCH_DIR/mount`
 
         @top_builddir@/casync $PARAMS digest $SCRATCH_DIR/extract > $SCRATCH_DIR/mount.digest
