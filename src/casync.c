@@ -148,6 +148,9 @@ struct CaSync {
         uint64_t chunk_size_max;
 
         CaCompressionType compression_type;
+
+        uint64_t first_chunk_request_nsec;
+        uint64_t last_chunk_request_nsec;
 };
 
 static CaSync *ca_sync_new(void) {
@@ -2325,6 +2328,9 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                                 if (r < 0)
                                         return log_debug_errno(r, "Failed to put decoder EOF: %m");
 
+                                if (s->last_chunk_request_nsec == 0)
+                                        s->last_chunk_request_nsec = now(CLOCK_MONOTONIC);
+
                                 return CA_SYNC_STEP;
                         }
 
@@ -2342,6 +2348,9 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                  * chunk size, hence let's wait for them to complete. */
                 if (!ca_sync_seed_ready(s))
                         return CA_SYNC_POLL;
+
+                if (s->first_chunk_request_nsec == 0)
+                        s->first_chunk_request_nsec = now(CLOCK_MONOTONIC);
 
                 r = ca_sync_get(s, &s->next_chunk, CA_CHUNK_UNCOMPRESSED, &p, &chunk_size, NULL, &origin);
                 if (r == -EAGAIN) /* Don't have this right now, but requested it now */
@@ -4396,6 +4405,21 @@ int ca_sync_get_remote_request_bytes(CaSync *s, uint64_t *ret) {
         }
 
         *ret = sum;
+        return 0;
+}
+
+int ca_sync_get_decoding_time_nsec(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->first_chunk_request_nsec == 0 || s->last_chunk_request_nsec == 0)
+                return -ENODATA;
+        if (s->first_chunk_request_nsec > s->last_chunk_request_nsec)
+                return -ENODATA;
+
+        *ret = s->last_chunk_request_nsec - s->first_chunk_request_nsec;
         return 0;
 }
 

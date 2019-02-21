@@ -158,6 +158,8 @@ int ca_sync_get_local_request_bytes(CaSync *s, uint64_t *ret);
 int ca_sync_get_remote_requests(CaSync *s, uint64_t *ret);
 int ca_sync_get_remote_request_bytes(CaSync *s, uint64_t *ret);
 
+int ca_sync_get_decoding_time_nsec(CaSync *s, uint64_t *ret);
+
 int ca_sync_current_cache_hits(CaSync *s, uint64_t *ret);
 int ca_sync_current_cache_misses(CaSync *s, uint64_t *ret);
 int ca_sync_current_cache_invalidated(CaSync *s, uint64_t *ret);
