@@ -152,6 +152,7 @@ int ca_sync_get_hardlink_digest(CaSync *s, CaChunkID *ret);
 
 int ca_sync_get_seed_requests(CaSync *s, uint64_t *ret);
 int ca_sync_get_seed_request_bytes(CaSync *s, uint64_t *ret);
+int ca_sync_get_seed_seeding_time_nsec(CaSync *s, uint64_t *ret);
 int ca_sync_get_local_requests(CaSync *s, uint64_t *ret);
 int ca_sync_get_local_request_bytes(CaSync *s, uint64_t *ret);
 int ca_sync_get_remote_requests(CaSync *s, uint64_t *ret);

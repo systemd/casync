@@ -4250,6 +4250,31 @@ int ca_sync_get_seed_request_bytes(CaSync *s, uint64_t *ret) {
         return 0;
 }
 
+int ca_sync_get_seed_seeding_time_nsec(CaSync *s, uint64_t *ret) {
+        uint64_t sum = 0;
+        size_t i;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        /* We can sum seeding times since seeds are processed one after another */
+        for (i = 0; i < s->n_seeds; i++) {
+                uint64_t x;
+
+                r = ca_seed_get_seeding_time_nsec(s->seeds[i], &x);
+                if (r < 0)
+                        return r;
+
+                sum += x;
+        }
+
+        *ret = sum;
+        return 0;
+}
+
 int ca_sync_get_local_requests(CaSync *s, uint64_t *ret) {
         uint64_t sum;
         size_t i;
