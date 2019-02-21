@@ -68,6 +68,7 @@ CaStore *ca_store_new_cache(void) {
 
         s->is_cache = true;
         s->compression = CA_CHUNK_AS_IS;
+        s->compression_type = CA_COMPRESSION_DEFAULT;
 
         return s;
 }
