@@ -686,7 +686,7 @@ int ca_chunk_file_save(
                 const void *p,
                 uint64_t l) {
 
-        char *suffix;
+        _cleanup_free_ char *suffix = NULL;
         int fd, r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
@@ -718,10 +718,8 @@ int ca_chunk_file_save(
                 return -ENOMEM;
 
         fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, suffix, O_WRONLY|O_CREAT|O_EXCL|O_NOCTTY|O_CLOEXEC);
-        if (fd < 0) {
-                free(suffix);
+        if (fd < 0)
                 return fd;
-        }
 
         if (desired_compression == CA_CHUNK_AS_IS)
                 desired_compression = effective_compression;
@@ -742,12 +740,10 @@ int ca_chunk_file_save(
         if (r < 0)
                 goto fail;
 
-        free(suffix);
         return 0;
 
 fail:
         (void) ca_chunk_file_unlink(chunk_fd, prefix, chunkid, suffix);
-        free(suffix);
         return r;
 }
 
