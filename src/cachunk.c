@@ -628,7 +628,8 @@ int ca_chunk_file_load(
                 ReallocBuffer *buffer,
                 CaChunkCompression *ret_effective_compression) {
 
-        int fd, r;
+        _cleanup_(safe_closep) int fd = -1;
+        int r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
@@ -658,8 +659,10 @@ int ca_chunk_file_load(
                         r = ca_load_and_decompress_fd(fd, buffer);
                 else
                         r = ca_load_fd(fd, buffer);
+                if (r < 0)
+                        return r;
 
-                if (r >= 0 && ret_effective_compression)
+                if (ret_effective_compression)
                         *ret_effective_compression = desired_compression == CA_CHUNK_AS_IS ? CA_CHUNK_COMPRESSED : desired_compression;
 
         } else {
@@ -667,13 +670,14 @@ int ca_chunk_file_load(
                         r = ca_load_and_compress_fd(fd, compression_type, buffer);
                 else
                         r = ca_load_fd(fd, buffer);
+                if (r < 0)
+                        return r;
 
-                if (r >= 0 && ret_effective_compression)
+                if (ret_effective_compression)
                         *ret_effective_compression = desired_compression == CA_CHUNK_AS_IS ? CA_CHUNK_UNCOMPRESSED : desired_compression;
         }
 
-        safe_close(fd);
-        return r;
+        return 0;
 }
 
 int ca_chunk_file_save(
@@ -687,7 +691,7 @@ int ca_chunk_file_save(
                 uint64_t l) {
 
         _cleanup_free_ char *suffix = NULL;
-        int fd, r;
+        int r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
@@ -717,7 +721,8 @@ int ca_chunk_file_save(
         if (asprintf(&suffix, ".%" PRIx64 ".tmp", random_u64()) < 0)
                 return -ENOMEM;
 
-        fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, suffix, O_WRONLY|O_CREAT|O_EXCL|O_NOCTTY|O_CLOEXEC);
+        _cleanup_(safe_closep) int fd =
+                ca_chunk_file_open(chunk_fd, prefix, chunkid, suffix, O_WRONLY|O_CREAT|O_EXCL|O_NOCTTY|O_CLOEXEC);
         if (fd < 0)
                 return fd;
 
@@ -732,7 +737,6 @@ int ca_chunk_file_save(
                 assert(desired_compression == CA_CHUNK_UNCOMPRESSED);
                 r = ca_save_and_decompress_fd(fd, p, l);
         }
-        safe_close(fd);
         if (r < 0)
                 goto fail;
 
