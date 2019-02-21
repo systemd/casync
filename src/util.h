@@ -552,17 +552,10 @@ static inline size_t strlen_null(const char *s) {
 
 #define STRV_MAKE(...) ((char**) ((const char*[]) { __VA_ARGS__, NULL }))
 
-#define FOREACH_STRING(x, ...)                               \
-        for (char **_l = ({                                  \
-                char **_ll = STRV_MAKE(__VA_ARGS__);         \
-                x = _ll ? _ll[0] : NULL;                     \
-                _ll;                                         \
-        });                                                  \
-        _l && *_l;                                           \
-        x = ({                                               \
-                _l ++;                                       \
-                _l[0];                                       \
-        }))
+#define FOREACH_STRING(x, y, ...)                                       \
+        for (char **_l = STRV_MAKE(({ x = y; }), ##__VA_ARGS__);        \
+             x;                                                         \
+             x = *(++_l))
 
 #define STR_IN_SET(x, ...) strv_contains(STRV_MAKE(__VA_ARGS__), x)
 
