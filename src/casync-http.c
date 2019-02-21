@@ -314,8 +314,7 @@ static int acquire_file(CaRemote *rr,
                 return -EIO;
         }
 
-        if (arg_verbose)
-                log_info("Acquiring %s...", url);
+        log_debug("Acquiring %s...", url);
 
         if (robust_curl_easy_perform(curl) != CURLE_OK) {
                 log_error("Failed to acquire %s", url);
@@ -566,8 +565,7 @@ static int run(int argc, char *argv[]) {
                         }
                 }
 
-                if (arg_verbose)
-                        log_info("Acquiring %s...", url_buffer);
+                log_debug("Acquiring %s...", url_buffer);
 
                 if (robust_curl_easy_perform(curl) != CURLE_OK) {
                         log_error("Failed to acquire %s", url_buffer);
