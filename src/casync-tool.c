@@ -73,6 +73,10 @@ static bool arg_uid_shift_apply = false;
 static bool arg_mkdir = true;
 static CaDigestType arg_digest = CA_DIGEST_DEFAULT;
 static CaCompressionType arg_compression = CA_COMPRESSION_DEFAULT;
+static CaCutmark *arg_cutmarks = NULL;
+static size_t arg_n_cutmarks = 0;
+static bool arg_auto_cutmarks = true;
+static uint64_t arg_cutmark_delta_max = 0;
 
 static void help(void) {
         printf("%1$s [OPTIONS...] make [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
@@ -99,6 +103,9 @@ static void help(void) {
                "     --chunk-size=[MIN:]AVG[:MAX]\n"
                "                             The minimal/average/maximum number of bytes in a\n"
                "                             chunk\n"
+               "     --cutmark=CUTMARK       Specify a cutmark\n"
+               "     --cutmark-delta-max=BYTES\n"
+               "                             Maximum bytes to shift cut due to cutmark\n"
                "     --digest=DIGEST         Pick digest algorithm (sha512-256 or sha256)\n"
                "     --compression=COMPRESSION\n"
                "                             Pick compression algorithm (zstd, xz or gzip)\n"
@@ -347,6 +354,8 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_DIGEST,
                 ARG_COMPRESSION,
                 ARG_VERSION,
+                ARG_CUTMARK,
+                ARG_CUTMARK_DELTA_MAX,
         };
 
         static const struct option options[] = {
@@ -380,6 +389,8 @@ static int parse_argv(int argc, char *argv[]) {
                 { "mkdir",             required_argument, NULL, ARG_MKDIR             },
                 { "digest",            required_argument, NULL, ARG_DIGEST            },
                 { "compression",       required_argument, NULL, ARG_COMPRESSION       },
+                { "cutmark",           required_argument, NULL, ARG_CUTMARK           },
+                { "cutmark-delta-max", required_argument, NULL, ARG_CUTMARK_DELTA_MAX },
                 {}
         };
 
@@ -684,6 +695,47 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
                 }
 
+                case ARG_CUTMARK:
+                        r = parse_boolean(optarg);
+                        if (r < 0) {
+                                CaCutmark *n;
+
+                                n = reallocarray(arg_cutmarks, sizeof(CaCutmark), arg_n_cutmarks + 1);
+                                if (!n)
+                                        return log_oom();
+
+                                arg_cutmarks = n;
+
+                                r = ca_cutmark_parse(arg_cutmarks + arg_n_cutmarks, optarg);
+                                if (r < 0)
+                                        return log_error_errno(r, "Failed to parse cutmark specification: %m");
+
+                                arg_n_cutmarks++;
+                                arg_auto_cutmarks = false;
+                        } else {
+                                arg_auto_cutmarks = r;
+
+                                arg_cutmarks = mfree(arg_cutmarks);
+                                arg_n_cutmarks = 0;
+                        }
+
+                        break;
+
+                case ARG_CUTMARK_DELTA_MAX: {
+                        uint64_t u;
+
+                        r = parse_size(optarg, &u);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse cutmark delta: %s", optarg);
+                        if (u == 0) {
+                                log_error("Cutmark delta cannot be zero.");
+                                return -EINVAL;
+                        }
+
+                        arg_cutmark_delta_max = u;
+                        break;
+                }
+
                 case '?':
                         return -EINVAL;
 
@@ -810,8 +862,10 @@ static int load_feature_flags(CaSync *s, uint64_t default_with_flags) {
         return 0;
 }
 
-static int load_chunk_size(CaSync *s) {
+static int load_chunk_size(CaSync *s, bool is_catar) {
         uint64_t cavg, cmin, cmax;
+        const CaCutmark *cutmarks;
+        size_t n_cutmarks;
         int r;
 
         if (arg_chunk_size_avg != 0) {
@@ -832,6 +886,22 @@ static int load_chunk_size(CaSync *s) {
                         return log_error_errno(r, "Failed to set maximum chunk size to %zu: %m", arg_chunk_size_max);
         }
 
+        if (arg_auto_cutmarks && is_catar) {
+                r = ca_sync_set_cutmarks_catar(s);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set automatic cutmarks: %m");
+        } else {
+                r = ca_sync_set_cutmarks(s, arg_cutmarks, arg_n_cutmarks);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set manual cutmarks: %m");
+        }
+
+        if (arg_cutmark_delta_max != 0) {
+                r = ca_sync_set_cutmark_delta_max(s, arg_cutmark_delta_max);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set cutmark delta: %m");
+        }
+
         if (!arg_verbose)
                 return 1;
 
@@ -848,6 +918,31 @@ static int load_chunk_size(CaSync *s) {
                 return log_error_errno(r, "Failed to read maximum chunk size: %m");
 
         log_info("Selected chunk sizes: min=%" PRIu64 "..avg=%" PRIu64 "..max=%" PRIu64, cmin, cavg, cmax);
+
+        r = ca_sync_get_cutmarks(s, &cutmarks, &n_cutmarks);
+        if (r < 0)
+                return log_error_errno(r, "Failed to acquire cutmarks: %m");
+
+        if (n_cutmarks == 0)
+                log_info("No cutmarks defined.");
+        else {
+                uint64_t delta;
+                size_t i;
+
+                for (i = 0; i < n_cutmarks; i++)
+                        log_info("Cutmark: %016" PRIx64 "/%016" PRIx64 "%c%"PRIu64,
+                                 cutmarks[i].value,
+                                 cutmarks[i].mask,
+                                 cutmarks[i].delta < 0 ? '-' : '+',
+                                 (uint64_t) (cutmarks[i].delta < 0 ? -cutmarks[i].delta : cutmarks[i].delta));
+
+                r = ca_sync_get_cutmark_delta_max(s, &delta);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine cutmark delta: %m");
+
+                log_info("Maximum cutmark delta: %" PRIu64, delta);
+        }
+
         return 1;
 }
 
@@ -904,7 +999,9 @@ static int verbose_print_path(CaSync *s, const char *verb) {
 
 static int verbose_print_done_make(CaSync *s) {
         uint64_t n_chunks = UINT64_MAX, size = UINT64_MAX, n_reused = UINT64_MAX, covering,
-                n_cache_hits = UINT64_MAX, n_cache_misses = UINT64_MAX, n_cache_invalidated = UINT64_MAX, n_cache_added = UINT64_MAX;
+                n_cache_hits = UINT64_MAX, n_cache_misses = UINT64_MAX, n_cache_invalidated = UINT64_MAX, n_cache_added = UINT64_MAX,
+                n_cutmarks_applied = UINT64_MAX;
+        int64_t cutmark_delta_sum = INT64_MAX;
         char buffer[FORMAT_BYTES_MAX];
         int r;
 
@@ -988,6 +1085,19 @@ static int verbose_print_done_make(CaSync *s) {
 
         if (n_cache_hits != UINT64_MAX && n_cache_misses != UINT64_MAX && n_cache_invalidated != UINT64_MAX && n_cache_added != UINT64_MAX)
                 log_info("Cache hits: %" PRIu64 ", misses: %" PRIu64 ", invalidated: %" PRIu64 ", added: %" PRIu64, n_cache_hits, n_cache_misses, n_cache_invalidated, n_cache_added);
+
+        r = ca_sync_current_cutmarks_applied(s, &n_cutmarks_applied);
+        if (r < 0 && r != -ENODATA)
+                return log_error_errno(r, "Failed to read number of cutmarks: %m");
+        if (n_cutmarks_applied != UINT64_MAX)
+                log_info("Cutmarks applied: %"PRIu64, n_cutmarks_applied);
+
+        r = ca_sync_current_cutmark_delta_sum(s, &cutmark_delta_sum);
+        if (r < 0 && r != -ENODATA)
+                return log_error_errno(r, "Failed to read cutmark delta: %m");
+        if (cutmark_delta_sum != INT64_MAX)
+                log_info("Average cutmark delta for all chunks: %0.1f",
+                         n_chunks > 0 ? (double) cutmark_delta_sum / n_chunks : 0.0);
 
         return 1;
 }
@@ -1314,7 +1424,7 @@ static int verb_make(int argc, char *argv[]) {
         if (!s)
                 return log_oom();
 
-        r = load_chunk_size(s);
+        r = load_chunk_size(s, IN_SET(operation, MAKE_ARCHIVE, MAKE_ARCHIVE_INDEX));
         if (r < 0)
                 return r;
 
@@ -2242,7 +2352,7 @@ static int verb_list(int argc, char *argv[]) {
         if (!s)
                 return log_oom();
 
-        r = load_chunk_size(s);
+        r = load_chunk_size(s, true);
         if (r < 0)
                 return r;
 
@@ -2549,7 +2659,7 @@ static int verb_digest(int argc, char *argv[]) {
         if (!s)
                 return log_oom();
 
-        r = load_chunk_size(s);
+        r = load_chunk_size(s, IN_SET(operation, DIGEST_ARCHIVE, DIGEST_ARCHIVE_INDEX, DIGEST_DIRECTORY));
         if (r < 0)
                 return r;
 
@@ -4013,6 +4123,7 @@ finish:
         free(arg_cache);
         strv_free(arg_extra_stores);
         strv_free(arg_seeds);
+        free(arg_cutmarks);
 
         /* fprintf(stderr, PID_FMT ": exiting with error code: %m", getpid()); */
 
