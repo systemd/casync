@@ -2058,6 +2058,14 @@ static int ca_sync_step_encode(CaSync *s) {
                 if (r < 0)
                         return r;
 
+                if (s->wstore) {
+                        /* Make sure the store ends all worker threads and pick up any pending errors from
+                         * it */
+                        r = ca_store_finalize(s->wstore);
+                        if (r < 0)
+                                return r;
+                }
+
                 r = ca_sync_install_archive(s);
                 if (r < 0)
                         return r;
