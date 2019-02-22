@@ -38,3 +38,4 @@ static inline int log_oom(void) {
         } while(false)
 
 void set_log_level(int level);
+int set_log_level_from_string(const char *str);

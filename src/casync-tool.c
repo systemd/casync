@@ -42,6 +42,7 @@ static enum arg_what {
         WHAT_DIRECTORY,
         _WHAT_INVALID = -1,
 } arg_what = _WHAT_INVALID;
+static int arg_log_level = -1;
 static bool arg_verbose = false;
 static bool arg_dry_run = false;
 static bool arg_exclude_nodump = true;
@@ -87,6 +88,7 @@ static void help(void) {
                "Content-Addressable Data Synchronization Tool\n\n"
                "  -h --help                  Show this help\n"
                "     --version               Show brief version information\n"
+               "  -l --log-level=LEVEL       Set log level (debug, info, err)\n"
                "  -v --verbose               Show terse status information during runtime\n"
                "  -n --dry-run               When garbage collecting, only print what would\n"
                "                             be done\n"
@@ -348,6 +350,7 @@ static int parse_argv(int argc, char *argv[]) {
         static const struct option options[] = {
                 { "help",              no_argument,       NULL, 'h'                   },
                 { "version",           no_argument,       NULL, ARG_VERSION           },
+                { "log-level",         required_argument, NULL, 'l'                   },
                 { "verbose",           no_argument,       NULL, 'v'                   },
                 { "dry-run",           no_argument,       NULL, 'n'                   },
                 { "store",             required_argument, NULL, ARG_STORE             },
@@ -386,7 +389,7 @@ static int parse_argv(int argc, char *argv[]) {
         if (getenv_bool("CASYNC_VERBOSE") > 0)
                 arg_verbose = true;
 
-        while ((c = getopt_long(argc, argv, "hvnc", options, NULL)) >= 0) {
+        while ((c = getopt_long(argc, argv, "hl:vnc", options, NULL)) >= 0) {
 
                 switch (c) {
 
@@ -397,6 +400,15 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_VERSION:
                         version();
                         return 0;
+
+                case 'l':
+                        r = set_log_level_from_string(optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse log level \"%s\": %m", optarg);
+
+                        arg_log_level = r;
+
+                        break;
 
                 case 'v':
                         arg_verbose = true;
@@ -673,7 +685,13 @@ static int parse_argv(int argc, char *argv[]) {
                 }
         }
 
-        /* Propagate our verbose setting to helpers we fork off */
+        /* Propagate some settings to helpers we fork off */
+        if (arg_log_level >= 0) {
+                char buffer[DECIMAL_STR_MAX(int)];
+                snprintf(buffer, sizeof(buffer), "%d", arg_log_level);
+                (void) setenv("CASYNC_LOG_LEVEL", buffer, 1);
+        }
+
         if (arg_verbose)
                 (void) putenv((char*) "CASYNC_VERBOSE=1");
         else
