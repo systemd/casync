@@ -72,6 +72,8 @@ enum {
 
         /* The index file format */
         CA_FORMAT_INDEX                 = UINT64_C(0x96824d9c7b129ff9),
+        CA_FORMAT_CUTMARK_DELTA_MAX     = UINT64_C(0x1bd67079a4939e36),
+        CA_FORMAT_CUTMARK               = UINT64_C(0x5a218a2418b94da3),
         CA_FORMAT_TABLE                 = UINT64_C(0xe75b9e112f17417d),
 
         /* The end marker used in the TABLE object */
@@ -426,6 +428,18 @@ typedef struct CaFormatIndex {
         le64_t chunk_size_avg;
         le64_t chunk_size_max;
 } CaFormatIndex;
+
+typedef struct CaFormatCutmarkDeltaMax {
+        CaFormatHeader header;
+        le64_t cutmark_delta_max;
+} CaFormatCutmarkDeltaMax;
+
+typedef struct CaFormatCutmark {
+        CaFormatHeader header;
+        le64_t value;
+        le64_t mask;
+        le64_t delta;
+} CaFormatCutmark;
 
 typedef struct CaFormatTableItem {
         le64_t offset;

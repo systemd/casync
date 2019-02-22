@@ -1556,6 +1556,14 @@ static int ca_sync_start(CaSync *s) {
                         if (r < 0)
                                 return r;
 
+                        r = ca_index_set_cutmarks(s->index, s->chunker.cutmarks, s->chunker.n_cutmarks);
+                        if (r < 0)
+                                return r;
+
+                        r = ca_index_set_cutmark_delta_max(s->index, ca_chunker_cutmark_delta_max(&s->chunker));
+                        if (r < 0)
+                                return r;
+
                         if (s->make_mode != (mode_t) -1) {
                                 r = ca_index_set_make_mode(s->index, s->make_mode);
                                 if (r < 0 && r != -ENOTTY)

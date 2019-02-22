@@ -18,9 +18,9 @@
 /* #define EINVAL __LINE__ */
 
 typedef enum CaIndexMode {
-        CA_INDEX_WRITE,                  /* only cooked writing */
+        CA_INDEX_WRITE,                  /* only cooked (i.e. individual parsed fields) writing */
         CA_INDEX_READ,                   /* only cooked reading */
-        CA_INDEX_INCREMENTAL_WRITE,      /* cooked writing + incremental raw reading back */
+        CA_INDEX_INCREMENTAL_WRITE,      /* cooked writing + incremental raw (i.e. raw byte-wise) reading back */
         CA_INDEX_INCREMENTAL_READ,       /* incremental raw writing + cooked reading back */
 } CaIndexMode;
 
@@ -48,6 +48,11 @@ struct CaIndex {
 
         uint64_t file_size; /* The size of the index file */
         uint64_t blob_size; /* The size of the blob this index file describes */
+
+        CaCutmark *cutmarks;
+        size_t n_cutmarks;
+
+        uint64_t cutmark_delta_max;
 };
 
 static inline uint64_t CA_INDEX_METADATA_SIZE(CaIndex *i) {
@@ -141,6 +146,8 @@ CaIndex *ca_index_unref(CaIndex *i) {
 
         if (i->fd >= 2)
                 safe_close(i->fd);
+
+        free(i->cutmarks);
 
         return mfree(i);
 }
@@ -242,15 +249,8 @@ static int ca_index_open_fd(CaIndex *i) {
 
 static int ca_index_write_head(CaIndex *i) {
 
-        struct {
-                CaFormatIndex index;
-                CaFormatHeader table;
-        } head = {
-                .index.header.size = htole64(sizeof(CaFormatIndex)),
-                .index.header.type = htole64(CA_FORMAT_INDEX),
-                .table.size = htole64(UINT64_MAX),
-                .table.type = htole64(CA_FORMAT_TABLE),
-        };
+        CaFormatIndex index;
+        CaFormatHeader table;
         int r;
 
         assert(i);
@@ -272,19 +272,65 @@ static int ca_index_write_head(CaIndex *i) {
               i->chunk_size_avg <= i->chunk_size_max))
                 return -EINVAL;
 
-        head.index.feature_flags = htole64(i->feature_flags);
-
-        head.index.chunk_size_min = htole64(i->chunk_size_min);
-        head.index.chunk_size_avg = htole64(i->chunk_size_avg);
-        head.index.chunk_size_max = htole64(i->chunk_size_max);
-
         assert(i->cooked_offset == 0);
 
-        r = loop_write(i->fd, &head, sizeof(head));
+        index = (CaFormatIndex) {
+                .header.size = htole64(sizeof(CaFormatIndex)),
+                .header.type = htole64(CA_FORMAT_INDEX),
+                .feature_flags = htole64(i->feature_flags),
+                .chunk_size_min = htole64(i->chunk_size_min),
+                .chunk_size_avg = htole64(i->chunk_size_avg),
+                .chunk_size_max = htole64(i->chunk_size_max),
+        };
+
+        r = loop_write(i->fd, &index, sizeof(index));
         if (r < 0)
                 return r;
 
-        i->start_offset = i->cooked_offset = sizeof(head);
+        i->cooked_offset = sizeof(index);
+
+        if (i->n_cutmarks > 0) {
+                CaFormatCutmarkDeltaMax dm = {
+                        .header.size = htole64(sizeof(CaFormatCutmarkDeltaMax)),
+                        .header.type = htole64(CA_FORMAT_CUTMARK_DELTA_MAX),
+                        .cutmark_delta_max = htole64(i->cutmark_delta_max),
+                };
+                size_t j;
+
+                r = loop_write(i->fd, &dm, sizeof(dm));
+                if (r < 0)
+                        return r;
+
+                i->cooked_offset += sizeof(dm);
+
+                for (j = 0; j < i->n_cutmarks; j++) {
+                        CaFormatCutmark cm = {
+                                .header.size = htole64(sizeof(CaFormatCutmark)),
+                                .header.type = htole64(CA_FORMAT_CUTMARK),
+                                .value = htole64(i->cutmarks[j].value),
+                                .mask = htole64(i->cutmarks[j].mask),
+                                .delta = htole64((uint64_t) i->cutmarks[j].delta),
+                        };
+
+                        r = loop_write(i->fd, &cm, sizeof(cm));
+                        if (r < 0)
+                                return r;
+
+                        i->cooked_offset += sizeof(cm);
+                }
+        }
+
+        table = (CaFormatHeader) {
+                .size = htole64(UINT64_MAX),
+                .type = htole64(CA_FORMAT_TABLE),
+        };
+
+        r = loop_write(i->fd, &table, sizeof(table));
+        if (r < 0)
+                return r;
+
+        i->cooked_offset += sizeof(table);
+        i->start_offset = i->cooked_offset;
 
         return 0;
 }
@@ -311,12 +357,29 @@ static int ca_index_enough_data(CaIndex *i, size_t n) {
         return 1;
 }
 
+static int ca_index_progressive_read(CaIndex *i, void *p, size_t n) {
+        ssize_t m;
+        int r;
+
+        assert(i);
+        assert(p || n == 0);
+
+        r = ca_index_enough_data(i, n);
+        if (r < 0)
+                return r;
+        if (r == 0)
+                return -EAGAIN;
+
+        m = loop_read(i->fd, p, n);
+        if (m < 0)
+                return (int) m;
+        if ((size_t) m != n)
+                return -EPIPE;
+
+        return 0;
+}
+
 static int ca_index_read_head(CaIndex *i) {
-        struct {
-                CaFormatIndex index;
-                CaFormatHeader table;
-        } head;
-        ssize_t n;
         int r;
 
         assert(i);
@@ -326,59 +389,152 @@ static int ca_index_read_head(CaIndex *i) {
         if (i->start_offset != 0) /* already past the head */
                 return 0;
 
-        assert(i->cooked_offset == 0);
+        if (i->cooked_offset == 0) {
+                CaFormatIndex index;
 
-        r = ca_index_enough_data(i, sizeof(head));
-        if (r < 0)
-                return r;
-        if (r == 0)
-                return -EAGAIN;
+                r = ca_index_progressive_read(i, &index, sizeof(index));
+                if (r < 0)
+                        return r;
 
-        n = loop_read(i->fd, &head, sizeof(head));
-        if (n < 0)
-                return (int) n;
-        if (n != sizeof(head))
-                return -EPIPE;
+                if (le64toh(index.header.size) != sizeof(CaFormatIndex) ||
+                    le64toh(index.header.type) != CA_FORMAT_INDEX)
+                        return -EBADMSG;
 
-        if (le64toh(head.index.header.size) != sizeof(CaFormatIndex) ||
-            le64toh(head.index.header.type) != CA_FORMAT_INDEX)
-                return -EBADMSG;
+                r = ca_feature_flags_are_normalized(le64toh(index.feature_flags));
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        return -EINVAL;
 
-        r = ca_feature_flags_are_normalized(le64toh(head.index.feature_flags));
-        if (r < 0)
-                return r;
-        if (r == 0)
-                return -EINVAL;
+                if (le64toh(index.chunk_size_min) < CA_CHUNK_SIZE_LIMIT_MIN ||
+                    le64toh(index.chunk_size_min) > CA_CHUNK_SIZE_LIMIT_MAX)
+                        return -EBADMSG;
 
-        if (le64toh(head.index.chunk_size_min) < CA_CHUNK_SIZE_LIMIT_MIN ||
-            le64toh(head.index.chunk_size_min) > CA_CHUNK_SIZE_LIMIT_MAX)
-                return -EBADMSG;
+                if (le64toh(index.chunk_size_avg) < CA_CHUNK_SIZE_LIMIT_MIN ||
+                    le64toh(index.chunk_size_avg) > CA_CHUNK_SIZE_LIMIT_MAX)
+                        return -EBADMSG;
 
-        if (le64toh(head.index.chunk_size_avg) < CA_CHUNK_SIZE_LIMIT_MIN ||
-            le64toh(head.index.chunk_size_avg) > CA_CHUNK_SIZE_LIMIT_MAX)
-                return -EBADMSG;
+                if (le64toh(index.chunk_size_max) < CA_CHUNK_SIZE_LIMIT_MIN ||
+                    le64toh(index.chunk_size_max) > CA_CHUNK_SIZE_LIMIT_MAX)
+                        return -EBADMSG;
 
-        if (le64toh(head.index.chunk_size_max) < CA_CHUNK_SIZE_LIMIT_MIN ||
-            le64toh(head.index.chunk_size_max) > CA_CHUNK_SIZE_LIMIT_MAX)
-                return -EBADMSG;
+                if (!(le64toh(index.chunk_size_min) <= le64toh(index.chunk_size_avg) &&
+                      le64toh(index.chunk_size_avg) <= le64toh(index.chunk_size_max)))
+                        return -EBADMSG;
 
-        if (!(le64toh(head.index.chunk_size_min) <= le64toh(head.index.chunk_size_avg) &&
-              le64toh(head.index.chunk_size_avg) <= le64toh(head.index.chunk_size_max)))
-                return -EBADMSG;
+                i->feature_flags = le64toh(index.feature_flags);
 
-        if (le64toh(head.table.size) != UINT64_MAX ||
-            le64toh(head.table.type) != CA_FORMAT_TABLE)
-                return -EBADMSG;
+                i->chunk_size_min = le64toh(index.chunk_size_min);
+                i->chunk_size_avg = le64toh(index.chunk_size_avg);
+                i->chunk_size_max = le64toh(index.chunk_size_max);
 
-        i->start_offset = i->cooked_offset = sizeof(head);
+                i->cooked_offset += sizeof(index);
+        }
 
-        i->feature_flags = le64toh(head.index.feature_flags);
+        if (i->cooked_offset == sizeof(CaFormatIndex)) {
+                CaFormatHeader header;
 
-        i->chunk_size_min = le64toh(head.index.chunk_size_min);
-        i->chunk_size_avg = le64toh(head.index.chunk_size_avg);
-        i->chunk_size_max = le64toh(head.index.chunk_size_max);
+                r = ca_index_progressive_read(i, &header, sizeof(header));
+                if (r < 0)
+                        return r;
 
-        return 0;
+                if (le64toh(header.type) == CA_FORMAT_TABLE) {
+                        /* No cutmarks defined, the table follows immediately */
+
+                        if (le64toh(header.size) != UINT64_MAX)
+                                return -EBADMSG;
+
+                        i->cooked_offset += sizeof(header);
+                        i->start_offset = i->cooked_offset;
+
+                        return 0;
+                }
+
+                /* Otherwise the cutmark delata max object has to follow immediately */
+                if (le64toh(header.type) != CA_FORMAT_CUTMARK_DELTA_MAX ||
+                    le64toh(header.size) != sizeof(CaFormatCutmarkDeltaMax))
+                        return -EBADMSG;
+
+                i->cooked_offset += sizeof(header);
+        }
+
+        if (i->cooked_offset == sizeof(CaFormatIndex) + sizeof(CaFormatHeader)) {
+                CaFormatCutmarkDeltaMax dm = {};
+                size_t need = sizeof(CaFormatCutmarkDeltaMax) - sizeof(CaFormatHeader);
+
+                r = ca_index_progressive_read(i, (uint8_t*) &dm + sizeof(CaFormatHeader), need);
+                if (r < 0)
+                        return r;
+
+                i->cutmark_delta_max = le64toh(dm.cutmark_delta_max);
+                i->cooked_offset += need;
+        }
+
+        if (i->cooked_offset >= sizeof(CaFormatIndex) + sizeof(CaFormatCutmarkDeltaMax)) {
+
+                for (;;) {
+                        CaFormatCutmark cm = {};
+                        uint64_t p;
+
+                        p = i->cooked_offset - sizeof(CaFormatIndex) - sizeof(CaFormatCutmarkDeltaMax);
+                        if (p % sizeof(CaFormatCutmark) == 0) {
+
+                                r = ca_index_progressive_read(i, &cm.header, sizeof(cm.header));
+                                if (r < 0)
+                                        return r;
+
+                                if (le64toh(cm.header.type) == CA_FORMAT_TABLE) {
+                                        /* No further cutmarks defined, the table follows now */
+
+                                        if (le64toh(cm.header.size) != UINT64_MAX)
+                                                return -EBADMSG;
+
+                                        i->cooked_offset += sizeof(cm.header);
+                                        i->start_offset = i->cooked_offset;
+                                        return 0;
+                                }
+
+                                if (le64toh(cm.header.type) != CA_FORMAT_CUTMARK ||
+                                    le64toh(cm.header.size) != sizeof(CaFormatCutmark))
+                                        return -EBADMSG;
+
+                                i->cooked_offset += sizeof(cm.header);
+                        } else {
+                                size_t need = sizeof(CaFormatCutmark) - sizeof(CaFormatHeader);
+                                CaCutmark e, *a;
+
+                                assert(p % sizeof(CaFormatCutmark) == sizeof(CaFormatHeader));
+
+                                r = ca_index_progressive_read(i, (uint8_t*) &cm + sizeof(CaFormatHeader), need);
+                                if (r < 0)
+                                        return r;
+
+                                if (le64toh(cm.mask == 0))
+                                        return -EBADMSG;
+
+                                e = (CaCutmark) {
+                                        .value = le64toh(cm.value),
+                                        .mask = le64toh(cm.mask),
+                                        .delta = le64toh(cm.delta),
+                                };
+
+                                if (i->n_cutmarks > 0 &&
+                                    ca_cutmark_cmp(i->cutmarks + i->n_cutmarks - 1, &e) >= 0)
+                                        return -EBADMSG;
+
+                                a = reallocarray(i->cutmarks, i->n_cutmarks+1, sizeof(CaCutmark));
+                                if (!a)
+                                        return -ENOMEM;
+
+                                i->cutmarks = a;
+                                i->cutmarks[i->n_cutmarks++] = e;
+
+                                i->cooked_offset += need;
+                        }
+                }
+        }
+
+        assert_not_reached("Huh, read the wrong number of bytes so far, this can't be.");
 }
 
 int ca_index_open(CaIndex *i) {
@@ -468,6 +624,13 @@ int ca_index_write_chunk(CaIndex *i, const CaChunkID *id, uint64_t size) {
         return 0;
 }
 
+static uint64_t index_offset(CaIndex *i) {
+        assert(i);
+        assert(i->start_offset >= sizeof(CaFormatIndex) + offsetof(CaFormatTable, items));
+
+        return i->start_offset - offsetof(CaFormatTable, items);
+}
+
 int ca_index_write_eof(CaIndex *i) {
         CaFormatTableTail tail = {};
         int r;
@@ -485,7 +648,7 @@ int ca_index_write_eof(CaIndex *i) {
         if (r < 0)
                 return r;
 
-        tail.index_offset = htole64(sizeof(CaFormatIndex));
+        tail.index_offset = htole64(index_offset(i));
         tail.size = htole64(offsetof(CaFormatTable, items) +
                             (i->item_position * sizeof(CaFormatTableItem)) +
                             sizeof(tail));
@@ -543,7 +706,7 @@ int ca_index_read_chunk(CaIndex *i, CaChunkID *ret_id, uint64_t *ret_offset_end,
         if (buffer.tail.marker == htole64(CA_FORMAT_TABLE_TAIL_MARKER) &&
             buffer.tail._zero_fill1 == 0 &&
             buffer.tail._zero_fill2 == 0 &&
-            buffer.tail.index_offset == htole64(sizeof(CaFormatIndex)) &&
+            buffer.tail.index_offset == htole64(index_offset(i)) &&
             le64toh(buffer.tail.size) == (i->cooked_offset - i->start_offset + offsetof(CaFormatTable, items) + sizeof(CaFormatTableTail))) {
                 uint8_t final_byte;
 
@@ -872,6 +1035,75 @@ int ca_index_get_chunk_size_max(CaIndex *i, size_t *ret) {
         return 0;
 }
 
+int ca_index_set_cutmarks(
+                CaIndex *i,
+                const CaCutmark *cutmarks,
+                size_t n_cutmarks) {
+
+        CaCutmark *m;
+
+        if (!i)
+                return -EINVAL;
+        if (n_cutmarks > 0 && !cutmarks)
+                return -EINVAL;
+        if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
+                return -EROFS;
+
+        /* We don't validate the cutmark array here, the assumption is that it is already valid */
+
+        m = newdup(CaCutmark, cutmarks, n_cutmarks);
+        if (!m)
+                return -ENOMEM;
+
+        free_and_replace(i->cutmarks, m);
+        i->n_cutmarks = n_cutmarks;
+
+        return 0;
+}
+
+int ca_index_set_cutmark_delta_max(
+                CaIndex *i,
+                uint64_t cutmark_delta_max) {
+
+        if (!i)
+                return -EINVAL;
+        if (!IN_SET(i->mode, CA_INDEX_WRITE, CA_INDEX_INCREMENTAL_WRITE))
+                return -EROFS;
+
+        i->cutmark_delta_max = cutmark_delta_max;
+        return 0;
+}
+
+int ca_index_get_cutmarks(CaIndex *i, const CaCutmark **ret_cutmarks, size_t *ret_n_cutmarks) {
+        if (!i)
+                return -EINVAL;
+        if (!ret_cutmarks && !ret_n_cutmarks)
+                return -EINVAL;
+
+        if (IN_SET(i->mode, CA_INDEX_READ, CA_INDEX_INCREMENTAL_READ) && i->start_offset == 0)
+                return -ENODATA;
+
+        if (ret_cutmarks)
+                *ret_cutmarks = i->cutmarks;
+        if (ret_n_cutmarks)
+                *ret_n_cutmarks = i->n_cutmarks;
+
+        return 0;
+}
+
+int ca_index_get_cutmark_delta_max(CaIndex *i, uint64_t *ret) {
+        if (!i)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (IN_SET(i->mode, CA_INDEX_READ, CA_INDEX_INCREMENTAL_READ) && i->start_offset == 0)
+                return -ENODATA;
+
+        *ret = i->cutmark_delta_max;
+        return 0;
+}
+
 int ca_index_get_index_size(CaIndex *i, uint64_t *ret) {
         uint64_t size, metadata_size;
         int r;
@@ -976,9 +1208,9 @@ static int ca_index_read_tail(CaIndex *i) {
 
         if (le64toh(buffer.tail.marker) != CA_FORMAT_TABLE_TAIL_MARKER)
                 return -EBADMSG;
-        if (le64toh(buffer.tail.index_offset) != sizeof(CaFormatIndex))
+        if (le64toh(buffer.tail.index_offset) != index_offset(i))
                 return -EBADMSG;
-        if (le64toh(buffer.tail.size) + sizeof(CaFormatIndex) != size)
+        if (index_offset(i) + le64toh(buffer.tail.size) != size)
                 return -EBADMSG;
 
         i->blob_size = le64toh(buffer.last_item.offset);

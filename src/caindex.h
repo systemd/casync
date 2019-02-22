@@ -4,6 +4,7 @@
 #define foocaindexhfoo
 
 #include "cachunkid.h"
+#include "cacutmark.h"
 #include "realloc-buffer.h"
 
 typedef struct CaIndex CaIndex;
@@ -50,6 +51,12 @@ int ca_index_set_chunk_size_max(CaIndex *i, size_t cmax);
 int ca_index_get_chunk_size_min(CaIndex *i, size_t *ret);
 int ca_index_get_chunk_size_avg(CaIndex *i, size_t *ret);
 int ca_index_get_chunk_size_max(CaIndex *i, size_t *ret);
+
+int ca_index_set_cutmarks(CaIndex *i, const CaCutmark *cutmarks, size_t n_cutmarks);
+int ca_index_set_cutmark_delta_max(CaIndex *i, uint64_t cutmark_delta_max);
+
+int ca_index_get_cutmarks(CaIndex *i, const CaCutmark **ret_cutmarks, size_t *ret_n_cutmarks);
+int ca_index_get_cutmark_delta_max(CaIndex *i, uint64_t *ret);
 
 int ca_index_get_blob_size(CaIndex *i, uint64_t *ret);
 int ca_index_get_index_size(CaIndex *i, uint64_t *ret);
