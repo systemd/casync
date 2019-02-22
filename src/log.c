@@ -10,6 +10,27 @@
 
 static int cached_log_level = -1;
 
+static int level_from_string(const char *str) {
+        if (STR_IN_SET(str, "emerg", "emergency", "0"))
+                return LOG_EMERG;
+        else if (STR_IN_SET(str, "alert", "1"))
+                return LOG_ALERT;
+        else if (STR_IN_SET(str, "crit", "critical", "2"))
+                return LOG_CRIT;
+        else if (STR_IN_SET(str, "err", "error", "3"))
+                return LOG_ERR;
+        else if (STR_IN_SET(str, "warn", "warning", "4"))
+                return LOG_WARNING;
+        else if (STR_IN_SET(str, "notice", "5"))
+                return LOG_NOTICE;
+        else if (STR_IN_SET(str, "info", "6"))
+                return LOG_INFO;
+        else if (STR_IN_SET(str, "debug", "7"))
+                return LOG_DEBUG;
+        else
+                return -EINVAL;
+}
+
 static int get_log_level(void) {
         if (cached_log_level < 0) {
                 const char *e;
@@ -17,22 +38,8 @@ static int get_log_level(void) {
                 cached_log_level = LOG_INFO;
 
                 e = getenv("CASYNC_LOG_LEVEL");
-                if (e) {
-                        if (STR_IN_SET(e, "emerg", "emergency", "0"))
-                                cached_log_level = LOG_EMERG;
-                        else if (STR_IN_SET(e, "alert", "1"))
-                                cached_log_level = LOG_ALERT;
-                        else if (STR_IN_SET(e, "crit", "critical", "2"))
-                                cached_log_level = LOG_CRIT;
-                        else if (STR_IN_SET(e, "err", "error", "3"))
-                                cached_log_level = LOG_ERR;
-                        else if (STR_IN_SET(e, "warn", "warning", "4"))
-                                cached_log_level = LOG_WARNING;
-                        else if (STR_IN_SET(e, "notice", "5"))
-                                cached_log_level = LOG_NOTICE;
-                        else if (STR_IN_SET(e, "debug", "7"))
-                                cached_log_level = LOG_DEBUG;
-                }
+                if (e)
+                        set_log_level_from_string(e);
         }
 
         return cached_log_level;
@@ -40,6 +47,17 @@ static int get_log_level(void) {
 
 void set_log_level(int level) {
         cached_log_level = level;
+}
+
+int set_log_level_from_string(const char *str) {
+        int level;
+
+        level = level_from_string(str);
+        if (level < 0)
+                return level;
+
+        cached_log_level = level;
+        return level;
 }
 
 static int log_fullv(

@@ -151,6 +151,7 @@ Options
 General options:
 
 --help, -h                      Show terse help output
+--log-level=<LEVEL>, -l         Set log level (debug, info, err)
 --verbose, -v                   Show terse status information during runtime
 --dry-run, -n                   Only print what would be removed with **gc**
 --store=PATH                    The primary chunk store to use
