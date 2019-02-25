@@ -817,4 +817,13 @@ int read_line(FILE *f, size_t limit, char **ret);
 char *delete_trailing_chars(char *s, const char *bad);
 char *strstrip(char *s);
 
+#define CMP(a, b) __CMP(UNIQ, (a), UNIQ, (b))
+#define __CMP(aq, a, bq, b)                             \
+        ({                                              \
+                const typeof(a) UNIQ_T(A, aq) = (a);    \
+                const typeof(b) UNIQ_T(B, bq) = (b);    \
+                UNIQ_T(A, aq) < UNIQ_T(B, bq) ? -1 :    \
+                UNIQ_T(A, aq) > UNIQ_T(B, bq) ? 1 : 0;  \
+        })
+
 #endif
