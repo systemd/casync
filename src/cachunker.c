@@ -260,7 +260,7 @@ static void chunker_cut(CaChunker *c) {
         c->chunk_size = 0;
 }
 
-size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
+size_t ca_chunker_scan(CaChunker *c, bool test_break, const void* p, size_t n) {
         const uint8_t *q = p;
         size_t k, idx;
         uint32_t v;
@@ -316,7 +316,8 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
                 v = ca_chunker_start(c, c->window, c->window_size);
                 k = m;
 
-                if (shall_break(c, v))
+                if (test_break &&
+                    shall_break(c, v))
                         goto now;
         } else
                 k = 0;
@@ -328,7 +329,8 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
                 c->chunk_size++;
                 k++;
 
-                if (shall_break(c, v))
+                if (test_break &&
+                    shall_break(c, v))
                         goto now;
 
                 c->window[idx++] = *q;

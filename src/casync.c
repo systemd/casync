@@ -1700,7 +1700,7 @@ static int ca_sync_write_chunks(CaSync *s, const void *p, size_t l, CaLocation *
                 const void *chunk;
                 size_t chunk_size, k;
 
-                k = ca_chunker_scan(&s->chunker, p, l);
+                k = ca_chunker_scan(&s->chunker, true, p, l);
                 if (k == (size_t) -1) {
                         if (!realloc_buffer_append(&s->buffer, p, l))
                                 return -ENOMEM;

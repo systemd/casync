@@ -342,7 +342,7 @@ static int ca_seed_cache_chunks(CaSeed *s) {
                                 return r;
                 }
 
-                k = ca_chunker_scan(&s->chunker, p, l);
+                k = ca_chunker_scan(&s->chunker, true, p, l);
                 if (k == (size_t) -1) {
                         if (!realloc_buffer_append(&s->buffer, p, l))
                                 return -ENOMEM;

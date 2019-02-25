@@ -63,7 +63,7 @@ static void test_chunk(void) {
                 for (;;) {
                         size_t k;
 
-                        k = ca_chunker_scan(&x, p, n);
+                        k = ca_chunker_scan(&x, true, p, n);
                         if (k == (size_t) -1) {
                                 acc += n;
                                 break;
@@ -198,7 +198,7 @@ static void test_cutmarks(void) {
                 size_t k;
                 ssize_t cm;
 
-                k = ca_chunker_scan(&x, p, n);
+                k = ca_chunker_scan(&x, true, p, n);
 
                 if (k == (size_t) -1) {
                         offset += n;

@@ -41,7 +41,7 @@ static void* process(void *q) {
                 for (;;) {
                         size_t n;
 
-                        n = ca_chunker_scan(&t->chunker, p, l);
+                        n = ca_chunker_scan(&t->chunker, true, p, l);
                         if (n == (size_t) -1) {
                                 previous += l;
                                 break;

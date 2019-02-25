@@ -56,7 +56,7 @@ int ca_chunker_set_size(CaChunker *c, size_t min_size, size_t avg_size, size_t m
 
 /* Scans the specified data for a chunk border. Returns (size_t) -1 if none was found (and the function should be
  * called with more data later on), or another value indicating the position of a border. */
-size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n);
+size_t ca_chunker_scan(CaChunker *c, bool test_break, const void* p, size_t n);
 
 /* Low-level buzhash functions. Only exported for testing purposes. */
 uint32_t ca_chunker_start(CaChunker *c, const void *p, size_t n);
