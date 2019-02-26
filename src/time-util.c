@@ -6,17 +6,18 @@
 char *format_timespan(char *buf, size_t l, uint64_t t, uint64_t accuracy) {
         static const struct {
                 const char *suffix;
-                uint64_t usec;
+                uint64_t nsec;
         } table[] = {
-                { "y",     USEC_PER_YEAR   },
-                { "month", USEC_PER_MONTH  },
-                { "w",     USEC_PER_WEEK   },
-                { "d",     USEC_PER_DAY    },
-                { "h",     USEC_PER_HOUR   },
-                { "min",   USEC_PER_MINUTE },
-                { "s",     USEC_PER_SEC    },
-                { "ms",    USEC_PER_MSEC   },
-                { "us",    1               },
+                { "y",     NSEC_PER_YEAR   },
+                { "month", NSEC_PER_MONTH  },
+                { "w",     NSEC_PER_WEEK   },
+                { "d",     NSEC_PER_DAY    },
+                { "h",     NSEC_PER_HOUR   },
+                { "min",   NSEC_PER_MINUTE },
+                { "s",     NSEC_PER_SEC    },
+                { "ms",    NSEC_PER_MSEC   },
+                { "us",    NSEC_PER_USEC   },
+                { "ns",    1               },
         };
 
         size_t i;
@@ -26,7 +27,7 @@ char *format_timespan(char *buf, size_t l, uint64_t t, uint64_t accuracy) {
         assert(buf);
         assert(l > 0);
 
-        if (t == USEC_INFINITY) {
+        if (t == NSEC_INFINITY) {
                 strncpy(p, "infinity", l-1);
                 p[l-1] = 0;
                 return p;
@@ -52,22 +53,22 @@ char *format_timespan(char *buf, size_t l, uint64_t t, uint64_t accuracy) {
                 if (t < accuracy && something)
                         break;
 
-                if (t < table[i].usec)
+                if (t < table[i].nsec)
                         continue;
 
                 if (l <= 1)
                         break;
 
-                a = t / table[i].usec;
-                b = t % table[i].usec;
+                a = t / table[i].nsec;
+                b = t % table[i].nsec;
 
                 /* Let's see if we should shows this in dot notation */
-                if (t < USEC_PER_MINUTE && b > 0) {
+                if (t < NSEC_PER_MINUTE && b > 0) {
                         uint64_t cc;
                         signed char j;
 
                         j = 0;
-                        for (cc = table[i].usec; cc > 1; cc /= 10)
+                        for (cc = table[i].nsec; cc > 1; cc /= 10)
                                 j++;
 
                         for (cc = accuracy; cc > 1; cc /= 10) {
