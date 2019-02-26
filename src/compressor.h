@@ -3,10 +3,17 @@
 #ifndef foocompresshorhfoo
 #define foocompresshorhfoo
 
-#include <lzma.h>
 #include <stdbool.h>
-#include <zlib.h>
-#include <zstd.h>
+
+#if HAVE_LIBLZMA
+#  include <lzma.h>
+#endif
+#if HAVE_LIBZ
+#  include <zlib.h>
+#endif
+#if HAVE_LIBZSTD
+#  include <zstd.h>
+#endif
 
 #include "cacompression.h"
 
@@ -21,14 +28,20 @@ typedef struct CompressorContext {
         CaCompressionType compressor;
 
         union {
+#if HAVE_LIBLZMA
                 lzma_stream xz;
+#endif
+#if HAVE_LIBZ
                 struct z_stream_s gzip;
+#endif
+#if HAVE_LIBZSTD
                 struct {
                         ZSTD_CStream *cstream;
                         ZSTD_DStream *dstream;
                         ZSTD_inBuffer input;
                         ZSTD_outBuffer output;
                 } zstd;
+#endif
         };
 } CompressorContext;
 
@@ -38,6 +51,7 @@ typedef struct CompressorContext {
                 .compressor = _CA_COMPRESSION_TYPE_INVALID, \
         }
 
+bool compressor_is_supported(CaCompressionType compressor);
 int compressor_start_decode(CompressorContext *c, CaCompressionType compressor);
 int compressor_start_encode(CompressorContext *c, CaCompressionType compressor);
 void compressor_finish(CompressorContext *c);

@@ -1485,6 +1485,8 @@ static int ca_sync_start(CaSync *s) {
                 if (r < 0)
                         return r;
 
+                (void) ca_store_set_compression_type(s->cache_store, s->compression_type);
+
                 r = ca_remote_add_local_feature_flags(s->remote_index, CA_PROTOCOL_PUSH_INDEX_CHUNKS);
                 if (r < 0)
                         return r;

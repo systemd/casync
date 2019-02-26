@@ -4,6 +4,11 @@
 DIGEST=${1:-sha512-256}
 COMPRESSION=${2:-zstd}
 
+# Skip the test if given compressor is unavailable
+[ $COMPRESSION != "gzip" -o @HAVE_LIBZ@ = 1 ] || exit 77
+[ $COMPRESSION != "xz" -o @HAVE_LIBLZMA@ = 1 ] || exit 77
+[ $COMPRESSION != "zstd" -o @HAVE_LIBZSTD@ = 1 ] || exit 77
+
 PARAMS="-v --digest=$DIGEST --compression=$COMPRESSION"
 if [ $UID != 0 ]; then
     PARAMS="$PARAMS --without=privileged"

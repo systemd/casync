@@ -10,7 +10,6 @@
 /* #define EBADMSG __LINE__ */
 
 int detect_compression(const void *buffer, size_t size) {
-
         static const uint8_t xz_signature[] = {
                 0xfd, '7', 'z', 'X', 'Z', 0x00
         };
@@ -41,6 +40,20 @@ int detect_compression(const void *buffer, size_t size) {
         return -EBADMSG;
 }
 
+bool compressor_is_supported(CaCompressionType compressor) {
+        switch (compressor) {
+        case CA_COMPRESSION_XZ:
+                return HAVE_LIBLZMA;
+        case CA_COMPRESSION_GZIP:
+                return HAVE_LIBZ;
+        case CA_COMPRESSION_ZSTD:
+                return HAVE_LIBZSTD;
+        default:
+                assert("Unknown compression type");
+                return false;
+        }
+}
+
 int compressor_start_decode(CompressorContext *c, CaCompressionType compressor) {
         int r;
 
@@ -54,29 +67,39 @@ int compressor_start_decode(CompressorContext *c, CaCompressionType compressor) 
         switch (compressor) {
 
         case CA_COMPRESSION_XZ: {
+#if HAVE_LIBLZMA
                 lzma_ret xzr;
 
                 xzr = lzma_stream_decoder(&c->xz, UINT64_MAX, LZMA_TELL_UNSUPPORTED_CHECK);
                 if (xzr != LZMA_OK)
                         return -EIO;
-
                 break;
+#else
+                return -ENOSYS;
+#endif
         }
 
         case CA_COMPRESSION_GZIP:
+#if HAVE_LIBZ
                 r = inflateInit2(&c->gzip, 15 | 16);
                 if (r != Z_OK)
                         return -EIO;
-
                 break;
+#else
+                return -ENOSYS;
+#endif
 
         case CA_COMPRESSION_ZSTD:
+#if HAVE_LIBZSTD
                 c->zstd.dstream = ZSTD_createDStream();
                 if (!c->zstd.dstream)
                         return -ENOMEM;
 
                 ZSTD_initDStream(c->zstd.dstream);
                 break;
+#else
+                return -ENOSYS;
+#endif
 
         default:
                 assert_not_reached("Unknown decompressor.");
@@ -101,28 +124,39 @@ int compressor_start_encode(CompressorContext *c, CaCompressionType compressor) 
         switch (compressor) {
 
         case CA_COMPRESSION_XZ: {
+#if HAVE_LIBLZMA
                 lzma_ret xzr;
 
                 xzr = lzma_easy_encoder(&c->xz, LZMA_PRESET_DEFAULT, LZMA_CHECK_CRC64);
                 if (xzr != LZMA_OK)
                         return -EIO;
-
                 break;
+#else
+                return -ENOSYS;
+#endif
         }
 
         case CA_COMPRESSION_GZIP:
+#if HAVE_LIBZ
                 r = deflateInit2(&c->gzip, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 | 16, 8, Z_DEFAULT_STRATEGY);
                 if (r != Z_OK)
                         return -EIO;
                 break;
+#else
+                return -ENOSYS;
+#endif
 
         case CA_COMPRESSION_ZSTD:
+#if HAVE_LIBZSTD
                 c->zstd.cstream = ZSTD_createCStream();
                 if (!c->zstd.cstream)
                         return -ENOMEM;
 
                 ZSTD_initCStream(c->zstd.cstream, 3);
                 break;
+#else
+                return -ENOSYS;
+#endif
 
         default:
                 assert_not_reached("Unknown compressor.");
@@ -143,26 +177,31 @@ void compressor_finish(CompressorContext *c) {
         switch (c->compressor) {
 
         case CA_COMPRESSION_XZ:
+#if HAVE_LIBLZMA
                 lzma_end(&c->xz);
+#endif
                 break;
 
         case CA_COMPRESSION_GZIP:
+#if HAVE_LIBZ
                 if (c->operation == COMPRESSOR_DECODE)
                         inflateEnd(&c->gzip);
                 else if (c->operation == COMPRESSOR_ENCODE)
                         deflateEnd(&c->gzip);
                 else
                         assert_not_reached("Unknown operation.");
+#endif
                 break;
 
         case CA_COMPRESSION_ZSTD:
+#if HAVE_LIBZSTD
                 if (c->operation == COMPRESSOR_ENCODE)
                         ZSTD_freeCStream(c->zstd.cstream);
                 else if (c->operation == COMPRESSOR_DECODE)
                         ZSTD_freeDStream(c->zstd.dstream);
                 else
                         assert_not_reached("Unknown operation.");
-
+#endif
                 break;
 
         default:
@@ -180,21 +219,33 @@ int compressor_input(CompressorContext *c, const void *p, size_t sz) {
         switch (c->compressor) {
 
         case CA_COMPRESSION_XZ:
+#if HAVE_LIBLZMA
                 c->xz.next_in = p;
                 c->xz.avail_in = sz;
                 break;
+#else
+                return -ENOSYS;
+#endif
 
         case CA_COMPRESSION_GZIP:
+#if HAVE_LIBZ
                 c->gzip.next_in = (void*) p;
                 c->gzip.avail_in = sz;
                 break;
+#else
+                return -ENOSYS;
+#endif
 
         case CA_COMPRESSION_ZSTD:
+#if HAVE_LIBZSTD
                 c->zstd.input = (ZSTD_inBuffer) {
                         .src = p,
                         .size = sz,
                 };
                 break;
+#else
+                return -ENOSYS;
+#endif
 
         default:
                 assert_not_reached("Unknown compressor.");
@@ -219,6 +270,7 @@ int compressor_decode(CompressorContext *c, void *p, size_t sz, size_t *ret_done
         switch (c->compressor) {
 
         case CA_COMPRESSION_XZ: {
+#if HAVE_LIBLZMA
                 lzma_ret xzr;
 
                 c->xz.next_out = p;
@@ -245,9 +297,13 @@ int compressor_decode(CompressorContext *c, void *p, size_t sz, size_t *ret_done
                         return COMPRESSOR_MORE;
 
                 return COMPRESSOR_GOOD;
+#else
+                return -ENOSYS;
+#endif
         }
 
         case CA_COMPRESSION_GZIP:
+#if HAVE_LIBZ
                 c->gzip.next_out = p;
                 c->gzip.avail_out = sz;
 
@@ -272,9 +328,12 @@ int compressor_decode(CompressorContext *c, void *p, size_t sz, size_t *ret_done
                         return COMPRESSOR_MORE;
 
                 return COMPRESSOR_GOOD;
+#else
+                return -ENOSYS;
+#endif
 
         case CA_COMPRESSION_ZSTD: {
-                int ret;
+#if HAVE_LIBZSTD
                 size_t k;
 
                 c->zstd.output = (ZSTD_outBuffer) {
@@ -293,14 +352,17 @@ int compressor_decode(CompressorContext *c, void *p, size_t sz, size_t *ret_done
                         if (c->zstd.input.size > c->zstd.input.pos)
                                 return -EBADMSG;
 
-                        ret = COMPRESSOR_EOF;
+                        r = COMPRESSOR_EOF;
                 } else if (c->zstd.input.pos < c->zstd.input.size)
-                        ret = COMPRESSOR_MORE;
+                        r = COMPRESSOR_MORE;
                 else
-                        ret = COMPRESSOR_GOOD;
+                        r = COMPRESSOR_GOOD;
 
                 *ret_done = c->zstd.output.pos;
-                return ret;
+                return r;
+#else
+                return -ENOSYS;
+#endif
         }
 
         default:
@@ -309,7 +371,7 @@ int compressor_decode(CompressorContext *c, void *p, size_t sz, size_t *ret_done
 }
 
 int compressor_encode(CompressorContext *c, bool finalize, void *p, size_t sz, size_t *ret_done) {
-        int r;
+        _unused_ int r;
 
         if (!c)
                 return -EINVAL;
@@ -324,6 +386,7 @@ int compressor_encode(CompressorContext *c, bool finalize, void *p, size_t sz, s
         switch (c->compressor) {
 
         case CA_COMPRESSION_XZ: {
+#if HAVE_LIBLZMA
                 lzma_ret xzr;
 
                 c->xz.next_out = p;
@@ -343,10 +406,13 @@ int compressor_encode(CompressorContext *c, bool finalize, void *p, size_t sz, s
                         return COMPRESSOR_MORE;
 
                 return COMPRESSOR_GOOD;
+#else
+                return -ENOSYS;
+#endif
         }
 
         case CA_COMPRESSION_GZIP:
-
+#if HAVE_LIBZ
                 c->gzip.next_out = p;
                 c->gzip.avail_out = sz;
 
@@ -364,8 +430,12 @@ int compressor_encode(CompressorContext *c, bool finalize, void *p, size_t sz, s
                         return COMPRESSOR_MORE;
 
                 return COMPRESSOR_GOOD;
+#else
+                return -ENOSYS;
+#endif
 
         case CA_COMPRESSION_ZSTD: {
+#if HAVE_LIBZSTD
                 size_t k;
 
                 c->zstd.output = (ZSTD_outBuffer) {
@@ -392,6 +462,9 @@ int compressor_encode(CompressorContext *c, bool finalize, void *p, size_t sz, s
                         return COMPRESSOR_EOF;
 
                 return COMPRESSOR_GOOD;
+#else
+                return -ENOSYS;
+#endif
         }
 
         default:

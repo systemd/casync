@@ -51,7 +51,7 @@ int ca_load_fd(int fd, ReallocBuffer *buffer) {
 }
 
 int ca_load_and_decompress_fd(int fd, ReallocBuffer *buffer) {
-        CompressorContext context = COMPRESSOR_CONTEXT_INIT;
+        _cleanup_(compressor_finish) CompressorContext context = COMPRESSOR_CONTEXT_INIT;
         int compression_type = _CA_COMPRESSION_TYPE_INVALID;
         uint8_t fd_buffer[BUFFER_SIZE];
         bool got_decoder_eof = false;
@@ -91,29 +91,25 @@ int ca_load_and_decompress_fd(int fd, ReallocBuffer *buffer) {
         for (;;) {
                 r = compressor_input(&context, fd_buffer, l);
                 if (r < 0)
-                        goto finish;
+                        return 0;
 
                 for (;;) {
                         size_t done;
                         void *p;
 
                         p = realloc_buffer_extend(buffer, BUFFER_SIZE);
-                        if (!p) {
-                                r = -ENOMEM;
-                                goto finish;
-                        }
+                        if (!p)
+                                return -ENOMEM;
 
                         r = compressor_decode(&context, p, BUFFER_SIZE, &done);
                         if (r < 0)
-                                goto finish;
+                                return r;
 
                         realloc_buffer_shorten(buffer, BUFFER_SIZE - done);
                         dcount += done;
 
-                        if (dcount >= CA_CHUNK_SIZE_LIMIT_MAX) {
-                                r = -EBADMSG;
-                                goto finish;
-                        }
+                        if (dcount >= CA_CHUNK_SIZE_LIMIT_MAX)
+                                return -EBADMSG;
 
                         got_decoder_eof = r == COMPRESSOR_EOF;
 
@@ -122,46 +118,31 @@ int ca_load_and_decompress_fd(int fd, ReallocBuffer *buffer) {
                 };
 
                 l = read(fd, fd_buffer, sizeof(fd_buffer));
-                if (l < 0) {
-                        r = -errno;
-                        goto finish;
-                }
+                if (l < 0)
+                        return -errno;
                 if (l == 0) {
-                        if (!got_decoder_eof) { /* Premature end of file */
-                                r = -EPIPE;
-                                goto finish;
-                        }
-
+                        if (!got_decoder_eof) /* Premature end of file */
+                                return -EPIPE;
                         break;
                 }
 
-                if (got_decoder_eof) { /* Trailing noise */
-                        r = -EBADMSG;
-                        goto finish;
-                }
+                if (got_decoder_eof) /* Trailing noise */
+                        return -EBADMSG;
 
                 ccount += l;
 
-                if (ccount >= CA_CHUNK_SIZE_LIMIT_MAX) {
-                        r = -EBADMSG;
-                        goto finish;
-                }
+                if (ccount >= CA_CHUNK_SIZE_LIMIT_MAX)
+                        return -EBADMSG;
         }
 
-        if (ccount < CA_CHUNK_SIZE_LIMIT_MIN || dcount < CA_CHUNK_SIZE_LIMIT_MIN) {
-                r = -EBADMSG;
-                goto finish;
-        }
+        if (ccount < CA_CHUNK_SIZE_LIMIT_MIN || dcount < CA_CHUNK_SIZE_LIMIT_MIN)
+                return -EBADMSG;
 
-        r = 0;
-
-finish:
-        compressor_finish(&context);
-        return r;
+        return 0;
 }
 
 int ca_load_and_compress_fd(int fd, CaCompressionType compression_type, ReallocBuffer *buffer) {
-        CompressorContext context = COMPRESSOR_CONTEXT_INIT;
+        _cleanup_(compressor_finish) CompressorContext context = COMPRESSOR_CONTEXT_INIT;
         uint64_t ccount = 0, dcount = 0;
         int r;
 
@@ -184,44 +165,36 @@ int ca_load_and_compress_fd(int fd, CaCompressionType compression_type, ReallocB
                 bool eof, got_encoder_eof = false;
 
                 l = read(fd, fd_buffer, sizeof(fd_buffer));
-                if (l < 0) {
-                        r = -errno;
-                        goto finish;
-                }
+                if (l < 0)
+                        return -errno;
 
                 eof = (size_t) l < sizeof(fd_buffer);
                 dcount += l;
 
-                if (dcount >= CA_CHUNK_SIZE_LIMIT_MAX) {
-                        r = -EBADMSG;
-                        goto finish;
-                }
+                if (dcount >= CA_CHUNK_SIZE_LIMIT_MAX)
+                        return -EBADMSG;
 
                 r = compressor_input(&context, fd_buffer, l);
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 for (;;) {
                         uint8_t *p;
                         size_t done;
 
                         p = realloc_buffer_extend(buffer, BUFFER_SIZE);
-                        if (!p) {
-                                r = -ENOMEM;
-                                goto finish;
-                        }
+                        if (!p)
+                                return -ENOMEM;
 
                         r = compressor_encode(&context, eof, p, BUFFER_SIZE, &done);
                         if (r < 0)
-                                goto finish;
+                                return r;
 
                         realloc_buffer_shorten(buffer, BUFFER_SIZE - done);
                         ccount += done;
 
-                        if (ccount >= CA_CHUNK_SIZE_LIMIT_MAX) {
-                                r = -EBADMSG;
-                                goto finish;
-                        }
+                        if (ccount >= CA_CHUNK_SIZE_LIMIT_MAX)
+                                return -EBADMSG;
 
                         got_encoder_eof = r == COMPRESSOR_EOF;
 
@@ -233,16 +206,10 @@ int ca_load_and_compress_fd(int fd, CaCompressionType compression_type, ReallocB
                         break;
         }
 
-        if (ccount < CA_CHUNK_SIZE_LIMIT_MIN || dcount < CA_CHUNK_SIZE_LIMIT_MIN) {
-                r = -EBADMSG;
-                goto finish;
-        }
+        if (ccount < CA_CHUNK_SIZE_LIMIT_MIN || dcount < CA_CHUNK_SIZE_LIMIT_MIN)
+                return -EBADMSG;
 
-        r = 0;
-
-finish:
-        compressor_finish(&context);
-        return r;
+        return 0;
 }
 
 int ca_save_fd(int fd, const void *data, size_t size) {
@@ -259,7 +226,7 @@ int ca_save_fd(int fd, const void *data, size_t size) {
 }
 
 int ca_save_and_compress_fd(int fd, CaCompressionType compression_type, const void *data, size_t size) {
-        CompressorContext context = COMPRESSOR_CONTEXT_INIT;
+        _cleanup_(compressor_finish) CompressorContext context = COMPRESSOR_CONTEXT_INIT;
         uint64_t ccount = 0;
         int r;
 
@@ -291,39 +258,29 @@ int ca_save_and_compress_fd(int fd, CaCompressionType compression_type, const vo
 
                 r = compressor_encode(&context, true, buffer, sizeof(buffer), &done);
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 k = loop_write(fd, buffer, done);
-                if (k < 0) {
-                        r = k;
-                        goto finish;
-                }
+                if (k < 0)
+                        return k;
 
                 ccount += done;
 
-                if (ccount >= CA_CHUNK_SIZE_LIMIT_MAX) {
-                        r = -EINVAL;
-                        goto finish;
-                }
+                if (ccount >= CA_CHUNK_SIZE_LIMIT_MAX)
+                        return -EINVAL;
 
                 if (r == COMPRESSOR_EOF)
                         break;
         }
 
-        if (ccount < CA_CHUNK_SIZE_LIMIT_MIN) {
-                r = -EINVAL;
-                goto finish;
-        }
+        if (ccount < CA_CHUNK_SIZE_LIMIT_MIN)
+                return -EINVAL;
 
-        r = 0;
-
-finish:
-        compressor_finish(&context);
-        return r;
+        return 0;
 }
 
 int ca_save_and_decompress_fd(int fd, const void *data, size_t size) {
-        CompressorContext context = COMPRESSOR_CONTEXT_INIT;
+        _cleanup_(compressor_finish) CompressorContext context = COMPRESSOR_CONTEXT_INIT;
         int compression_type;
         uint64_t dcount = 0;
         int r;
@@ -349,7 +306,7 @@ int ca_save_and_decompress_fd(int fd, const void *data, size_t size) {
 
         r = compressor_input(&context, data, size);
         if (r < 0)
-                goto finish;
+                return r;
 
         for (;;) {
                 uint8_t buffer[BUFFER_SIZE];
@@ -358,39 +315,29 @@ int ca_save_and_decompress_fd(int fd, const void *data, size_t size) {
 
                 r = compressor_decode(&context, buffer, sizeof(buffer), &done);
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 k = loop_write(fd, buffer, done);
-                if (k < 0) {
-                        r = k;
-                        goto finish;
-                }
+                if (k < 0)
+                        return k;
 
                 dcount += done;
 
-                if (dcount >= CA_CHUNK_SIZE_LIMIT_MAX) {
-                        r = -EINVAL;
-                        goto finish;
-                }
+                if (dcount >= CA_CHUNK_SIZE_LIMIT_MAX)
+                        return -EINVAL;
 
                 if (r == COMPRESSOR_EOF)
                         break;
         }
 
-        if (dcount < CA_CHUNK_SIZE_LIMIT_MIN) {
-                r = -EINVAL;
-                goto finish;
-        }
+        if (dcount < CA_CHUNK_SIZE_LIMIT_MIN)
+                return -EINVAL;
 
-        r = 0;
-
-finish:
-        compressor_finish(&context);
-        return r;
+        return 0;
 }
 
 int ca_compress(CaCompressionType compression_type, const void *data, size_t size, ReallocBuffer *buffer) {
-        CompressorContext context = COMPRESSOR_CONTEXT_INIT;
+        _cleanup_(compressor_finish) CompressorContext context = COMPRESSOR_CONTEXT_INIT;
         uint64_t ccount = 0;
         int r;
 
@@ -416,41 +363,31 @@ int ca_compress(CaCompressionType compression_type, const void *data, size_t siz
                 uint8_t *p;
 
                 p = realloc_buffer_extend(buffer, BUFFER_SIZE);
-                if (!p) {
-                        r = -ENOMEM;
-                        goto finish;
-                }
+                if (!p)
+                        return -ENOMEM;
 
                 r = compressor_encode(&context, true, p, BUFFER_SIZE, &done);
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 realloc_buffer_shorten(buffer, BUFFER_SIZE - done);
                 ccount += done;
 
-                if (ccount >= CA_CHUNK_SIZE_LIMIT_MAX) {
-                        r = -EINVAL;
-                        goto finish;
-                }
+                if (ccount >= CA_CHUNK_SIZE_LIMIT_MAX)
+                        return -EINVAL;
 
                 if (r == COMPRESSOR_EOF)
                         break;
         }
 
-        if (ccount < CA_CHUNK_SIZE_LIMIT_MIN) {
-                r = -EINVAL;
-                goto finish;
-        }
+        if (ccount < CA_CHUNK_SIZE_LIMIT_MIN)
+                return -EINVAL;
 
-        r = 0;
-
-finish:
-        compressor_finish(&context);
-        return r;
+        return 0;
 }
 
 int ca_decompress(const void *data, size_t size, ReallocBuffer *buffer) {
-        CompressorContext context = COMPRESSOR_CONTEXT_INIT;
+        _cleanup_(compressor_finish) CompressorContext context = COMPRESSOR_CONTEXT_INIT;
         uint64_t dcount = 0;
         int compression_type;
         int r;
@@ -483,37 +420,27 @@ int ca_decompress(const void *data, size_t size, ReallocBuffer *buffer) {
                 size_t done;
 
                 p = realloc_buffer_extend(buffer, BUFFER_SIZE);
-                if (!p) {
-                        r = -ENOMEM;
-                        goto finish;
-                }
+                if (!p)
+                        return -ENOMEM;
 
                 r = compressor_decode(&context, p, BUFFER_SIZE, &done);
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 realloc_buffer_shorten(buffer, BUFFER_SIZE - done);
                 dcount += done;
 
-                if (dcount >= CA_CHUNK_SIZE_LIMIT_MAX) {
-                        r = -EINVAL;
-                        goto finish;
-                }
+                if (dcount >= CA_CHUNK_SIZE_LIMIT_MAX)
+                        return -EINVAL;
 
                 if (r == COMPRESSOR_EOF)
                         break;
         }
 
-        if (dcount < CA_CHUNK_SIZE_LIMIT_MIN) {
-                r = -EINVAL;
-                goto finish;
-        }
+        if (dcount < CA_CHUNK_SIZE_LIMIT_MIN)
+                return -EINVAL;
 
-        r = 0;
-
-finish:
-        compressor_finish(&context);
-        return r;
+        return 0;
 }
 
 int ca_chunk_file_open(int chunk_fd, const char *prefix, const CaChunkID *chunkid, const char *suffix, int flags) {
@@ -628,7 +555,8 @@ int ca_chunk_file_load(
                 ReallocBuffer *buffer,
                 CaChunkCompression *ret_effective_compression) {
 
-        int fd, r;
+        _cleanup_(safe_closep) int fd = -1;
+        int r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
@@ -658,8 +586,10 @@ int ca_chunk_file_load(
                         r = ca_load_and_decompress_fd(fd, buffer);
                 else
                         r = ca_load_fd(fd, buffer);
+                if (r < 0)
+                        return r;
 
-                if (r >= 0 && ret_effective_compression)
+                if (ret_effective_compression)
                         *ret_effective_compression = desired_compression == CA_CHUNK_AS_IS ? CA_CHUNK_COMPRESSED : desired_compression;
 
         } else {
@@ -667,13 +597,14 @@ int ca_chunk_file_load(
                         r = ca_load_and_compress_fd(fd, compression_type, buffer);
                 else
                         r = ca_load_fd(fd, buffer);
+                if (r < 0)
+                        return r;
 
-                if (r >= 0 && ret_effective_compression)
+                if (ret_effective_compression)
                         *ret_effective_compression = desired_compression == CA_CHUNK_AS_IS ? CA_CHUNK_UNCOMPRESSED : desired_compression;
         }
 
-        safe_close(fd);
-        return r;
+        return 0;
 }
 
 int ca_chunk_file_save(
@@ -686,8 +617,8 @@ int ca_chunk_file_save(
                 const void *p,
                 uint64_t l) {
 
-        char *suffix;
-        int fd, r;
+        _cleanup_free_ char *suffix = NULL;
+        int r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
                 return -EINVAL;
@@ -717,11 +648,10 @@ int ca_chunk_file_save(
         if (asprintf(&suffix, ".%" PRIx64 ".tmp", random_u64()) < 0)
                 return -ENOMEM;
 
-        fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, suffix, O_WRONLY|O_CREAT|O_EXCL|O_NOCTTY|O_CLOEXEC);
-        if (fd < 0) {
-                free(suffix);
+        _cleanup_(safe_closep) int fd =
+                ca_chunk_file_open(chunk_fd, prefix, chunkid, suffix, O_WRONLY|O_CREAT|O_EXCL|O_NOCTTY|O_CLOEXEC);
+        if (fd < 0)
                 return fd;
-        }
 
         if (desired_compression == CA_CHUNK_AS_IS)
                 desired_compression = effective_compression;
@@ -734,7 +664,6 @@ int ca_chunk_file_save(
                 assert(desired_compression == CA_CHUNK_UNCOMPRESSED);
                 r = ca_save_and_decompress_fd(fd, p, l);
         }
-        safe_close(fd);
         if (r < 0)
                 goto fail;
 
@@ -742,12 +671,10 @@ int ca_chunk_file_save(
         if (r < 0)
                 goto fail;
 
-        free(suffix);
         return 0;
 
 fail:
         (void) ca_chunk_file_unlink(chunk_fd, prefix, chunkid, suffix);
-        free(suffix);
         return r;
 }
 
