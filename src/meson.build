@@ -30,14 +30,14 @@ libshared_sources = files('''
         caformat-util.c
         caformat-util.h
         caformat.h
-        camatch.c
-        camatch.h
         caindex.c
         caindex.h
         calocation.c
         calocation.h
         camakebst.c
         camakebst.h
+        camatch.c
+        camatch.h
         canametable.c
         canametable.h
         canbd.c
