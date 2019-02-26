@@ -27,6 +27,7 @@
 #include "notify.h"
 #include "parse-util.h"
 #include "signal-handler.h"
+#include "time-util.h"
 #include "util.h"
 
 #if HAVE_UDEV

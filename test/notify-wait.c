@@ -8,6 +8,7 @@
 #include <sys/un.h>
 #include <sys/wait.h>
 
+#include "time-util.h"
 #include "util.h"
 
 #define TIMEOUT_NSEC UINT64_C(30000000000)

@@ -19,6 +19,7 @@
 #include "casync.h"
 #include "def.h"
 #include "realloc-buffer.h"
+#include "time-util.h"
 #include "util.h"
 
 /* #undef EINVAL */

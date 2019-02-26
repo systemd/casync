@@ -22,6 +22,7 @@
 #undef basename
 
 #include "def.h"
+#include "time-util.h"
 #include "util.h"
 
 #define HOLE_MIN 4096

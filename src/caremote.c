@@ -15,6 +15,7 @@
 #include "def.h"
 #include "realloc-buffer.h"
 #include "rm-rf.h"
+#include "time-util.h"
 #include "util.h"
 
 /* #undef EBADMSG */

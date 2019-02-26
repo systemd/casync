@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <stdio.h>
 
+#include "time-util.h"
 #include "util.h"
 #include "cachunker.h"
 

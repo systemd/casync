@@ -29,6 +29,7 @@
 #include "reflink.h"
 #include "rm-rf.h"
 #include "siphash24.h"
+#include "time-util.h"
 #include "util.h"
 
 /* #undef EINVAL */

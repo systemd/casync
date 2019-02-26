@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "canbd.h"
+#include "time-util.h"
 #include "util.h"
 
 #define NBD_MAX 1024
