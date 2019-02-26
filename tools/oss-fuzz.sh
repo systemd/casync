@@ -32,7 +32,10 @@ if [ -z "$FUZZING_ENGINE" ]; then
         fuzzflag="llvm-fuzz=true"
 fi
 
-meson $build -D$fuzzflag -Db_lundef=false
+meson $build -D$fuzzflag \
+      -Db_lundef=false \
+      -Dlibzstd=disabled \
+      -Dman=false
 ninja -C $build fuzzers
 
 # The seed corpus is a separate flat archive for each fuzzer,
