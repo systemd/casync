@@ -3,10 +3,10 @@
 #include "util.h"
 #include "time-util.h"
 
-char *format_timespan(char *buf, size_t l, usec_t t, usec_t accuracy) {
+char *format_timespan(char *buf, size_t l, uint64_t t, uint64_t accuracy) {
         static const struct {
                 const char *suffix;
-                usec_t usec;
+                uint64_t usec;
         } table[] = {
                 { "y",     USEC_PER_YEAR   },
                 { "month", USEC_PER_MONTH  },
@@ -44,7 +44,7 @@ char *format_timespan(char *buf, size_t l, usec_t t, usec_t accuracy) {
                 int k = 0;
                 size_t n;
                 bool done = false;
-                usec_t a, b;
+                uint64_t a, b;
 
                 if (t <= 0)
                         break;
@@ -63,7 +63,7 @@ char *format_timespan(char *buf, size_t l, usec_t t, usec_t accuracy) {
 
                 /* Let's see if we should shows this in dot notation */
                 if (t < USEC_PER_MINUTE && b > 0) {
-                        usec_t cc;
+                        uint64_t cc;
                         signed char j;
 
                         j = 0;
