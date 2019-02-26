@@ -4,6 +4,7 @@
 #include "cadigest.h"
 #include "calocation.h"
 #include "def.h"
+#include "time-util.h"
 #include "util.h"
 #include "caformat.h"
 

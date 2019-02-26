@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 
 #include "calocation.h"
+#include "time-util.h"
 #include "util.h"
 #include "realloc-buffer.h"
 

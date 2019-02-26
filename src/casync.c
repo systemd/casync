@@ -19,6 +19,7 @@
 #include "casync.h"
 #include "def.h"
 #include "realloc-buffer.h"
+#include "time-util.h"
 #include "util.h"
 
 /* #undef EINVAL */
@@ -47,7 +48,7 @@ typedef enum CaCacheState {
 
 struct CaSync {
         CaDirection direction;
-        bool started;
+        uint64_t start_nsec;
 
         CaEncoder *encoder;
         CaDecoder *decoder;
@@ -148,7 +149,12 @@ struct CaSync {
         uint64_t chunk_size_max;
 
         CaCompressionType compression_type;
+
+        uint64_t first_chunk_request_nsec;
+        uint64_t last_chunk_request_nsec;
 };
+
+#define CA_SYNC_IS_STARTED(s) ((s)->start_nsec != 0)
 
 static CaSync *ca_sync_new(void) {
         CaSync *s;
@@ -1281,7 +1287,7 @@ static int ca_sync_start(CaSync *s) {
 
         assert(s);
 
-        if (s->started)
+        if (CA_SYNC_IS_STARTED(s))
                 return 0;
 
         if (s->direction == CA_SYNC_ENCODE && s->archive_path && s->archive_fd < 0) {
@@ -1587,7 +1593,7 @@ static int ca_sync_start(CaSync *s) {
         }
 
         s->cache_state = ca_sync_use_cache(s) ? CA_SYNC_CACHE_CHECK : CA_SYNC_CACHE_OFF;
-        s->started = true;
+        s->start_nsec = now(CLOCK_MONOTONIC);
 
         return 1;
 }
@@ -2327,6 +2333,9 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                                 if (r < 0)
                                         return log_debug_errno(r, "Failed to put decoder EOF: %m");
 
+                                if (s->last_chunk_request_nsec == 0)
+                                        s->last_chunk_request_nsec = now(CLOCK_MONOTONIC);
+
                                 return CA_SYNC_STEP;
                         }
 
@@ -2344,6 +2353,9 @@ static int ca_sync_process_decoder_request(CaSync *s) {
                  * chunk size, hence let's wait for them to complete. */
                 if (!ca_sync_seed_ready(s))
                         return CA_SYNC_POLL;
+
+                if (s->first_chunk_request_nsec == 0)
+                        s->first_chunk_request_nsec = now(CLOCK_MONOTONIC);
 
                 r = ca_sync_get(s, &s->next_chunk, CA_CHUNK_UNCOMPRESSED, &p, &chunk_size, NULL, &origin);
                 if (r == -EAGAIN) /* Don't have this right now, but requested it now */
@@ -4252,6 +4264,31 @@ int ca_sync_get_seed_request_bytes(CaSync *s, uint64_t *ret) {
         return 0;
 }
 
+int ca_sync_get_seed_seeding_time_nsec(CaSync *s, uint64_t *ret) {
+        uint64_t sum = 0;
+        size_t i;
+        int r;
+
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        /* We can sum seeding times since seeds are processed one after another */
+        for (i = 0; i < s->n_seeds; i++) {
+                uint64_t x;
+
+                r = ca_seed_get_seeding_time_nsec(s->seeds[i], &x);
+                if (r < 0)
+                        return r;
+
+                sum += x;
+        }
+
+        *ret = sum;
+        return 0;
+}
+
 int ca_sync_get_local_requests(CaSync *s, uint64_t *ret) {
         uint64_t sum;
         size_t i;
@@ -4376,6 +4413,34 @@ int ca_sync_get_remote_request_bytes(CaSync *s, uint64_t *ret) {
         return 0;
 }
 
+int ca_sync_get_decoding_time_nsec(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->first_chunk_request_nsec == 0 || s->last_chunk_request_nsec == 0)
+                return -ENODATA;
+        if (s->first_chunk_request_nsec > s->last_chunk_request_nsec)
+                return -ENODATA;
+
+        *ret = s->last_chunk_request_nsec - s->first_chunk_request_nsec;
+        return 0;
+}
+
+int ca_sync_get_runtime_nsec(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->start_nsec == 0)
+                return -ENODATA;
+
+        *ret = now(CLOCK_MONOTONIC) - s->start_nsec;
+        return 0;
+}
+
 int ca_sync_set_compression_type(CaSync *s, CaCompressionType compression) {
         if (!s)
                 return -EINVAL;
@@ -4383,7 +4448,7 @@ int ca_sync_set_compression_type(CaSync *s, CaCompressionType compression) {
                 return -EINVAL;
         if (compression >= _CA_COMPRESSION_TYPE_MAX)
                 return -EOPNOTSUPP;
-        if (s->started)
+        if (CA_SYNC_IS_STARTED(s))
                 return -EBUSY;
 
         s->compression_type = compression;

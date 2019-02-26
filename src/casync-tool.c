@@ -28,6 +28,7 @@
 #include "notify.h"
 #include "parse-util.h"
 #include "signal-handler.h"
+#include "time-util.h"
 #include "util.h"
 
 #if HAVE_UDEV
@@ -997,6 +998,7 @@ static int verbose_print_done_extract(CaSync *s) {
         uint64_t n_local_requests = UINT64_MAX, n_seed_requests = UINT64_MAX, n_remote_requests = UINT64_MAX;
         uint64_t n_local_bytes = UINT64_MAX, n_seed_bytes = UINT64_MAX, n_remote_bytes = UINT64_MAX;
         uint64_t total_requests = 0, total_bytes = 0;
+        uint64_t nsec = 0, runtime_nsec = 0;
         int r;
 
         if (!arg_verbose)
@@ -1104,6 +1106,34 @@ static int verbose_print_done_extract(CaSync *s) {
                 log_info("Bytes used from remote store: %s (%" PRIu64 "%%)",
                          format_bytes(buffer, sizeof(buffer), n_remote_bytes),
                          total_bytes > 0 ? n_remote_bytes * 100U / total_bytes : 0);
+
+        r = ca_sync_get_runtime_nsec(s, &runtime_nsec);
+        if (!IN_SET(r, -ENODATA)) {
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine runtime: %m");
+        }
+
+        r = ca_sync_get_seed_seeding_time_nsec(s, &nsec);
+        if (!IN_SET(r, -ENODATA, -ENOTTY)) {
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine seeding time: %m");
+
+                log_info("Time spent seeding: %s (%" PRIu64 "%%)",
+                         format_timespan(buffer, sizeof(buffer), nsec, NSEC_PER_MSEC),
+                         runtime_nsec > 0 ? nsec * 100U / runtime_nsec : 0);
+        }
+
+        r = ca_sync_get_decoding_time_nsec(s, &nsec);
+        if (!IN_SET(r, -ENODATA, -ENOTTY)) {
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine decoding time: %m");
+
+                log_info("Time spent decoding: %s (%" PRIu64 "%%)",
+                         format_timespan(buffer, sizeof(buffer), nsec, NSEC_PER_MSEC),
+                         runtime_nsec > 0 ? nsec * 100U / runtime_nsec : 0);
+         }
+
+        log_info("Total extract time: %s", format_timespan(buffer, sizeof(buffer), runtime_nsec, NSEC_PER_MSEC));
 
         return 1;
 }

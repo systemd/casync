@@ -14,6 +14,7 @@
 #include "def.h"
 #include "realloc-buffer.h"
 #include "rm-rf.h"
+#include "time-util.h"
 #include "util.h"
 
 /* #undef EINVAL */
@@ -48,6 +49,9 @@ struct CaSeed {
 
         uint64_t n_requests;
         uint64_t n_request_bytes;
+
+        uint64_t first_step_nsec;
+        uint64_t last_step_nsec;
 };
 
 CaSeed *ca_seed_new(void) {
@@ -471,9 +475,15 @@ int ca_seed_step(CaSeed *s) {
                 return -EALREADY;
 
         if (!s->cache_chunks && !s->cache_hardlink) {
+                if (s->last_step_nsec == 0)
+                        s->last_step_nsec = now(CLOCK_MONOTONIC);
+
                 s->ready = true;
                 return CA_SEED_READY;
         }
+
+        if (s->first_step_nsec == 0)
+                s->first_step_nsec = now(CLOCK_MONOTONIC);
 
         r = ca_seed_open(s);
         if (r < 0)
@@ -493,6 +503,9 @@ int ca_seed_step(CaSeed *s) {
                         r = ca_seed_cache_final_chunk(s);
                         if (r < 0)
                                 return r;
+
+                        if (s->last_step_nsec == 0)
+                                s->last_step_nsec = now(CLOCK_MONOTONIC);
 
                         s->ready = true;
                         return CA_SEED_READY;
@@ -923,5 +936,23 @@ int ca_seed_get_request_bytes(CaSeed *s, uint64_t *ret) {
                 return -ENOTTY;
 
         *ret = s->n_request_bytes;
+        return 0;
+}
+
+int ca_seed_get_seeding_time_nsec(CaSeed *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (!s->cache_chunks)
+                return -ENOTTY;
+
+        if (s->first_step_nsec == 0 || s->last_step_nsec == 0)
+                return -ENODATA;
+        if (s->first_step_nsec > s->last_step_nsec)
+                return -ENODATA;
+
+        *ret = s->last_step_nsec - s->first_step_nsec;
         return 0;
 }

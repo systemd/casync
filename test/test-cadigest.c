@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1+ */
 
+#include "time-util.h"
 #include "util.h"
 #include "cadigest.h"
 

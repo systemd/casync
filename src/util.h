@@ -14,7 +14,6 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/vfs.h>
-#include <time.h>
 #include <unistd.h>
 
 #include <linux/btrfs.h>
@@ -65,42 +64,6 @@
                 (void)0))
 
 
-
-static inline uint64_t timespec_to_nsec(struct timespec t) {
-
-        if (t.tv_sec == (time_t) -1 &&
-            t.tv_nsec == (long) -1)
-                return UINT64_MAX;
-
-        return (uint64_t) t.tv_sec * UINT64_C(1000000000) + (uint64_t) t.tv_nsec;
-}
-
-static inline struct timespec nsec_to_timespec(uint64_t u) {
-
-        if (u == UINT64_MAX)
-                return (struct timespec) {
-                        .tv_sec = (time_t) -1,
-                        .tv_nsec = (long) -1,
-                };
-
-        return (struct timespec) {
-                .tv_sec = u / UINT64_C(1000000000),
-                .tv_nsec = u % UINT64_C(1000000000)
-        };
-}
-
-#define NSEC_TO_TIMESPEC_INIT(u) \
-        { .tv_sec = u == UINT64_MAX ? (time_t) -1 : (time_t) (u / UINT64_C(1000000000)), \
-          .tv_nsec = u == UINT64_MAX ? (long) -1 : (long) (u % UINT64_C(1000000000)) }
-
-static inline uint64_t now(clockid_t id) {
-        struct timespec ts;
-
-        if (clock_gettime(id, &ts) < 0)
-                return UINT64_MAX;
-
-        return timespec_to_nsec(ts);
-}
 
 int loop_write(int fd, const void *p, size_t l);
 int loop_write_block(int fd, const void *p, size_t l);
@@ -768,8 +731,6 @@ struct fsxattr {
 #define FS_IOC_FSGETXATTR _IOR ('X', 31, struct fsxattr)
 #define FS_IOC_FSSETXATTR _IOW ('X', 32, struct fsxattr)
 #endif
-
-#define NSEC_PER_SEC (UINT64_C(1000000000))
 
 /* Cleanup functions */
 

@@ -3,6 +3,8 @@
 util_sources = files('''
         log.c
         log.h
+        time-util.c
+        time-util.h
         util.c
         util.h
 '''.split())

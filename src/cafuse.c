@@ -11,6 +11,7 @@
 #include "cafuse.h"
 #include "notify.h"
 #include "signal-handler.h"
+#include "time-util.h"
 #include "util.h"
 
 static CaSync *instance = NULL;

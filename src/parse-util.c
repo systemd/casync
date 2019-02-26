@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "parse-util.h"
+#include "time-util.h"
 #include "util.h"
 
 int parse_size(const char *t, uint64_t *size) {
