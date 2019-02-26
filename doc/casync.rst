@@ -151,6 +151,7 @@ Options
 General options:
 
 --help, -h                      Show terse help output
+--version                       Show brief version information
 --log-level=<LEVEL>, -l         Set log level (debug, info, err)
 --verbose, -v                   Show terse status information during runtime
 --dry-run, -n                   Only print what would be removed with **gc**
