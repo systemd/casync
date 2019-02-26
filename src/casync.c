@@ -47,7 +47,7 @@ typedef enum CaCacheState {
 
 struct CaSync {
         CaDirection direction;
-        bool started;
+        uint64_t start_nsec;
 
         CaEncoder *encoder;
         CaDecoder *decoder;
@@ -152,6 +152,8 @@ struct CaSync {
         uint64_t first_chunk_request_nsec;
         uint64_t last_chunk_request_nsec;
 };
+
+#define CA_SYNC_IS_STARTED(s) ((s)->start_nsec != 0)
 
 static CaSync *ca_sync_new(void) {
         CaSync *s;
@@ -1284,7 +1286,7 @@ static int ca_sync_start(CaSync *s) {
 
         assert(s);
 
-        if (s->started)
+        if (CA_SYNC_IS_STARTED(s))
                 return 0;
 
         if (s->direction == CA_SYNC_ENCODE && s->archive_path && s->archive_fd < 0) {
@@ -1588,7 +1590,7 @@ static int ca_sync_start(CaSync *s) {
         }
 
         s->cache_state = ca_sync_use_cache(s) ? CA_SYNC_CACHE_CHECK : CA_SYNC_CACHE_OFF;
-        s->started = true;
+        s->start_nsec = now(CLOCK_MONOTONIC);
 
         return 1;
 }
@@ -4423,6 +4425,19 @@ int ca_sync_get_decoding_time_nsec(CaSync *s, uint64_t *ret) {
         return 0;
 }
 
+int ca_sync_get_runtime_nsec(CaSync *s, uint64_t *ret) {
+        if (!s)
+                return -EINVAL;
+        if (!ret)
+                return -EINVAL;
+
+        if (s->start_nsec == 0)
+                return -ENODATA;
+
+        *ret = now(CLOCK_MONOTONIC) - s->start_nsec;
+        return 0;
+}
+
 int ca_sync_set_compression_type(CaSync *s, CaCompressionType compression) {
         if (!s)
                 return -EINVAL;
@@ -4430,7 +4445,7 @@ int ca_sync_set_compression_type(CaSync *s, CaCompressionType compression) {
                 return -EINVAL;
         if (compression >= _CA_COMPRESSION_TYPE_MAX)
                 return -EOPNOTSUPP;
-        if (s->started)
+        if (CA_SYNC_IS_STARTED(s))
                 return -EBUSY;
 
         s->compression_type = compression;
