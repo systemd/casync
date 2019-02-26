@@ -3,11 +3,6 @@
 #ifndef footimeutilfoo
 #define footimeutilfoo
 
-#define PRI_NSEC PRIu64
-#define PRI_USEC PRIu64
-#define NSEC_FMT "%" PRI_NSEC
-#define USEC_FMT "%" PRI_USEC
-
 #define USEC_INFINITY ((uint64_t) -1)
 #define NSEC_INFINITY ((uint64_t) -1)
 

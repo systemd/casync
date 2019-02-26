@@ -77,7 +77,7 @@ char *format_timespan(char *buf, size_t l, uint64_t t, uint64_t accuracy) {
 
                         if (j > 0) {
                                 k = snprintf(p, l,
-                                             "%s"USEC_FMT".%0*"PRI_USEC"%s",
+                                             "%s%" PRIu64 ".%0*" PRIu64 "%s",
                                              p > buf ? " " : "",
                                              a,
                                              j,
@@ -92,7 +92,7 @@ char *format_timespan(char *buf, size_t l, uint64_t t, uint64_t accuracy) {
                 /* No? Then let's show it normally */
                 if (!done) {
                         k = snprintf(p, l,
-                                     "%s"USEC_FMT"%s",
+                                     "%s%" PRIu64 "%s",
                                      p > buf ? " " : "",
                                      a,
                                      table[i].suffix);
