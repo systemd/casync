@@ -348,3 +348,171 @@ now:
         chunker_cut(c);
         return k;
 }
+
+uint64_t ca_chunker_cutmark_delta_max(CaChunker *c) {
+        assert(c);
+
+        if (c->cutmark_delta_max != UINT64_MAX)
+                return c->cutmark_delta_max;
+
+        /* If not specified otherwise, use a quarter of the average chunk size. (Unless reconfigured this
+         * happens to match the default for chunk_size_min btw). */
+        return c->chunk_size_avg / 4;
+}
+
+int ca_chunker_extract_chunk(
+                CaChunker *c,
+                ReallocBuffer *buffer,
+                const void **pp,
+                size_t *ll,
+                const void **ret_chunk,
+                size_t *ret_chunk_size) {
+
+        const void *chunk = NULL, *p;
+        size_t chunk_size = 0, k;
+        bool indirect = false;
+        size_t l;
+
+        /* Takes some input data at *p of size *l and chunks it. If this supplied data is too short for a
+         * cut, adds the data to the specified buffer instead and returns CA_CHUNKER_NOT_YET. If a chunk is
+         * generated returns CA_CHUNKER_DIRECT or CA_CHUNKER_INDIRECT and returns a ptr to the new chunk in
+         * *ret_chunk, and its size in *ret_chunk_size. The value CA_CHUNKER_DIRECT is returned if these
+         * pointers point into the memory area passed in through *p and *l. The value CA_CHUNKER_INDIRECT is
+         * returned if the pointers point to a memory area in the specified 'buffer' object. In the latter
+         * case the caller should drop the chunk from the buffer after use with realloc_buffer_advance(). */
+
+        assert(c);
+        assert(buffer);
+        assert(pp);
+        assert(ll);
+
+        p = *pp;
+        l = *ll;
+
+        if (c->cut_pending != (size_t) -1) {
+
+                /* Is there a cut pending, if so process that first. */
+
+                if (c->cut_pending > l) {
+                        /* Need to read more. Let's add what we have now to the buffer hence, and continue */
+                        if (!realloc_buffer_append(buffer, p, l))
+                                return -ENOMEM;
+
+                        c->cut_pending -= l;
+                        goto not_yet;
+                }
+
+                k = c->cut_pending;
+                c->cut_pending = (size_t) -1;
+
+        } else {
+                k = ca_chunker_scan(c, true, p, l);
+                if (k == (size_t) -1) {
+                        /* No cut yet, add the stuff to the buffer, and return */
+                        if (!realloc_buffer_append(buffer, p, l))
+                                return -ENOMEM;
+
+                        goto not_yet;
+                }
+
+                /* Nice, we got told by the chunker to generate a new chunk. Let's see if we have any
+                 * suitable cutmarks we can use, so that we slightly shift the actual cut. */
+
+                if (c->n_cutmarks > 0) {
+
+                        /* Is there a left-hand cutmark defined that is within the area we are looking? */
+                        if (c->last_cutmark > 0 &&
+                            (size_t) c->last_cutmark <= ca_chunker_cutmark_delta_max(c)) {
+
+                                size_t cs;
+
+                                /* Yay, found a cutmark, to the left of the calculated cut. */
+
+                                cs = realloc_buffer_size(buffer) + k;
+
+                                /* Does this cutmark violate of the minimal chunk size? */
+                                if ((size_t) c->last_cutmark < cs &&
+                                    cs - (size_t) c->last_cutmark >= c->chunk_size_min) {
+
+                                        /* Yay, we found a cutmark we can apply. Let's add everything we have
+                                         * to the full buffer, and the take out just what we need from it.*/
+
+                                        if (!realloc_buffer_append(buffer, p, k))
+                                                return -ENOMEM;
+
+                                        chunk = realloc_buffer_data(buffer);
+
+                                        chunk_size = realloc_buffer_size(buffer);
+                                        assert_se(chunk_size >= (size_t) c->last_cutmark);
+                                        chunk_size -= (size_t) c->last_cutmark;
+
+                                        indirect = true;
+
+                                        c->cutmark_delta_sum += c->last_cutmark;
+                                        c->n_cutmarks_applied ++;
+
+                                        /* Make sure the rolling hash function processes the data that remains in the buffer */
+                                        assert_se(ca_chunker_scan(c, false, (uint8_t*) chunk + chunk_size, c->last_cutmark) == (size_t) -1);
+                                }
+
+                        } else if (c->last_cutmark < 0 &&
+                                   (size_t) -c->last_cutmark <= ca_chunker_cutmark_delta_max(c)) {
+
+                                size_t cs;
+
+                                /* Yay, found a cutmark, to the right of the calculated cut */
+
+                                cs = realloc_buffer_size(buffer) + k;
+
+                                if (cs + (size_t) -c->last_cutmark <= c->chunk_size_max) {
+
+                                        /* Remember how many more bytes to process before the cut we
+                                         * determine shall take place. Note that we don't advance anything
+                                         * here, we'll call ourselves and then do that for. */
+                                        c->cut_pending = k + (size_t) -c->last_cutmark;
+
+                                        c->cutmark_delta_sum -= c->last_cutmark;
+                                        c->n_cutmarks_applied ++;
+
+                                        return ca_chunker_extract_chunk(c, buffer, pp, ll, ret_chunk, ret_chunk_size);
+                                }
+                        }
+                }
+        }
+
+        if (!chunk) {
+                if (realloc_buffer_size(buffer) == 0) {
+                        chunk = p;
+                        chunk_size = k;
+                } else {
+                        if (!realloc_buffer_append(buffer, p, k))
+                                return -ENOMEM;
+
+                        chunk = realloc_buffer_data(buffer);
+                        chunk_size = realloc_buffer_size(buffer);
+
+                        indirect = true;
+                }
+        }
+
+        *pp = (uint8_t*) p + k;
+        *ll = l - k;
+
+        if (ret_chunk)
+                *ret_chunk = chunk;
+        if (ret_chunk_size)
+                *ret_chunk_size = chunk_size;
+
+        return indirect ? CA_CHUNKER_INDIRECT : CA_CHUNKER_DIRECT;
+
+not_yet:
+        *pp = (uint8_t*) p + l;
+        *ll = 0;
+
+        if (ret_chunk)
+                *ret_chunk = NULL;
+        if (ret_chunk_size)
+                *ret_chunk_size = 0;
+
+        return CA_CHUNKER_NOT_YET;
+}
