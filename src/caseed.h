@@ -39,6 +39,8 @@ int ca_seed_current_mode(CaSeed *seed, mode_t *ret);
 int ca_seed_set_feature_flags(CaSeed *s, uint64_t flags);
 
 int ca_seed_set_chunk_size(CaSeed *s, size_t cmin, size_t cavg, size_t cmax);
+int ca_seed_set_cutmarks(CaSeed *s, const CaCutmark *cutmarks, size_t n_cutmarks);
+int ca_seed_set_cutmark_delta_max(CaSeed *s, int64_t delta);
 
 int ca_seed_set_hardlink(CaSeed *s, bool b);
 int ca_seed_set_chunks(CaSeed *s, bool b);
