@@ -1,0 +1,26 @@
+#!/bin/bash
+
+set -ex
+
+SCRATCH_DIR=${TMPDIR:-/var/tmp}/test-casync.$RANDOM
+mkdir -p $SCRATCH_DIR/src
+
+mkdir $SCRATCH_DIR/src/casync
+if [ $UID = 0 ]; then
+    cp -a @top_srcdir@/{test-files,src} $SCRATCH_DIR/src/casync/
+else
+    # If we lack privileges we use rsync rather than cp to copy, as it will just skip over device nodes
+    rsync -a --exclude=.cacac @top_srcdir@/{test-files,src} $SCRATCH_DIR/src/casync/
+fi
+
+cd $SCRATCH_DIR/src
+
+@top_builddir@/casync make -v $SCRATCH_DIR/test.caidx
+@top_builddir@/casync extract -v $SCRATCH_DIR/test.caidx $SCRATCH_DIR/first
+@top_builddir@/casync extract -v --seed=$SCRATCH_DIR/src $SCRATCH_DIR/test.caidx $SCRATCH_DIR/second
+
+# Now, let's flush out the chunk store. If everything works correctly, the seed
+# should be sufficient as a source for chunks
+rm -rf $SCRATCH_DIR/default.castr/*
+
+@top_builddir@/casync extract -v --seed=$SCRATCH_DIR/src $SCRATCH_DIR/test.caidx $SCRATCH_DIR/third
