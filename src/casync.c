@@ -3070,7 +3070,16 @@ static int ca_sync_propagate_flags_to_stores(CaSync *s, uint64_t flags) {
         return 0;
 }
 
-static int ca_sync_propagate_flags_to_seeds(CaSync *s, uint64_t flags, size_t cmin, size_t cavg, size_t cmax) {
+static int ca_sync_propagate_flags_to_seeds(
+                CaSync *s,
+                uint64_t flags,
+                size_t cmin,
+                size_t cavg,
+                size_t cmax,
+                const CaCutmark *cutmarks,
+                size_t n_cutmarks,
+                uint64_t cutmark_delta_max) {
+
         size_t i;
         int r;
 
@@ -3085,6 +3094,16 @@ static int ca_sync_propagate_flags_to_seeds(CaSync *s, uint64_t flags, size_t cm
                 r = ca_seed_set_chunk_size(s->seeds[i], cmin, cavg, cmax);
                 if (r < 0)
                         return r;
+
+                if (n_cutmarks > 0) {
+                        r = ca_seed_set_cutmarks(s->seeds[i], cutmarks, n_cutmarks);
+                        if (r < 0)
+                                return r;
+
+                        r = ca_seed_set_cutmark_delta_max(s->seeds[i], cutmark_delta_max);
+                        if (r < 0)
+                                return r;
+                }
         }
 
         return 0;
@@ -3136,8 +3155,9 @@ static int ca_sync_propagate_flags_to_decoder(CaSync *s, uint64_t flags) {
 }
 
 static int ca_sync_propagate_index_flags(CaSync *s) {
-        size_t cmin, cavg, cmax;
-        uint64_t flags;
+        size_t cmin, cavg, cmax, n_cutmarks;
+        uint64_t flags, cutmark_delta_max;
+        const CaCutmark *cutmarks;
         int r;
 
         assert(s);
@@ -3167,11 +3187,19 @@ static int ca_sync_propagate_index_flags(CaSync *s) {
         if (r < 0)
                 return r;
 
+        r = ca_index_get_cutmarks(s->index, &cutmarks, &n_cutmarks);
+        if (r < 0)
+                return r;
+
+        r = ca_index_get_cutmark_delta_max(s->index, &cutmark_delta_max);
+        if (r < 0)
+                return r;
+
         r = ca_sync_propagate_flags_to_stores(s, flags);
         if (r < 0)
                 return r;
 
-        r = ca_sync_propagate_flags_to_seeds(s, flags, cmin, cavg, cmax);
+        r = ca_sync_propagate_flags_to_seeds(s, flags, cmin, cavg, cmax, cutmarks, n_cutmarks, cutmark_delta_max);
         if (r < 0)
                 return r;
 
