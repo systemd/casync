@@ -157,6 +157,8 @@ General options:
 --store=PATH                    The primary chunk store to use
 --extra-store=<PATH>            Additional chunk store to look for chunks in
 --chunk-size=<[MIN:]AVG[:MAX]>  The minimal/average/maximum number of bytes in a chunk
+--cutmark=CUTMARK               Specify a cutmark
+--cutmark-delta-bytes=BYTES     Maximum bytes to shift cut due to cutmark
 --digest=<DIGEST>               Pick digest algorithm (sha512-256 or sha256)
 --compression=<COMPRESSION>     Pick compression algorithm (zstd, xz or gzip)
 --seed=<PATH>                   Additional file or directory to use as seed
@@ -291,3 +293,79 @@ excluded:
    unconditionally take precedence over lines not marked like this. Moreover,
    lines prefixed with ``!`` also cancel the effect of patterns in
    ``.caexclude`` files placed in directories further up the tree.
+
+Cutmarks
+--------
+
+``casync`` cuts the stream to serialize into chunks of an average size (as
+specified with ``--chunk-size=``), determining cut points using the ``buzhash``
+rolling hash function and a modulo test. Frequently, cut points determined that
+way are at slightly inconvenient locations: in the midle of objects serialized
+in the stream rather then before or after them, thus needlessly exploding
+changes to individual objects into more than one chunk. To optimize this
+**cutmarks** may be configured. These are byte sequences ``casync`` (up to 8
+bytes in length) automatically detects in the data stream and that should be
+considered particularly good cutpoints. When cutmarks are defined the chunking
+algorithm will slightly move the cut point between two chunks to match a
+cutmark if one has recently been seen in the serialization stream.
+
+Cutmarks may be specified with the ``--cutmark=`` option. It takes a cutmark
+specification in the format ``VALUE:MASK+OFFSET`` or ``VALUE:MASK-OFFSET``. The
+first part, the value indicates the byte sequence to detect in hexadecimal
+digits, up to 8 bytes (thus 16 characters) in length. Following the colon a
+bitmask (also in hexadecimal) may be specified of the same size. Every 8 byte
+sequence at every 1 byte granularity stream position is tested against the
+value. If all bits indicated in the mask match a cutmark is found. The third
+part of the specification indicates where to place the cutmark specifically
+relative to the the end of the 8 byte sequence. Specify ``-8`` to cut
+immediately before the cutmark sequence, and ``+0`` right after. The offset
+(along with its ``+`` or ``-`` character) may be omitted, in which case the
+offset is assumed to be zero, i.e. the cut is done right after the
+sequence. The mask (along with its ``:`` character) may also be omitted, in
+which case it is assumed to be ``FFFFFFFFFFFFFFFF``, i.e. all
+bits on, matching the full specified byte sequence. In order to match shorter
+byte sequence (for example to adapt the tool to some specific file format using
+shorter object or section markers) simply specificy a shorter mask value and
+correct the offset value.
+
+Examples:
+
+  --cutmark=123456789ABCDEF0
+
+
+This defines a cutmark to be the 8 byte sequence 0x12, 0x34, 0x56, 0x78, 0x9A,
+0xBC, 0xDE, 0xF0, and the cut is placed right after the last byte, i.e. after the
+0xF0.
+
+
+  --cutmark=C0FFEE:FFFFFF-5
+
+
+This defines a cutmark to be the 3 byte sequence 0xC0, 0xFF, 0xEE and the cut is
+placed right after the last byte, i.e. after the 0xEE.
+
+  --cutmark=C0DECAFE:FFFFFFFF-8
+
+
+This defines a cutmark to be the 4 byte sequence 0xC0, 0xDE, 0xCA, 0xFE and the
+cut is placed right before the first byte, i.e. before the 0xC0.
+
+When operating on the file system layer (i.e. when creating `.caidx` files),
+the implicit cutmark of ``--cutmark=51bb5beabcfa9613+8`` is used, to increase
+the chance that cutmarks are placed right before each serialized file.
+
+Multiple cutmarks may be defined on the same operation, simply specify
+``--cutmark=`` multiple times. The parameter also takes the specifical values
+``yes`` and ``no``. If the latter any implicit cutmarks are turned off, in
+particular the implicit cutmark used when generating ``.caidx`` files above.
+
+``casync`` will honour cutmarks only within the immediate vicinity of the cut
+point the modulo test suggested. By default this a 16K window before the
+calculated cut point. This value may be altered using the
+``--cutmark-delta-max=`` setting.
+
+Any configured cutmark (and the selected ``--cutmark-delta-max=`` value) is
+also stored in the ``.caidx`` or ``.caibx`` file to ensure that such an index
+file contains sufficient data for an extracting client to properly use an
+existing file system tree (or block device) as seed while applying the same
+chunking logic as the original image.
