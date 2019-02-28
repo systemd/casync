@@ -57,18 +57,17 @@ struct CaSeed {
 CaSeed *ca_seed_new(void) {
         CaSeed *s;
 
-        s = new0(CaSeed, 1);
+        s = new(CaSeed, 1);
         if (!s)
                 return NULL;
 
-        s->cache_fd = -1;
-        s->base_fd = -1;
-
-        s->cache_chunks = true;
-
-        s->chunker = (CaChunker) CA_CHUNKER_INIT;
-
-        s->feature_flags = CA_FORMAT_DEFAULT & SUPPORTED_FEATURE_MASK;
+        *s = (CaSeed) {
+                .cache_fd = -1,
+                .base_fd = -1,
+                .cache_chunks = true,
+                .chunker = CA_CHUNKER_INIT,
+                .feature_flags = CA_FORMAT_DEFAULT & SUPPORTED_FEATURE_MASK,
+        };
 
         return s;
 }
