@@ -556,6 +556,7 @@ int ca_chunk_file_load(
                 CaChunkCompression *ret_effective_compression) {
 
         _cleanup_(safe_closep) int fd = -1;
+        CaChunkCompression fd_compression;
         int r;
 
         if (chunk_fd < 0 && chunk_fd != AT_FDCWD)
@@ -569,40 +570,48 @@ int ca_chunk_file_load(
         if (!buffer)
                 return -EINVAL;
 
-        fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, NULL, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+        if (desired_compression == CA_CHUNK_UNCOMPRESSED) {
+                fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, NULL, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+                fd_compression = CA_CHUNK_UNCOMPRESSED;
+        } else {
+                fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, ca_compressed_chunk_suffix(), O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+                fd_compression = CA_CHUNK_COMPRESSED;
+        }
+
+        if (fd == -ELOOP) /* If it's a symlink, then it's marked as "missing" */
+                return -EADDRNOTAVAIL;
+
         if (fd < 0) {
-                if (fd == -ELOOP) /* If it's a symlink, then it's marked as "missing" */
-                        return -EADDRNOTAVAIL;
                 if (fd != -ENOENT)
                         return fd;
 
-                fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, ca_compressed_chunk_suffix(), O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
-                if (fd == -ELOOP)
+                if (desired_compression == CA_CHUNK_UNCOMPRESSED) {
+                        fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, ca_compressed_chunk_suffix(), O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+                        fd_compression = CA_CHUNK_COMPRESSED;
+                } else {
+                        fd = ca_chunk_file_open(chunk_fd, prefix, chunkid, NULL, O_RDONLY|O_CLOEXEC|O_NOCTTY|O_NOFOLLOW);
+                        fd_compression = CA_CHUNK_UNCOMPRESSED;
+                }
+
+                if (fd == -ELOOP) /* If it's a symlink, then it's marked as "missing" */
                         return -EADDRNOTAVAIL;
                 if (fd < 0)
                         return fd;
-
-                if (desired_compression == CA_CHUNK_UNCOMPRESSED)
-                        r = ca_load_and_decompress_fd(fd, buffer);
-                else
-                        r = ca_load_fd(fd, buffer);
-                if (r < 0)
-                        return r;
-
-                if (ret_effective_compression)
-                        *ret_effective_compression = desired_compression == CA_CHUNK_AS_IS ? CA_CHUNK_COMPRESSED : desired_compression;
-
-        } else {
-                if (desired_compression == CA_CHUNK_COMPRESSED)
-                        r = ca_load_and_compress_fd(fd, compression_type, buffer);
-                else
-                        r = ca_load_fd(fd, buffer);
-                if (r < 0)
-                        return r;
-
-                if (ret_effective_compression)
-                        *ret_effective_compression = desired_compression == CA_CHUNK_AS_IS ? CA_CHUNK_UNCOMPRESSED : desired_compression;
         }
+
+
+        if (desired_compression == CA_CHUNK_UNCOMPRESSED && fd_compression == CA_CHUNK_COMPRESSED)
+                r = ca_load_and_decompress_fd(fd, buffer);
+        else if (desired_compression == CA_CHUNK_COMPRESSED && fd_compression == CA_CHUNK_UNCOMPRESSED)
+                r = ca_load_and_compress_fd(fd, compression_type, buffer);
+        else
+                r = ca_load_fd(fd, buffer);
+
+        if (r < 0)
+                return r;
+
+        if (ret_effective_compression)
+                *ret_effective_compression = desired_compression == CA_CHUNK_AS_IS ? fd_compression : desired_compression;
 
         return 0;
 }
