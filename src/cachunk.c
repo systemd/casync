@@ -731,11 +731,11 @@ int ca_chunk_file_test(int chunk_fd, const char *prefix, const CaChunkID *chunki
         if (!chunkid)
                 return -EINVAL;
 
-        r = ca_chunk_file_access(chunk_fd, prefix, chunkid, NULL);
+        r = ca_chunk_file_access(chunk_fd, prefix, chunkid, ca_compressed_chunk_suffix());
         if (r != 0)
                 return r;
 
-        return ca_chunk_file_access(chunk_fd, prefix, chunkid, ca_compressed_chunk_suffix());
+        return ca_chunk_file_access(chunk_fd, prefix, chunkid, NULL);
 }
 
 int ca_chunk_file_remove(int chunk_fd, const char *prefix, const CaChunkID *chunkid) {
