@@ -1268,14 +1268,26 @@ int rename_noreplace(int olddirfd, const char *oldpath, int newdirfd, const char
                 return -errno;
 
         /* Let's try linkat(). This will of course failure for non-files, but that's fine. */
-        if (linkat(olddirfd, oldpath, newdirfd, newpath, 0) < 0)
-                return -errno;
+        if (linkat(olddirfd, oldpath, newdirfd, newpath, 0) >= 0) {
+                if (unlinkat(olddirfd, oldpath, 0) >= 0)
+                        return 0;
 
-        if (unlinkat(olddirfd, oldpath, 0) < 0) {
                 r = -errno;
                 (void) unlinkat(newdirfd, newpath, 0);
                 return r;
-        }
+        } else if (!ERRNO_IS_UNSUPPORTED(errno))
+                return -errno;
+
+        /* if renameat2 and linkat aren't supported, fallback to faccessat+renameat,
+         * it isn't atomic but that's the best we can do */
+        if (faccessat(newdirfd, newpath, F_OK, AT_SYMLINK_NOFOLLOW) >= 0)
+                return -EEXIST;
+
+        if (errno != ENOENT)
+                return -errno;
+
+        if (renameat(olddirfd, oldpath, newdirfd, newpath) < 0)
+                return -errno;
 
         return 0;
 }
