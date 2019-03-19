@@ -181,6 +181,7 @@ if udevrulesdir == ''
         udevrulesdir = join_paths(udev.get_pkgconfig_variable('udevdir'), 'rules.d')
 endif
 
+subdir('shell-completion/bash')
 subdir('doc')
 
 ############################################################
