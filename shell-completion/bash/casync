@@ -1,0 +1,55 @@
+# casync(1) completion                               -*- shell-script -*-
+# vim: et sts=4 sw=4
+
+# SPDX-License-Identifier: LGPL-2.1+
+
+in_array() {
+    local i
+    for i in "${@:2}"; do
+        [[ $1 = "$i" ]] && return
+    done
+}
+
+_casync() {
+    # Assigned variable by _init_completion:
+    #   cur    Current argument.
+    #   prev   Previous argument.
+    #   words  Argument array.
+    #   cword  Argument array size.
+    local cur prev words cword
+    _init_completion -n = || return
+
+    # Commands and options
+    local cmds=(digest extract gc list make mkdev mount mtree stat)
+    local opts=(--help --version)
+
+    # Check if a command was entered already
+    local command i
+    for (( i=0; i < ${#words[@]}-1; i++ )); do
+        if in_array "${words[i]}" "${cmds[@]}"; then
+            command=${words[i]}
+            break
+        fi
+    done
+
+    # Completion per command (TODO)
+    if [[ -n $command ]]; then
+        compopt -o default
+        COMPREPLY=()
+        return 0
+    fi
+
+    # Initial completion
+    case "$cur" in
+        -*)
+            COMPREPLY=($(compgen -W "${opts[*]}" -- "$cur"))
+            return 0
+            ;;
+        *)
+            COMPREPLY=($(compgen -W "${cmds[*]}" -- "$cur"))
+            return 0
+            ;;
+    esac
+
+} && \
+complete -F _casync casync
