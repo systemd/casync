@@ -5,6 +5,7 @@
 
 #include "caformat.h"
 #include "casync.h"
+#include "rm-rf.h"
 #include "util.h"
 
 int main(int argc, char *argv[]) {
@@ -20,7 +21,7 @@ int main(int argc, char *argv[]) {
 
         r = asprintf(&teststore, "%s/teststore.%" PRIx64, d, random_u64());
         assert_se(r >= 0);
-        asprintf(&testindex, "%s/testindex.%" PRIx64, d, random_u64());
+        r = asprintf(&testindex, "%s/testindex.%" PRIx64, d, random_u64());
         assert_se(r >= 0);
         r = asprintf(&testtree, "%s/testtree.%" PRIx64, d, random_u64());
         assert_se(r >= 0);
@@ -104,6 +105,10 @@ step2:
 
 finish:
         ca_sync_unref(s);
+
+        assert_se(unlink(testindex) == 0);
+        assert_se(rm_rf(teststore, REMOVE_ROOT|REMOVE_PHYSICAL) == 0);
+        assert_se(rm_rf(testtree, REMOVE_ROOT|REMOVE_PHYSICAL) == 0);
 
         free(teststore);
         free(testindex);
