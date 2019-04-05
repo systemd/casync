@@ -86,7 +86,7 @@ int ca_sync_add_store_auto(CaSync *sync, const char *locator);
 
 /* Additional seeds to use */
 int ca_sync_add_seed_fd(CaSync *sync, int fd);
-int ca_sync_add_seed_path(CaSync *sync, const char *path);
+int ca_sync_add_seed_path(CaSync *sync, const char *path, const char *cache);
 
 /* Path to use as cache */
 int ca_sync_set_cache_fd(CaSync *sync, int fd);

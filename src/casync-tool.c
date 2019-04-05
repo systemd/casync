@@ -61,6 +61,7 @@ static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
 static char *arg_cache = NULL;
+static char *arg_seed_cache = NULL;
 static bool arg_cache_auto = false;
 static size_t arg_chunk_size_min = 0;
 static size_t arg_chunk_size_avg = 0;
@@ -103,6 +104,7 @@ static void help(void) {
                "     --compression=COMPRESSION\n"
                "                             Pick compression algorithm (zstd, xz or gzip)\n"
                "     --seed=PATH             Additional file or directory to use as seed\n"
+               "     --seed-cache=PATH       Directory to use as seed cache\n"
                "     --cache=PATH            Directory to use as encoder cache\n"
                "  -c --cache-auto            Pick encoder cache directory automatically\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote\n"
@@ -326,6 +328,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_EXTRA_STORE,
                 ARG_CHUNK_SIZE,
                 ARG_SEED,
+                ARG_SEED_CACHE,
                 ARG_CACHE,
                 ARG_RATE_LIMIT_BPS,
                 ARG_WITH,
@@ -359,6 +362,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "extra-store",       required_argument, NULL, ARG_EXTRA_STORE       },
                 { "chunk-size",        required_argument, NULL, ARG_CHUNK_SIZE        },
                 { "seed",              required_argument, NULL, ARG_SEED              },
+                { "seed-cache",        required_argument, NULL, ARG_SEED_CACHE        },
                 { "cache",             required_argument, NULL, ARG_CACHE             },
                 { "cache-auto",        no_argument,       NULL, 'c'                   },
                 { "rate-limit-bps",    required_argument, NULL, ARG_RATE_LIMIT_BPS    },
@@ -455,6 +459,13 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_CACHE:
                         r = free_and_strdup(&arg_cache, optarg);
+                        if (r < 0)
+                                return log_oom();
+
+                        break;
+
+                case ARG_SEED_CACHE:
+                        r = free_and_strdup(&arg_seed_cache, optarg);
                         if (r < 0)
                                 return log_oom();
 
@@ -748,7 +759,7 @@ static int load_seeds_and_extra_stores(CaSync *s) {
         }
 
         STRV_FOREACH(i, arg_seeds) {
-                r = ca_sync_add_seed_path(s, *i);
+                r = ca_sync_add_seed_path(s, *i, arg_seed_cache);
                 if (r < 0)
                         log_error("Failed to add seed %s, ignoring: %m", *i);
         }
@@ -1611,7 +1622,7 @@ static int verb_extract(int argc, char *argv[]) {
                         return r;
 
                 if (arg_seed_output) {
-                        r = ca_sync_add_seed_path(s, output);
+                        r = ca_sync_add_seed_path(s, output, arg_seed_cache);
                         if (r < 0 && r != -ENOENT)
                                 log_error_errno(r, "Failed to add existing file as seed %s, ignoring: %m", output);
                 }

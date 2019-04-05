@@ -1180,7 +1180,7 @@ int ca_sync_add_seed_fd(CaSync *s, int fd) {
         return 0;
 }
 
-int ca_sync_add_seed_path(CaSync *s, const char *path) {
+int ca_sync_add_seed_path(CaSync *s, const char *path, const char *cache) {
         CaSeed *seed;
         int r;
 
@@ -1201,6 +1201,14 @@ int ca_sync_add_seed_path(CaSync *s, const char *path) {
         if (r < 0) {
                 ca_seed_unref(seed);
                 return r;
+        }
+
+        if (cache) {
+                r = ca_seed_set_cache_path(seed, cache);
+                if (r < 0) {
+                        ca_seed_unref(seed);
+                        return r;
+                }
         }
 
         s->seeds[s->n_seeds++] = seed;

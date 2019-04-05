@@ -161,6 +161,7 @@ General options:
 --digest=<DIGEST>               Pick digest algorithm (sha512-256 or sha256)
 --compression=<COMPRESSION>     Pick compression algorithm (zstd, xz or gzip)
 --seed=<PATH>                   Additional file or directory to use as seed
+--seed-cache=<PATH>             Directory to use as seed cache
 --cache=<PATH>                  Directory to use as encoder cache
 --cache-auto, -c                Pick encoder cache directory automatically
 --rate-limit-bps=<LIMIT>        Maximum bandwidth in bytes/s for remote communication
