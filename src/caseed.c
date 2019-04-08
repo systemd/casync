@@ -41,6 +41,7 @@ struct CaSeed {
         bool remove_cache:1;
         bool cache_hardlink:1;
         bool cache_chunks:1;
+        bool cache_only:1;
 
         ReallocBuffer buffer;
         CaLocation *buffer_location;
@@ -480,6 +481,17 @@ finish:
         return r;
 }
 
+int ca_seed_set_cache_only(CaSeed *s, bool cache_only) {
+        if (!s)
+                return -EINVAL;
+        if (s->ready && !cache_only)
+                return -EINVAL;
+
+        s->cache_only = cache_only;
+
+        return 0;
+}
+
 int ca_seed_step(CaSeed *s) {
         int r;
 
@@ -503,6 +515,11 @@ int ca_seed_step(CaSeed *s) {
         r = ca_seed_open(s);
         if (r < 0)
                 return r;
+
+        if (s->cache_only) {
+                s->ready = true;
+                return CA_SEED_READY;
+        }
 
         for (;;) {
                 int step;
