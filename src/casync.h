@@ -85,8 +85,14 @@ int ca_sync_add_store_remote(CaSync *sync, const char *url);
 int ca_sync_add_store_auto(CaSync *sync, const char *locator);
 
 /* Additional seeds to use */
+typedef enum CaSyncSeedOptions {
+        CA_SYNC_SEED_CACHE_ONLY         = 1U << 0,
+        CA_SYNC_SEED_ABSOLUTE_SEED_PATH = 1U << 1,
+} CaSyncSeedOptions;
+
 int ca_sync_add_seed_fd(CaSync *sync, int fd);
 int ca_sync_add_seed_path(CaSync *sync, const char *path, const char *cache);
+int ca_sync_add_seed_path_options(CaSync *sync, const char *path, const char *cache, CaSyncSeedOptions options);
 
 /* Path to use as cache */
 int ca_sync_set_cache_fd(CaSync *sync, int fd);

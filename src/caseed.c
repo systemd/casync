@@ -41,6 +41,7 @@ struct CaSeed {
         bool remove_cache:1;
         bool cache_hardlink:1;
         bool cache_chunks:1;
+        bool write_absolute_cache_paths:1;
         bool cache_only:1;
 
         ReallocBuffer buffer;
@@ -254,10 +255,17 @@ static int ca_seed_make_chunk_id(CaSeed *s, const void *p, size_t l, CaChunkID *
         return ca_chunk_id_make(s->chunk_digest, p, l, ret);
 }
 
+int ca_seed_write_absolute_cache_paths(CaSeed *s, bool abs) {
+        if (!s)
+                return -EINVAL;
+
+        s->write_absolute_cache_paths = abs;
+        return 0;
+}
+
 static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void *data, size_t l) {
         char ids[CA_CHUNK_ID_FORMAT_MAX];
         const char *t, *four, *combined;
-        CaFileRoot *root;
         CaChunkID id;
         int r;
 
@@ -266,17 +274,21 @@ static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void
         assert(data);
         assert(l > 0);
 
-        r = ca_seed_get_file_root(s, &root);
-        if (r < 0)
-                return r;
-
         r = ca_location_patch_size(&location, l);
         if (r < 0)
                 return r;
 
-        r = ca_location_patch_root(&location, root);
-        if (r < 0)
-                return r;
+        if (s->write_absolute_cache_paths) {
+                CaFileRoot *root;
+
+                r = ca_seed_get_file_root(s, &root);
+                if (r < 0)
+                        return r;
+
+                r = ca_location_patch_root(&location, root);
+                if (r < 0)
+                        return r;
+        }
 
         t = ca_location_format_full(location, CA_LOCATION_WITH_ALL);
         if (!t)

@@ -36,6 +36,8 @@ int ca_seed_get_hardlink_target(CaSeed *s, const CaChunkID *id, char **ret);
 int ca_seed_current_path(CaSeed *seed, char **ret);
 int ca_seed_current_mode(CaSeed *seed, mode_t *ret);
 
+int ca_seed_write_absolute_cache_paths(CaSeed *s, bool abs);
+
 int ca_seed_set_feature_flags(CaSeed *s, uint64_t flags);
 
 int ca_seed_set_cache_only(CaSeed *s, bool cache_only);

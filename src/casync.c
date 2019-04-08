@@ -1181,7 +1181,8 @@ int ca_sync_add_seed_fd(CaSync *s, int fd) {
         return 0;
 }
 
-int ca_sync_add_seed_path(CaSync *s, const char *path, const char *cache) {
+int ca_sync_add_seed_path_options(CaSync *s, const char *path, const char *cache, CaSyncSeedOptions options) {
+        _cleanup_free_ char *canonical_path = NULL;
         CaSeed *seed;
         int r;
 
@@ -1198,7 +1199,11 @@ int ca_sync_add_seed_path(CaSync *s, const char *path, const char *cache) {
         if (!seed)
                 return -ENOMEM;
 
-        r = ca_seed_set_base_path(seed, path);
+        canonical_path = canonicalize_file_name(path);
+        if (!canonical_path)
+                return -errno;
+
+        r = ca_seed_set_base_path(seed, canonical_path);
         if (r < 0) {
                 ca_seed_unref(seed);
                 return r;
@@ -1212,8 +1217,27 @@ int ca_sync_add_seed_path(CaSync *s, const char *path, const char *cache) {
                 }
         }
 
+        if (options & CA_SYNC_SEED_CACHE_ONLY) {
+                r = ca_seed_set_cache_only(seed, true);
+                if (r < 0) {
+                        ca_seed_unref(seed);
+                        return r;
+                }
+        }
+        if (options & CA_SYNC_SEED_ABSOLUTE_SEED_PATH) {
+                r = ca_seed_write_absolute_cache_paths(seed, true);
+                if (r < 0) {
+                        ca_seed_unref(seed);
+                        return r;
+                }
+        }
+
         s->seeds[s->n_seeds++] = seed;
         return 0;
+}
+
+int ca_sync_add_seed_path(CaSync *s, const char *path, const char *cache) {
+        return ca_sync_add_seed_path_options(s, path, cache, 0);
 }
 
 int ca_sync_set_cache_fd(CaSync *s, int fd) {
