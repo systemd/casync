@@ -746,7 +746,8 @@ static int set_default_store(const char *index_path) {
         return 1;
 }
 
-static int load_seeds_and_extra_stores(CaSync *s) {
+static int load_seeds_and_extra_stores(CaSync *s, bool absolute_cache_path) {
+        int options = absolute_cache_path ? CA_SYNC_SEED_ABSOLUTE_SEED_PATH : 0;
         char **i;
         int r;
 
@@ -759,9 +760,15 @@ static int load_seeds_and_extra_stores(CaSync *s) {
         }
 
         STRV_FOREACH(i, arg_seeds) {
-                r = ca_sync_add_seed_path(s, *i, arg_seed_cache);
+                r = ca_sync_add_seed_path_options(s, *i, arg_seed_cache, options);
                 if (r < 0)
                         log_error("Failed to add seed %s, ignoring: %m", *i);
+        }
+
+        if (arg_seed_cache) {
+                r = ca_sync_add_seed_path_options(s, "/", arg_seed_cache, options|CA_SYNC_SEED_CACHE_ONLY);
+                if (r < 0)
+                        log_error("Failed to add seed cache %s, ignoring: %m", *i);
         }
 
         return 0;
@@ -1685,7 +1692,7 @@ static int verb_extract(int argc, char *argv[]) {
                         return log_error_errno(r, "Failed to set store: %m");
         }
 
-        r = load_seeds_and_extra_stores(s);
+        r = load_seeds_and_extra_stores(s, arg_dry_run);
         if (r < 0)
                 return r;
 
@@ -2293,7 +2300,7 @@ static int verb_list(int argc, char *argv[]) {
                         return log_error_errno(r, "Failed to set store: %m");
         }
 
-        r = load_seeds_and_extra_stores(s);
+        r = load_seeds_and_extra_stores(s, false);
         if (r < 0)
                 return r;
 
@@ -2602,7 +2609,7 @@ static int verb_digest(int argc, char *argv[]) {
                         return log_error_errno(r, "Failed to set store: %m");
         }
 
-        r = load_seeds_and_extra_stores(s);
+        r = load_seeds_and_extra_stores(s, false);
         if (r < 0)
                 return r;
 
@@ -2823,7 +2830,7 @@ static int verb_mount(int argc, char *argv[]) {
                         return log_error_errno(r, "Failed to set store: %m");
         }
 
-        r = load_seeds_and_extra_stores(s);
+        r = load_seeds_and_extra_stores(s, false);
         if (r < 0)
                 return r;
 
@@ -2949,7 +2956,7 @@ static int verb_mkdev(int argc, char *argv[]) {
                 }
         }
 
-        r = load_seeds_and_extra_stores(s);
+        r = load_seeds_and_extra_stores(s, false);
         if (r < 0)
                 goto finish;
 
