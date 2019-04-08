@@ -1645,24 +1645,26 @@ static int ca_sync_write_one_chunk(CaSync *s, const void *p, size_t l, CaOrigin 
 
         s->n_written_chunks++;
 
-        if (s->wstore) {
-                r = ca_store_put(s->wstore, &id, CA_CHUNK_UNCOMPRESSED, p, l);
-                if (r == -EEXIST)
-                        s->n_reused_chunks++;
-                else if (r < 0)
-                        return r;
-        }
+        if (s->direction == CA_SYNC_ENCODE) {
+                if (s->wstore) {
+                        r = ca_store_put(s->wstore, &id, CA_CHUNK_UNCOMPRESSED, p, l);
+                        if (r == -EEXIST)
+                                s->n_reused_chunks++;
+                        else if (r < 0)
+                                return r;
+                }
 
-        if (s->cache_store) {
-                r = ca_store_put(s->cache_store, &id, CA_CHUNK_UNCOMPRESSED, p, l);
-                if (r < 0 && r != -EEXIST)
-                        return r;
-        }
+                if (s->cache_store) {
+                        r = ca_store_put(s->cache_store, &id, CA_CHUNK_UNCOMPRESSED, p, l);
+                        if (r < 0 && r != -EEXIST)
+                                return r;
+                }
 
-        if (s->index) {
-                r = ca_index_write_chunk(s->index, &id, l);
-                if (r < 0)
-                        return r;
+                if (s->index) {
+                        r = ca_index_write_chunk(s->index, &id, l);
+                        if (r < 0)
+                                return r;
+                }
         }
 
         if (s->cache) {
@@ -1688,9 +1690,6 @@ static int ca_sync_write_chunks(CaSync *s, const void *p, size_t l, CaLocation *
         assert(p || l == 0);
 
         /* Splits up the data that was just generated into chunks, and calls ca_sync_write_one_chunk() for it */
-
-        if (!s->wstore && !s->cache_store && !s->index)
-                return 0;
 
         if (location) {
                 if (!s->buffer_origin) {
