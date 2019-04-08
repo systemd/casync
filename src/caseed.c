@@ -32,6 +32,8 @@ struct CaSeed {
         int cache_fd;
         char *cache_path;
 
+        char *base_path;
+
         CaChunker chunker;
         CaDigest *chunk_digest;
 
@@ -102,6 +104,7 @@ CaSeed *ca_seed_unref(CaSeed *s) {
         safe_close(s->base_fd);
         safe_close(s->cache_fd);
         free(s->cache_path);
+        free(s->base_path);
 
         ca_digest_free(s->chunk_digest);
 
@@ -139,6 +142,9 @@ int ca_seed_set_base_path(CaSeed *s, const char *path) {
         if (s->base_fd < 0)
                 return -errno;
 
+        s->base_path = strdup(path);
+        if (!s->base_path)
+                return -errno;
         return 0;
 }
 
@@ -250,6 +256,7 @@ static int ca_seed_make_chunk_id(CaSeed *s, const void *p, size_t l, CaChunkID *
 static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void *data, size_t l) {
         char ids[CA_CHUNK_ID_FORMAT_MAX];
         const char *t, *four, *combined;
+        CaFileRoot *root;
         CaChunkID id;
         int r;
 
@@ -258,7 +265,15 @@ static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void
         assert(data);
         assert(l > 0);
 
+        r = ca_seed_get_file_root(s, &root);
+        if (r < 0)
+                return r;
+
         r = ca_location_patch_size(&location, l);
+        if (r < 0)
+                return r;
+
+        r = ca_location_patch_root(&location, root);
         if (r < 0)
                 return r;
 
@@ -872,7 +887,7 @@ int ca_seed_get_file_root(CaSeed *s, CaFileRoot **ret) {
                 } else
                         return -EUNATCH;
 
-                r = ca_file_root_new(NULL, base_fd, &s->root);
+                r = ca_file_root_new(s->base_path, base_fd, &s->root);
                 if (r < 0)
                         return r;
         }
