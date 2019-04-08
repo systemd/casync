@@ -138,6 +138,7 @@ struct CaSync {
         bool archive_digest:1;
         bool hardlink_digest:1;
         bool payload_digest:1;
+        bool decode_dry_run:1;
 
         CaFileRoot *archive_root;
 
@@ -1825,6 +1826,15 @@ static int ca_sync_write_remote_archive_eof(CaSync *s) {
         return ca_remote_put_archive_eof(s->remote_archive);
 }
 
+int ca_sync_decode_set_dry_run(CaSync *s, bool dry_run) {
+        if (!s)
+                return -EINVAL;
+
+        s->decode_dry_run = dry_run;
+
+        return 0;
+}
+
 static int ca_sync_cache_get(CaSync *s, CaLocation *location) {
         int r;
 
@@ -2617,6 +2627,9 @@ static int ca_sync_step_decode(CaSync *s) {
 
         if (s->archive_eof)
                 return -EPIPE;
+
+        if (s->decode_dry_run)
+                return CA_SYNC_FINISHED;
 
         step = ca_decoder_step(s->decoder);
         if (step < 0)

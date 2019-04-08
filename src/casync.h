@@ -166,4 +166,6 @@ int ca_sync_current_cache_misses(CaSync *s, uint64_t *ret);
 int ca_sync_current_cache_invalidated(CaSync *s, uint64_t *ret);
 int ca_sync_current_cache_added(CaSync *s, uint64_t *ret);
 
+int ca_sync_decode_set_dry_run(CaSync *s, bool dry_run);
+
 #endif
