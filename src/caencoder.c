@@ -3634,11 +3634,13 @@ static int ca_encoder_seek_path(CaEncoder *e, const char *path) {
                 size_t l = strcspn(path, "/");
                 char name[l + 1];
 
-                if (l <= 0)
-                        return -EINVAL;
-
                 if (!S_ISDIR(node->stat.st_mode))
                         return -ENOTDIR;
+
+                if (l == 0) {
+                        path++;
+                        continue;
+                }
 
                 memcpy(name, path, l);
                 name[l] = 0;
@@ -3651,6 +3653,8 @@ static int ca_encoder_seek_path(CaEncoder *e, const char *path) {
                 if (*path == 0)
                         break;
                 path++;
+                if(*path == 0)
+                        break;
 
                 r = ca_encoder_enter_child(e);
                 if (r < 0)
@@ -3702,8 +3706,7 @@ static int ca_encoder_node_install_name_table(CaEncoder *e, CaEncoderNode *node,
 
                 t = t->parent;
                 if (!t) {
-                        log_debug("Name table chain ended prematurely.");
-                        return -ESPIPE;
+                        return 0;
                 }
         }
 

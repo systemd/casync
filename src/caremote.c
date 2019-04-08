@@ -376,12 +376,6 @@ static int ca_remote_url_prefix_install(CaRemote *rr, const char *url) {
         assert(rr);
         assert(url);
 
-        /* Explicitly mask out / and ./ as indicators for local directories */
-        if (url[0] == '/')
-                return -EINVAL;
-        if (url[0] == '.' && url[1] == '/')
-                return -EINVAL;
-
         if (!strchr(URL_PROTOCOL_FIRST, url[0]))
                 return -EINVAL;
 
@@ -429,12 +423,6 @@ static int ca_remote_ssh_prefix_install(CaRemote *rr, const char *url) {
 
         assert(rr);
         assert(url);
-
-        /* Explicitly mask out / and ./ as indicators for local directories */
-        if (url[0] == '/')
-                return -EINVAL;
-        if (url[0] == '.' && url[1] == '/')
-                return -EINVAL;
 
         n = strspn(url, HOSTNAME_CHARSET);
         if (n <= 0)

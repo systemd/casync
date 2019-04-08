@@ -39,8 +39,6 @@ int ca_location_new(
 
         if (!CA_LOCATION_DESIGNATOR_VALID(designator))
                 return -EINVAL;
-        if (!isempty(path) && path[0] == '/') /* insist on relative paths */
-                return -EINVAL;
         if (offset == UINT64_MAX)
                 return -EINVAL;
         if (size == 0)
@@ -162,7 +160,10 @@ const char* ca_location_format_full(CaLocation *l, CaLocationWith with) {
         if (l->formatted && l->formatted_with == with)
                 return l->formatted;
 
-        r = realloc_buffer_printf(&buffer, "%s+%c%" PRIu64, strempty(l->path), (char) l->designator, l->offset);
+        r = realloc_buffer_printf(&buffer, "%s%s%s+%c%" PRIu64,
+                                  l->root ? l->root->path : "",
+                                  l->root && l->path && l->root->path && l->root->path[0] && l->path[0] ? "/" : "",
+                                  strempty(l->path), (char) l->designator, l->offset);
         if (r < 0)
                 return NULL;
 
@@ -233,9 +234,6 @@ int ca_location_parse(const char *text, CaLocation **ret) {
 
         u = c = strrchr(text, '+');
         if (!u)
-                return -EINVAL;
-
-        if (u != text && text[0] == '/') /* Don't allow absolute paths */
                 return -EINVAL;
 
         if (!CA_LOCATION_DESIGNATOR_VALID(u[1]))
