@@ -1616,6 +1616,12 @@ static int verb_extract(int argc, char *argv[]) {
         if (!s)
                 return log_oom();
 
+        if (arg_dry_run) {
+                r = ca_sync_decode_set_dry_run(s, arg_dry_run);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set decode dry_run: %m");
+        }
+
         if (IN_SET(operation, EXTRACT_ARCHIVE_INDEX, EXTRACT_BLOB_INDEX)) {
                 r = set_default_store(input);
                 if (r < 0)
