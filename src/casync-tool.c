@@ -1623,6 +1623,12 @@ static int verb_extract(int argc, char *argv[]) {
         if (!s)
                 return log_oom();
 
+        if (arg_cache) {
+                r = ca_sync_set_cache_path(s, arg_cache);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set cache: %m");
+        }
+
         if (arg_dry_run) {
                 r = ca_sync_decode_set_dry_run(s, arg_dry_run);
                 if (r < 0)
