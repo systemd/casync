@@ -765,6 +765,15 @@ DEFINE_TRIVIAL_CLEANUP_FUNC(char*, unlink_and_free);
 
 int free_and_strdup(char **p, const char *s);
 
+/* Takes inspiration from Rusts's Option::take() method: reads and returns a pointer, but at the same time resets it to
+ * NULL. See: https://doc.rust-lang.org/std/option/enum.Option.html#method.take */
+#define TAKE_PTR(ptr)                           \
+        ({                                      \
+                typeof(ptr) _ptr_ = (ptr);      \
+                (ptr) = NULL;                   \
+                _ptr_;                          \
+        })
+
 /* A check against a list of errors commonly used to indicate that a syscall/ioctl/other kernel operation we request is
  * not supported locally. We maintain a generic list for this here, instead of adjusting the possible error codes to
  * exactly what the calls might return for the simple reasons that due to FUSE and many differing in-kernel
