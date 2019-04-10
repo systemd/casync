@@ -72,7 +72,9 @@ static int log_fullv(
         if (level > get_log_level())
                 return -abs(error);
 
-        if (!endswith(format, "\n"))
+        if (endswith(format, "\n"))
+                fmt = format;
+        else
                 fmt = strjoina(format, "\n");
 
         if (error != 0)
