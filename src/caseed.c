@@ -41,7 +41,7 @@ struct CaSeed {
         bool cache_chunks:1;
 
         ReallocBuffer buffer;
-        CaLocation *buffer_location;
+        CaOrigin *buffer_origin;
 
         CaFileRoot *root;
 
@@ -52,23 +52,25 @@ struct CaSeed {
 
         uint64_t first_step_nsec;
         uint64_t last_step_nsec;
+
+        CaCutmark *cutmarks;
+        size_t n_cutmarks;
 };
 
 CaSeed *ca_seed_new(void) {
         CaSeed *s;
 
-        s = new0(CaSeed, 1);
+        s = new(CaSeed, 1);
         if (!s)
                 return NULL;
 
-        s->cache_fd = -1;
-        s->base_fd = -1;
-
-        s->cache_chunks = true;
-
-        s->chunker = (CaChunker) CA_CHUNKER_INIT;
-
-        s->feature_flags = CA_FORMAT_DEFAULT & SUPPORTED_FEATURE_MASK;
+        *s = (CaSeed) {
+                .cache_fd = -1,
+                .base_fd = -1,
+                .cache_chunks = true,
+                .chunker = CA_CHUNKER_INIT,
+                .feature_flags = CA_FORMAT_DEFAULT & SUPPORTED_FEATURE_MASK,
+        };
 
         return s;
 }
@@ -106,9 +108,11 @@ CaSeed *ca_seed_unref(CaSeed *s) {
         ca_digest_free(s->chunk_digest);
 
         realloc_buffer_free(&s->buffer);
-        ca_location_unref(s->buffer_location);
+        ca_origin_unref(s->buffer_origin);
 
         ca_file_root_unref(s->root);
+
+        free(s->cutmarks);
 
         return mfree(s);
 }
@@ -247,7 +251,8 @@ static int ca_seed_make_chunk_id(CaSeed *s, const void *p, size_t l, CaChunkID *
         return ca_chunk_id_make(s->chunk_digest, p, l, ret);
 }
 
-static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void *data, size_t l) {
+static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *loc, const void *data, size_t l) {
+        _cleanup_(ca_location_unrefp) CaLocation *location = ca_location_ref(loc);
         char ids[CA_CHUNK_ID_FORMAT_MAX];
         const char *t, *four, *combined;
         CaChunkID id;
@@ -258,6 +263,7 @@ static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void
         assert(data);
         assert(l > 0);
 
+        /* We took our own copy above, to make sure we don't write around in the object the caller passed to us */
         r = ca_location_patch_size(&location, l);
         if (r < 0)
                 return r;
@@ -317,7 +323,7 @@ static int ca_seed_write_cache_entry(CaSeed *s, CaLocation *location, const void
 }
 
 static int ca_seed_cache_chunks(CaSeed *s) {
-        uint64_t offset = 0;
+        _cleanup_(ca_location_unrefp) CaLocation *location = NULL;
         const void *p;
         size_t l;
         int r;
@@ -333,46 +339,48 @@ static int ca_seed_cache_chunks(CaSeed *s) {
         if (!s->cache_chunks)
                 return 0;
 
+        r = ca_encoder_current_location(s->encoder, 0, &location);
+        if (r < 0)
+                return r;
+
+        r = ca_location_patch_size(&location, l);
+        if (r < 0)
+                return r;
+
+        if (!s->buffer_origin) {
+                r = ca_origin_new(&s->buffer_origin);
+                if (r < 0)
+                        return r;
+        }
+
+        r = ca_origin_put(s->buffer_origin, location);
+        if (r < 0)
+                return r;
+
         while (l > 0) {
                 const void *chunk;
-                size_t chunk_size, k;
+                size_t chunk_size;
+                int verdict;
 
-                if (!s->buffer_location) {
-                        r = ca_encoder_current_location(s->encoder, offset, &s->buffer_location);
+                verdict = ca_chunker_extract_chunk(&s->chunker, &s->buffer, &p, &l, &chunk, &chunk_size);
+                if (verdict < 0)
+                        return verdict;
+                if (verdict == CA_CHUNKER_NOT_YET)
+                        return 0;
+
+                r = ca_seed_write_cache_entry(s, ca_origin_get(s->buffer_origin, 0), chunk, chunk_size);
+                if (r < 0)
+                        return r;
+
+                if (verdict == CA_CHUNKER_INDIRECT) {
+                        r = realloc_buffer_advance(&s->buffer, chunk_size);
                         if (r < 0)
                                 return r;
                 }
 
-                k = ca_chunker_scan(&s->chunker, p, l);
-                if (k == (size_t) -1) {
-                        if (!realloc_buffer_append(&s->buffer, p, l))
-                                return -ENOMEM;
-
-                        return 0;
-                }
-
-                if (realloc_buffer_size(&s->buffer) == 0) {
-                        chunk = p;
-                        chunk_size = k;
-                } else {
-                        if (!realloc_buffer_append(&s->buffer, p, k))
-                                return -ENOMEM;
-
-                        chunk = realloc_buffer_data(&s->buffer);
-                        chunk_size = realloc_buffer_size(&s->buffer);
-                }
-
-                r = ca_seed_write_cache_entry(s, s->buffer_location, chunk, chunk_size);
+                r = ca_origin_advance_bytes(s->buffer_origin, chunk_size);
                 if (r < 0)
                         return r;
-
-                realloc_buffer_empty(&s->buffer);
-                s->buffer_location = ca_location_unref(s->buffer_location);
-
-                p = (const uint8_t*) p + k;
-                l -= k;
-
-                offset += k;
         }
 
         return 0;
@@ -389,15 +397,12 @@ static int ca_seed_cache_final_chunk(CaSeed *s) {
         if (realloc_buffer_size(&s->buffer) == 0)
                 return 0;
 
-        if (!s->buffer_location)
-                return 0;
-
-        r = ca_seed_write_cache_entry(s, s->buffer_location, realloc_buffer_data(&s->buffer), realloc_buffer_size(&s->buffer));
+        r = ca_seed_write_cache_entry(s, ca_origin_get(s->buffer_origin, 0), realloc_buffer_data(&s->buffer), realloc_buffer_size(&s->buffer));
         if (r < 0)
                 return 0;
 
         realloc_buffer_empty(&s->buffer);
-        s->buffer_location = ca_location_unref(s->buffer_location);
+        s->buffer_origin = ca_origin_unref(s->buffer_origin);
 
         return 0;
 }
@@ -849,6 +854,32 @@ int ca_seed_set_chunk_size(CaSeed *s, size_t cmin, size_t cavg, size_t cmax) {
 
         ca_chunker_set_size(&s->chunker, cmin, cavg, cmax);
 
+        return 0;
+}
+
+int ca_seed_set_cutmarks(CaSeed *s, const CaCutmark *cutmarks, size_t n_cutmarks) {
+        CaCutmark *copy;
+
+        if (!s)
+                return -EINVAL;
+        if (!cutmarks && n_cutmarks > 0)
+                return -EINVAL;
+
+        copy = newdup(CaCutmark, cutmarks, n_cutmarks);
+        if (!copy)
+                return -ENOMEM;
+
+        s->chunker.cutmarks = s->cutmarks = copy;
+        s->chunker.n_cutmarks = s->n_cutmarks = n_cutmarks;
+
+        return 0;
+}
+
+int ca_seed_set_cutmark_delta_max(CaSeed *s, int64_t delta) {
+        if (!s)
+                return -EINVAL;
+
+        s->chunker.cutmark_delta_max = delta;
         return 0;
 }
 

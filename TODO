@@ -37,7 +37,6 @@ LATER:
 * send progress information via sd_notify(), so that people can wrap casync nicely in UIs
 * maybe turn "recursive" mode into a numeric value specifying how far to descend?
 * make "casync stat" work on a directory with a subpath
-* tweak chunker: shift cut to last "marker".
 * define sane errors we can show user messages about
 * introduce a --best-effort mode when replaying, which means we'll ignore what we can't apply
 * when building the cache, also build a seed
@@ -49,6 +48,5 @@ LATER:
 * make sure "casync list /etc/fstab" does something useful
 * rework CaSeed logic to use CaCache as backend, and then add a new command "casync cache" or so, to explicitly generate a cache/seed
 * support blake2 as hashes
-* parallelize image generation: when storing chunks in the store do so in a thread
 * in "casync stat" output show which flags enable what
 * save/restore xfs/ext4 projid

@@ -7,6 +7,9 @@
 #include <sys/types.h>
 #include <stdbool.h>
 
+#include "cacutmark.h"
+#include "realloc-buffer.h"
+
 /* The default average chunk size */
 #define CA_CHUNK_SIZE_AVG_DEFAULT ((size_t) (64U*1024U))
 
@@ -32,6 +35,22 @@ typedef struct CaChunker {
         size_t discriminator;
 
         uint8_t window[CA_CHUNKER_WINDOW_SIZE];
+
+        const CaCutmark *cutmarks;  /* List of defined cutmarks to look for */
+        size_t n_cutmarks;
+
+        ssize_t last_cutmark; /* The byte offset we have seen the last cutmark at, relative to the current byte index */
+        uint64_t qword_be;    /* The last 8 byte we read, always shifted through and hence in BE format. */
+
+        /* How many bytes to go back to search for cutmarks at most */
+        uint64_t cutmark_delta_max;
+
+        /* A cutmark was previously found, pointing to a cut in the future. This specifies how many more
+         * bytes to process before the cut we already determined shall take place. */
+        size_t cut_pending;
+
+        uint64_t n_cutmarks_applied;
+        int64_t cutmark_delta_sum;
 } CaChunker;
 
 /* The default initializer for the chunker. We pick an average chunk size equivalent to 64K */
@@ -41,6 +60,8 @@ typedef struct CaChunker {
                 .chunk_size_avg = CA_CHUNK_SIZE_AVG_DEFAULT,                                   \
                 .chunk_size_max = CA_CHUNK_SIZE_AVG_DEFAULT*4,                                 \
                 .discriminator = CA_CHUNKER_DISCRIMINATOR_FROM_AVG(CA_CHUNK_SIZE_AVG_DEFAULT), \
+                .cutmark_delta_max = UINT64_MAX,                                               \
+                .cut_pending = (size_t) -1,                                                    \
         }
 
 /* Set the min/avg/max chunk size. Each parameter may be 0, in which case a default is used. */
@@ -48,10 +69,20 @@ int ca_chunker_set_size(CaChunker *c, size_t min_size, size_t avg_size, size_t m
 
 /* Scans the specified data for a chunk border. Returns (size_t) -1 if none was found (and the function should be
  * called with more data later on), or another value indicating the position of a border. */
-size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n);
+size_t ca_chunker_scan(CaChunker *c, bool test_break, const void* p, size_t n);
 
 /* Low-level buzhash functions. Only exported for testing purposes. */
 uint32_t ca_chunker_start(CaChunker *c, const void *p, size_t n);
 uint32_t ca_chunker_roll(CaChunker *c, uint8_t pop_byte, uint8_t push_byte);
+
+uint64_t ca_chunker_cutmark_delta_max(CaChunker *c);
+
+enum {
+        CA_CHUNKER_NOT_YET,     /* Not enough data for chunk */
+        CA_CHUNKER_DIRECT,      /* Found chunk, directly in the specified *pp and *ll buffer */
+        CA_CHUNKER_INDIRECT,    /* Found chunk, but inside of *buffer, need to advance it afterwards */
+};
+
+int ca_chunker_extract_chunk(CaChunker *c, ReallocBuffer *buffer, const void **pp, size_t *ll, const void **ret_chunk, size_t *ret_chunk_size);
 
 #endif

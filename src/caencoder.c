@@ -3527,9 +3527,9 @@ int ca_encoder_current_location(CaEncoder *e, uint64_t add, CaLocation **ret) {
 
                 name_table_node = node;
 
-                /* Here's a tweak: in CA_ENCODER_FILENAME state we actually encode the child's data, as we our current
-                 * node might be the directory, but we need to serialize at which directory entry within it we
-                 * currently are. */
+                /* Here's a tweak: in CA_ENCODER_FILENAME state we actually encode the child's data, as our
+                 * current node might be the directory, but we need to serialize at which directory entry
+                 * within it we currently are. */
                 node = ca_encoder_current_child_node(e);
                 if (!node)
                         return -EUNATCH;

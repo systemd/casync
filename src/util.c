@@ -429,6 +429,14 @@ int unhexchar(char c) {
         return -EINVAL;
 }
 
+int undecchar(char c) {
+
+        if (c >= '0' && c <= '9')
+                return c - '0';
+
+        return -EINVAL;
+}
+
 char *hexmem(const void *p, size_t l) {
         const uint8_t *x;
         char *r, *z;
@@ -919,7 +927,7 @@ int strv_push(char ***l, char *value) {
         if (m < n)
                 return -ENOMEM;
 
-        c = realloc_multiply(*l, sizeof(char*), m);
+        c = reallocarray(*l, sizeof(char*), m);
         if (!c)
                 return -ENOMEM;
 

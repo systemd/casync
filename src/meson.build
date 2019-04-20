@@ -10,6 +10,8 @@ util_sources = files('''
 '''.split())
 
 libshared_sources = files('''
+        affinity-count.c
+        affinity-count.h
         cacache.c
         cacache.h
         cachunk.c
@@ -21,6 +23,8 @@ libshared_sources = files('''
         cacommon.h
         cacompression.c
         cacompression.h
+        cacutmark.c
+        cacutmark.h
         cadecoder.c
         cadecoder.h
         cadigest.c

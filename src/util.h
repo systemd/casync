@@ -24,10 +24,32 @@
 #include "gcc-macro.h"
 #include "log.h"
 
-#define new(t, n) ((t*) malloc((n) * sizeof(t)))
-#define new0(t, n) ((t*) calloc((n), sizeof(t)))
+/* If for some reason more than 4M are allocated on the stack, let's abort immediately. It's better than
+ * proceeding and smashing the stack limits. Note that by default RLIMIT_STACK is 8M on Linux. */
+#define ALLOCA_MAX (4U*1024U*1024U)
 
-#define newa(t, n) ((t*) alloca((n) * sizeof(t)))
+#define new(t, n) ((t*) malloc_multiply(sizeof(t), (n)))
+#define new0(t, n) ((t*) calloc((n) ?: 1, sizeof(t)))
+
+#define newa(t, n)                                                      \
+        ({                                                              \
+                size_t _n_ = n;                                         \
+                assert(!size_multiply_overflow(sizeof(t), _n_));        \
+                assert(sizeof(t)*_n_ <= ALLOCA_MAX);                    \
+                (t*) alloca(sizeof(t)*_n_);                             \
+        })
+
+#define newa0(t, n)                                                     \
+        ({                                                              \
+                size_t _n_ = n;                                         \
+                assert(!size_multiply_overflow(sizeof(t), _n_));        \
+                assert(sizeof(t)*_n_ <= ALLOCA_MAX);                    \
+                (t*) alloca0(sizeof(t)*_n_);                            \
+        })
+
+#define newdup(t, p, n) ((t*) memdup_multiply(p, sizeof(t), (n)))
+
+#define malloc0(n) (calloc(1, (n)))
 
 #define XCONCATENATE(x, y) x ## y
 #define CONCATENATE(x, y) XCONCATENATE(x, y)
@@ -62,8 +84,6 @@
                 __builtin_types_compatible_p(typeof(_A), typeof(_B)),   \
                 ((_A) > (_B)) ? (_A) : (_B),                            \
                 (void)0))
-
-
 
 int loop_write(int fd, const void *p, size_t l);
 int loop_write_block(int fd, const void *p, size_t l);
@@ -226,6 +246,7 @@ static inline uint64_t random_u64(void) {
 
 char hexchar(int x);
 int unhexchar(char c);
+int undecchar(char c);
 char octchar(int x);
 
 char *hexmem(const void *p, size_t l);
@@ -330,22 +351,39 @@ char *strv_find(char **l, const char *name) _pure_;
 #define strv_contains(l, s) (!!strv_find((l), (s)))
 
 static inline bool size_multiply_overflow(size_t size, size_t need) {
-        return need != 0 && size > (SIZE_MAX / need);
+        return _unlikely_(need != 0 && size > (SIZE_MAX / need));
 }
 
 _malloc_  _alloc_(1, 2) static inline void *malloc_multiply(size_t size, size_t need) {
-        if (_unlikely_(size_multiply_overflow(size, need)))
+        if (size_multiply_overflow(size, need))
                 return NULL;
 
-        return malloc(size * need);
+        return malloc(size * need ?: 1);
 }
 
-_alloc_(2, 3) static inline void *realloc_multiply(void *p, size_t size, size_t need) {
-        if (_unlikely_(size_multiply_overflow(size, need)))
+#if !HAVE_REALLOCARRAY
+_alloc_(2, 3) static inline void *reallocarray(void *p, size_t need, size_t size) {
+        if (size_multiply_overflow(size, need))
                 return NULL;
 
-        return realloc(p, size * need);
+        return realloc(p, size * need ?: 1);
 }
+#endif
+
+_alloc_(2, 3) static inline void *memdup_multiply(const void *p, size_t size, size_t need) {
+        if (size_multiply_overflow(size, need))
+                return NULL;
+
+        return memdup(p, size * need);
+}
+
+#define free_and_replace(a, b)                  \
+        ({                                      \
+                free(a);                        \
+                (a) = (b);                      \
+                (b) = NULL;                     \
+                0;                              \
+        })
 
 #define STRV_FOREACH(s, l)                      \
         for ((s) = (l); (s) && *(s); (s)++)
@@ -779,5 +817,14 @@ int read_line(FILE *f, size_t limit, char **ret);
 
 char *delete_trailing_chars(char *s, const char *bad);
 char *strstrip(char *s);
+
+#define CMP(a, b) __CMP(UNIQ, (a), UNIQ, (b))
+#define __CMP(aq, a, bq, b)                             \
+        ({                                              \
+                const typeof(a) UNIQ_T(A, aq) = (a);    \
+                const typeof(b) UNIQ_T(B, bq) = (b);    \
+                UNIQ_T(A, aq) < UNIQ_T(B, bq) ? -1 :    \
+                UNIQ_T(A, aq) > UNIQ_T(B, bq) ? 1 : 0;  \
+        })
 
 #endif
