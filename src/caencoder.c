@@ -527,14 +527,17 @@ static int dirent_bsearch_func(const void *key, const void *member) {
         return strcmp(k, (*m)->d_name);
 }
 
-static int ca_encoder_node_load_exclude_file(CaEncoderNode *n) {
+static int ca_encoder_node_load_exclude_file(CaEncoder *e, CaEncoderNode *n) {
         int r;
+        assert(e);
         assert(n);
 
         if (!S_ISDIR(n->stat.st_mode))
                 return -ENOTDIR;
         if (n->fd < 0)
                 return -EBADFD;
+        if (!(e->feature_flags & CA_FORMAT_EXCLUDE_FILE))
+                return 0;
 
         if (n->has_exclude_file == CA_ENCODER_HAS_EXCLUDE_FILE_DONT_KNOW) {
                 struct dirent **found;
@@ -1848,8 +1851,8 @@ static int ca_encoder_shall_store_child_node(CaEncoder *e, CaEncoderNode *n) {
         if ((e->feature_flags & CA_FORMAT_EXCLUDE_SUBMOUNTS) && child->mount_id >= 0 && n->mount_id >= 0 && child->mount_id != n->mount_id)
                 return false;
 
-        /* Load and check the child against our .caexclude file if we have one */
-        r = ca_encoder_node_load_exclude_file(n);
+        /* Load and check the child against our .caexclude file if we have one (and are using it) */
+        r = ca_encoder_node_load_exclude_file(e, n);
         if (r < 0)
                 return log_debug_errno(r, "Failed to load exclude file: %m");
 
