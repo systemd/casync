@@ -635,10 +635,14 @@ static void help(void) {
 
 static int parse_argv(int argc, char *argv[]) {
 
+        enum {
+                ARG_RATE_LIMIT_BPS = 0x100,
+        };
+
         static const struct option options[] = {
                 { "help",           no_argument,       NULL, 'h'                },
                 { "verbose",        no_argument,       NULL, 'v'                },
-                { "rate-limit-bps", required_argument, NULL, 'l'                },
+                { "rate-limit-bps", required_argument, NULL, ARG_RATE_LIMIT_BPS },
                 {}
         };
 
@@ -675,7 +679,7 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_verbose = true;
                         break;
 
-                case 'l':
+                case ARG_RATE_LIMIT_BPS:
                         arg_rate_limit_bps = strtoll(optarg, NULL, 10);
                         break;
 
