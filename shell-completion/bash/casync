@@ -21,7 +21,56 @@ _casync() {
 
     # Commands and options
     local cmds=(digest extract gc list make mkdev mount mtree stat)
-    local opts=(--help --version)
+    local opts=(-h --help --version)
+    opts+=(-l --log-level)
+    opts+=(-v --verbose)
+    opts+=(-n --dry-run)
+    opts+=(-c --cache-auto)
+    opts+=(--store --extra-store --seed --cache)
+    opts+=(--chunk-size --rate-limit-bps)
+    opts+=(--with --without)
+    opts+=(--what)
+    opts+=(--exclude-nodump --exclude-submounts --exclude-file --undo-immutable --delete --punch-holes --reflink --hardlink --seed-output --mkdir --recursive)
+    opts+=(--uid-shift --uid-range)
+    opts+=(--digest)
+    opts+=(--compression)
+
+    case "$prev" in
+        -l|--log-level)
+            COMPREPLY=($(compgen -W "debug info err" -- "$cur"))
+            return 0
+            ;;
+        --store|--extra-store|--seed|--cache)
+            _filedir
+            return 0
+            ;;
+        --chunk-size|--rate-limit-bps)
+            return 0
+            ;;
+        --with|--without)
+            COMPREPLY=($(compgen -W "best unix fat chattr fat-attrs privileged fuse 16bit-uids 32bit-uids user-names sec-time usec-time nsec-time 2sec-time read-only permissions symlinks device-nodes fifos sockets flag-hidden flag-system flag-archive flag-append flag-noatime flag-compr flag-nocow flag-nodump flag-dirsync flag-immutable flag-sync flag-nocomp flag-projinherit subvolume subvolume-ro xattrs acl selinux fcaps quota-projid" -- "$cur"))
+            return 0
+            ;;
+        --what)
+            COMPREPLY=($(compgen -W "archive archive-index blob blob-index directory help" -- "$cur"))
+            return 0
+            ;;
+        --exclude-nodump|--exclude-submounts|--exclude-file|--undo-immutable|--delete|--punch-holes|--reflink|--hardlink|--seed-output|--recursive|--mkdir)
+            COMPREPLY=($(compgen -W "1 yes y true t on 0 no n false f off" -- "$cur"))
+            return 0
+            ;;
+        --uid-shift|--uid-range)
+            return 0
+            ;;
+        --digest)
+            COMPREPLY=($(compgen -W "sha256 sha512-256 default" -- "$cur"))
+            return 0
+            ;;
+        --compression)
+            COMPREPLY=($(compgen -W "xz gzip zstd default" -- "$cur"))
+            return 0
+            ;;
+    esac
 
     # Check if a command was entered already
     local command i
@@ -46,7 +95,7 @@ _casync() {
             return 0
             ;;
         *)
-            COMPREPLY=($(compgen -W "${cmds[*]}" -- "$cur"))
+            COMPREPLY=($(compgen -W "${cmds[*]} ${opts[*]}" -- "$cur"))
             return 0
             ;;
     esac
