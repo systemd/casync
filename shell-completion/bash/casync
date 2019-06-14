@@ -34,6 +34,7 @@ _casync() {
     opts+=(--uid-shift --uid-range)
     opts+=(--digest)
     opts+=(--compression)
+    local opts_arg="@(-l|--log-level|--store|--extra-store|--seed|--cache|--chunk-size|--rate-limit-bps|--with|--without|--what|--exclude-nodump|--exclude-submounts|--exclude-file|--undo-immutable|--delete|--punch-holes|--reflink|--hardlink|--seed-output|--recursive|--mkdir|--uid-shift|--uid-range|--digest|--compression)"
 
     case "$prev" in
         -l|--log-level)
@@ -81,10 +82,46 @@ _casync() {
         fi
     done
 
-    # Completion per command (TODO)
+    # Completion per command
     if [[ -n $command ]]; then
-        compopt -o default
-        COMPREPLY=()
+        local args
+        _count_args ':=' "$opts_arg" ''
+
+        case "$command" in
+            # make|extract [ARCHIVE|ARCHIVE_INDEX|DIRECTORY] [PATH]
+            make|extract)
+                if [[ $args -eq 2 ]]; then
+                    _filedir '@(caibx|caidx|catar)'
+                elif [[ $args -eq 3 ]]; then
+                    _filedir
+                fi
+                ;;
+            # list|mtree|stat [ARCHIVE|ARCHIVE_INDEX|DIRECTORY] [PATH]
+            # mount [ARCHIVE|ARCHIVE_INDEX] PATH
+            # mkdev [BLOB|BLOB_INDEX] [NODE]
+            list|mtree|stat|mount|mkdev)
+                if [[ $args -eq 2 ]]; then
+                    _filedir
+                elif [[ $args -eq 3 ]]; then
+                    _filedir
+                fi
+                ;;
+            # gc BLOB_INDEX|ARCHIVE_INDEX ...
+            gc)
+                _filedir '@(caibx|caidx)'
+                ;;
+            # digest [ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY]
+            digest)
+                if [[ $args -eq 2 ]]; then
+                    _filedir
+                fi
+                ;;
+            *)
+                _filedir
+                ;;
+        esac
+
+        COMPREPLY+=($(compgen -W "${opts[*]}" -- "$cur"))
         return 0
     fi
 
