@@ -178,7 +178,7 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
                                 return r;
                         if (r < 0)
                                 return log_error_errno(r, "Failed to determine whether there's more data to write.");
-                        if (r > 0)
+                        if (r == 0)
                                 return 0;
 
                         break;
