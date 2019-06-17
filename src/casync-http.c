@@ -35,6 +35,47 @@ typedef enum ProcessUntil {
         PROCESS_UNTIL_FINISHED,
 } ProcessUntil;
 
+/*
+ * protocol helpers
+ */
+
+static const char *protocol_str(Protocol protocol) {
+        switch (protocol) {
+        case PROTOCOL_HTTP:
+                return "HTTP";
+        case PROTOCOL_FTP:
+                return "FTP";
+        case PROTOCOL_HTTPS:
+                return "HTTPS";
+        case PROTOCOL_SFTP:
+                return "SFTP";
+        default:
+                assert_not_reached("Unknown protocol");
+        }
+}
+
+static bool protocol_status_ok(Protocol protocol, long protocol_status) {
+        switch (protocol) {
+        case PROTOCOL_HTTP:
+        case PROTOCOL_HTTPS:
+                if (protocol_status == 200)
+                        return true;
+                break;
+        case PROTOCOL_FTP:
+                if (protocol_status >= 200 && protocol_status <= 299)
+                        return true;
+                break;
+        case PROTOCOL_SFTP:
+                if (protocol_status == 0)
+                        return true;
+                break;
+        default:
+                assert_not_reached("Unknown protocol");
+                break;
+        }
+        return false;
+}
+
 static CURLcode robust_curl_easy_perform(CURL *curl) {
         uint64_t sleep_base_usec = 100 * 1000;
         unsigned trial = 1;
@@ -328,42 +369,24 @@ static int acquire_file(CaRemote *rr,
                 return -EIO;
         }
 
-        if (IN_SET(arg_protocol, PROTOCOL_HTTP, PROTOCOL_HTTPS) && protocol_status != 200) {
+        if (!protocol_status_ok(arg_protocol, protocol_status)) {
                 char *m;
+                int abort_code;
 
                 if (arg_verbose)
-                        log_error("HTTP server failure %li while requesting %s.", protocol_status, url);
+                        log_error("%s server failure %li while requesting %s",
+                                  protocol_str(arg_protocol), protocol_status, url);
 
-                if (asprintf(&m, "HTTP request on %s failed with status %li", url, protocol_status) < 0)
+                if (asprintf(&m, "%s request on %s failed with status %li",
+                             protocol_str(arg_protocol), url, protocol_status) < 0)
                         return log_oom();
 
-                (void) ca_remote_abort(rr, protocol_status == 404 ? ENOMEDIUM : EBADR, m);
-                free(m);
+                if (IN_SET(arg_protocol, PROTOCOL_HTTP, PROTOCOL_HTTPS) && protocol_status == 404)
+                        abort_code = ENOMEDIUM;
+                else
+                        abort_code = EBADR;
 
-                return 0;
-
-        } else if (arg_protocol == PROTOCOL_FTP && (protocol_status < 200 || protocol_status > 299)) {
-                char *m;
-
-                if (arg_verbose)
-                        log_error("FTP server failure %li while requesting %s.", protocol_status, url);
-
-                if (asprintf(&m, "FTP request on %s failed with status %li", url, protocol_status) < 0)
-                        return log_oom();
-
-                (void) ca_remote_abort(rr, EBADR, m);
-                free(m);
-                return 0;
-        } else if (arg_protocol == PROTOCOL_SFTP && (protocol_status != 0)) {
-                char *m;
-
-                if (arg_verbose)
-                        log_error("SFTP server failure %li while requesting %s.", protocol_status, url);
-
-                if (asprintf(&m, "SFTP request on %s failed with status %li", url, protocol_status) < 0)
-                        return log_oom();
-
-                (void) ca_remote_abort(rr, EBADR, m);
+                (void) ca_remote_abort(rr, abort_code, m);
                 free(m);
                 return 0;
         }
@@ -589,10 +612,7 @@ static int run(int argc, char *argv[]) {
                 if (r < 0)
                         goto finish;
 
-                if ((IN_SET(arg_protocol, PROTOCOL_HTTP, PROTOCOL_HTTPS) && protocol_status == 200) ||
-                    (arg_protocol == PROTOCOL_FTP && (protocol_status >= 200 && protocol_status <= 299))||
-                    (arg_protocol == PROTOCOL_SFTP && (protocol_status == 0))) {
-
+                if (protocol_status_ok(arg_protocol, protocol_status)) {
                         r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
                         if (r < 0) {
                                 log_error_errno(r, "Failed to write chunk: %m");
@@ -601,7 +621,9 @@ static int run(int argc, char *argv[]) {
 
                 } else {
                         if (arg_verbose)
-                                log_error("HTTP/FTP/SFTP server failure %li while requesting %s.", protocol_status, url_buffer);
+                                log_error("%s server failure %ld while requesting %s",
+                                          protocol_str(arg_protocol), protocol_status,
+                                          url_buffer);
 
                         r = ca_remote_put_missing(rr, &id);
                         if (r < 0) {
