@@ -481,14 +481,92 @@ static int acquire_file(CaRemote *rr, CURL *handle) {
         return 1;
 }
 
+static int acquire_chunks(CaRemote *rr, const char *store_url) {
+        _cleanup_free_ char *url_buffer = NULL;
+        _cleanup_(curl_easy_cleanupp) CURL *curl = NULL;
+        _cleanup_(realloc_buffer_free) ReallocBuffer chunk_buffer = {};
+        int r;
+
+        r = make_curl_easy_handle(&curl, write_chunk, &chunk_buffer, NULL);
+        if (r < 0)
+                return r;
+
+        for (;;) {
+                CURLcode c;
+                CaChunkID id;
+                long protocol_status;
+
+                if (quit) {
+                        log_info("Got exit signal, quitting.");
+                        return 0;
+                }
+
+                r = process_remote(rr, PROCESS_UNTIL_HAVE_REQUEST);
+                if (r == -EPIPE)
+                        return 0;
+                if (r < 0)
+                        return r;
+
+                r = ca_remote_next_request(rr, &id);
+                if (r == -ENODATA)
+                        continue;
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine next chunk to get: %m");
+
+                free(url_buffer);
+                url_buffer = chunk_url(store_url, &id);
+                if (!url_buffer)
+                        return log_oom();
+
+                r = configure_curl_easy_handle(curl, url_buffer);
+                if (r < 0)
+                        return r;
+
+                log_debug("Acquiring %s...", url_buffer);
+
+                c = robust_curl_easy_perform(curl);
+                if (c != CURLE_OK)
+                        return log_error_curle(c, "Failed to acquire %s", url_buffer);
+
+                c = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status);
+                if (c != CURLE_OK)
+                        return log_error_curle(c, "Failed to query response code");
+
+                r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_CHUNK);
+                if (r == -EPIPE)
+                        return 0;
+                if (r < 0)
+                        return r;
+
+                if (protocol_status_ok(arg_protocol, protocol_status)) {
+                        r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to write chunk: %m");
+                } else {
+                        if (arg_verbose)
+                                log_error("%s server failure %ld while requesting %s",
+                                          protocol_str(arg_protocol), protocol_status,
+                                          url_buffer);
+
+                        r = ca_remote_put_missing(rr, &id);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to write missing message: %m");
+                }
+
+                realloc_buffer_empty(&chunk_buffer);
+
+                r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
+                if (r == -EPIPE)
+                        return 0;
+                if (r < 0)
+                        return r;
+        }
+}
+
 static int run(int argc, char *argv[]) {
         const char *base_url, *archive_url, *index_url, *wstore_url;
         size_t n_stores = 0, current_store = 0;
-        _cleanup_(curl_easy_cleanupp) CURL *curl = NULL;
         _cleanup_(ca_remote_unrefp) CaRemote *rr = NULL;
-        _cleanup_(realloc_buffer_free) ReallocBuffer chunk_buffer = {};
-        _cleanup_free_ char *url_buffer = NULL;
-        long protocol_status;
         int r;
 
         if (argc < _CA_REMOTE_ARG_MAX) {
@@ -574,86 +652,18 @@ static int run(int argc, char *argv[]) {
                         return r;
         }
 
-        for (;;) {
+        if (n_stores > 0) {
                 const char *store_url;
-                CaChunkID id;
-
-                if (quit) {
-                        log_info("Got exit signal, quitting.");
-                        return 0;
-                }
-
-                if (n_stores == 0)  /* No stores? Then we did all we could do */
-                        break;
-
-                if (!curl) {
-                        r = make_curl_easy_handle(&curl, write_chunk, &chunk_buffer, NULL);
-                        if (r < 0)
-                                return r;
-                }
-
-                r = process_remote(rr, PROCESS_UNTIL_HAVE_REQUEST);
-                if (r == -EPIPE)
-                        return 0;
-                if (r < 0)
-                        return r;
-
-                r = ca_remote_next_request(rr, &id);
-                if (r == -ENODATA)
-                        continue;
-                if (r < 0)
-                        return log_error_errno(r, "Failed to determine next chunk to get: %m");
 
                 current_store = current_store % n_stores;
                 if (wstore_url)
-                        store_url = current_store == 0 ? wstore_url : argv[current_store + _CA_REMOTE_ARG_MAX - 1];
+                        store_url = current_store == 0 ? wstore_url :
+                                argv[current_store + _CA_REMOTE_ARG_MAX - 1];
                 else
                         store_url = argv[current_store + _CA_REMOTE_ARG_MAX];
                 /* current_store++; */
 
-                free(url_buffer);
-                url_buffer = chunk_url(store_url, &id);
-                if (!url_buffer)
-                        return log_oom();
-
-                r = configure_curl_easy_handle(curl, url_buffer);
-                if (r < 0)
-                        return r;
-
-                log_debug("Acquiring %s...", url_buffer);
-
-                if (robust_curl_easy_perform(curl) != CURLE_OK)
-                        return log_error_errno(-EIO, "Failed to acquire %s", url_buffer);
-
-                if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK)
-                        return log_error_errno(-EIO, "Failed to query response code");
-
-                r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_CHUNK);
-                if (r == -EPIPE)
-                        return 0;
-                if (r < 0)
-                        return r;
-
-                if (protocol_status_ok(arg_protocol, protocol_status)) {
-                        r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to write chunk: %m");
-                } else {
-                        if (arg_verbose)
-                                log_error("%s server failure %ld while requesting %s",
-                                          protocol_str(arg_protocol), protocol_status,
-                                          url_buffer);
-
-                        r = ca_remote_put_missing(rr, &id);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to write missing message: %m");
-                }
-
-                realloc_buffer_empty(&chunk_buffer);
-
-                r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
-                if (r == -EPIPE)
-                        return 0;
+                r = acquire_chunks(rr, store_url);
                 if (r < 0)
                         return r;
         }
