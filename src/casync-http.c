@@ -15,6 +15,7 @@ static volatile sig_atomic_t quit = false;
 
 static bool arg_verbose = false;
 static curl_off_t arg_rate_limit_bps = 0;
+static bool arg_ssl_trust_peer = false;
 
 typedef enum Protocol {
         PROTOCOL_HTTP,
@@ -161,6 +162,9 @@ static int make_curl_easy_handle(CURL **ret,
 
         if (private)
                 CURL_SETOPT_EASY(h, CURLOPT_PRIVATE, private);
+
+        if (arg_ssl_trust_peer)
+                CURL_SETOPT_EASY(h, CURLOPT_SSL_VERIFYPEER, false);
 
         /* CURL_SETOPT_EASY(h, CURLOPT_VERBOSE, 1L); */
 
@@ -682,12 +686,14 @@ static int parse_argv(int argc, char *argv[]) {
 
         enum {
                 ARG_RATE_LIMIT_BPS = 0x100,
+                ARG_SSL_TRUST_PEER,
         };
 
         static const struct option options[] = {
                 { "help",           no_argument,       NULL, 'h'                },
                 { "verbose",        no_argument,       NULL, 'v'                },
                 { "rate-limit-bps", required_argument, NULL, ARG_RATE_LIMIT_BPS },
+                { "ssl-trust-peer", no_argument,       NULL, ARG_SSL_TRUST_PEER },
                 {}
         };
 
@@ -726,6 +732,10 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_RATE_LIMIT_BPS:
                         arg_rate_limit_bps = strtoll(optarg, NULL, 10);
+                        break;
+
+                case ARG_SSL_TRUST_PEER:
+                        arg_ssl_trust_peer = true;
                         break;
 
                 case '?':
