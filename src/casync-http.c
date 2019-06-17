@@ -16,13 +16,15 @@ static volatile sig_atomic_t quit = false;
 static bool arg_verbose = false;
 static curl_off_t arg_rate_limit_bps = 0;
 
-static enum {
-        ARG_PROTOCOL_HTTP,
-        ARG_PROTOCOL_FTP,
-        ARG_PROTOCOL_HTTPS,
-        ARG_PROTOCOL_SFTP,
-        _ARG_PROTOCOL_INVALID = -1,
-} arg_protocol = _ARG_PROTOCOL_INVALID;
+typedef enum Protocol {
+        PROTOCOL_HTTP,
+        PROTOCOL_FTP,
+        PROTOCOL_HTTPS,
+        PROTOCOL_SFTP,
+        _PROTOCOL_INVALID = -1,
+} Protocol;
+
+static Protocol arg_protocol = _PROTOCOL_INVALID;
 
 typedef enum ProcessUntil {
         PROCESS_UNTIL_WRITTEN,
@@ -326,7 +328,7 @@ static int acquire_file(CaRemote *rr,
                 return -EIO;
         }
 
-        if (IN_SET(arg_protocol, ARG_PROTOCOL_HTTP, ARG_PROTOCOL_HTTPS) && protocol_status != 200) {
+        if (IN_SET(arg_protocol, PROTOCOL_HTTP, PROTOCOL_HTTPS) && protocol_status != 200) {
                 char *m;
 
                 if (arg_verbose)
@@ -340,7 +342,7 @@ static int acquire_file(CaRemote *rr,
 
                 return 0;
 
-        } else if (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status < 200 || protocol_status > 299)) {
+        } else if (arg_protocol == PROTOCOL_FTP && (protocol_status < 200 || protocol_status > 299)) {
                 char *m;
 
                 if (arg_verbose)
@@ -352,7 +354,7 @@ static int acquire_file(CaRemote *rr,
                 (void) ca_remote_abort(rr, EBADR, m);
                 free(m);
                 return 0;
-        } else if (arg_protocol == ARG_PROTOCOL_SFTP && (protocol_status != 0)) {
+        } else if (arg_protocol == PROTOCOL_SFTP && (protocol_status != 0)) {
                 char *m;
 
                 if (arg_verbose)
@@ -436,14 +438,14 @@ static int run(int argc, char *argv[]) {
                 goto finish;
         }
 
-        if (curl_easy_setopt(curl, CURLOPT_PROTOCOLS, arg_protocol == ARG_PROTOCOL_FTP ? CURLPROTO_FTP :
-                                                      arg_protocol == ARG_PROTOCOL_SFTP? CURLPROTO_SFTP: CURLPROTO_HTTP|CURLPROTO_HTTPS) != CURLE_OK) {
+        if (curl_easy_setopt(curl, CURLOPT_PROTOCOLS, arg_protocol == PROTOCOL_FTP ? CURLPROTO_FTP :
+                                                      arg_protocol == PROTOCOL_SFTP? CURLPROTO_SFTP: CURLPROTO_HTTP|CURLPROTO_HTTPS) != CURLE_OK) {
                 log_error("Failed to limit protocols to HTTP/HTTPS/FTP/SFTP.");
                 r = -EIO;
                 goto finish;
         }
 
-        if (arg_protocol == ARG_PROTOCOL_SFTP) {
+        if (arg_protocol == PROTOCOL_SFTP) {
                 /* activate the ssh agent. For this to work you need
                    to have ssh-agent running (type set | grep SSH_AGENT to check) */
                 if (curl_easy_setopt(curl, CURLOPT_SSH_AUTH_TYPES, CURLSSH_AUTH_AGENT) != CURLE_OK)
@@ -587,9 +589,9 @@ static int run(int argc, char *argv[]) {
                 if (r < 0)
                         goto finish;
 
-                if ((IN_SET(arg_protocol, ARG_PROTOCOL_HTTP, ARG_PROTOCOL_HTTPS) && protocol_status == 200) ||
-                    (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status >= 200 && protocol_status <= 299))||
-                    (arg_protocol == ARG_PROTOCOL_SFTP && (protocol_status == 0))) {
+                if ((IN_SET(arg_protocol, PROTOCOL_HTTP, PROTOCOL_HTTPS) && protocol_status == 200) ||
+                    (arg_protocol == PROTOCOL_FTP && (protocol_status >= 200 && protocol_status <= 299))||
+                    (arg_protocol == PROTOCOL_SFTP && (protocol_status == 0))) {
 
                         r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
                         if (r < 0) {
@@ -648,13 +650,13 @@ static int parse_argv(int argc, char *argv[]) {
         assert(argv);
 
         if (strstr(argv[0], "https"))
-                arg_protocol = ARG_PROTOCOL_HTTPS;
+                arg_protocol = PROTOCOL_HTTPS;
         else if (strstr(argv[0], "http"))
-                arg_protocol = ARG_PROTOCOL_HTTP;
+                arg_protocol = PROTOCOL_HTTP;
         else if (strstr(argv[0], "sftp"))
-                arg_protocol = ARG_PROTOCOL_SFTP;
+                arg_protocol = PROTOCOL_SFTP;
         else if (strstr(argv[0], "ftp"))
-                arg_protocol = ARG_PROTOCOL_FTP;
+                arg_protocol = PROTOCOL_FTP;
         else {
                 log_error("Failed to determine set of protocols to use, refusing.");
                 return -EINVAL;
