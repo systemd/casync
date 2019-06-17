@@ -2,13 +2,16 @@
 
 #include <curl/curl.h>
 #include <getopt.h>
+#include <poll.h>
 #include <stddef.h>
+#include <unistd.h>
 
 #include "caprotocol.h"
 #include "caremote.h"
 #include "cautil.h"
 #include "realloc-buffer.h"
 #include "util.h"
+#include "list.h"
 
 static volatile sig_atomic_t quit = false;
 
@@ -81,9 +84,13 @@ static bool protocol_status_ok(Protocol protocol, long protocol_status) {
  */
 
 DEFINE_TRIVIAL_CLEANUP_FUNC(CURL*, curl_easy_cleanup);
+DEFINE_TRIVIAL_CLEANUP_FUNC(CURLM*, curl_multi_cleanup);
 
 #define log_error_curle(code, fmt, ...)                                 \
         log_error_errno(-EIO, fmt ": %s", ##__VA_ARGS__, curl_easy_strerror(code))
+
+#define log_error_curlm(code, fmt, ...)                                 \
+        log_error_errno(-EIO, fmt ": %s", ##__VA_ARGS__, curl_multi_strerror(code))
 
 #define CURL_SETOPT_EASY(handle, option, value)                         \
         ({                                                              \
@@ -101,6 +108,22 @@ DEFINE_TRIVIAL_CLEANUP_FUNC(CURL*, curl_easy_cleanup);
                         log_error_curle(_c, "Failed to set " #option);  \
         })
 
+#define CURL_SETOPT_MULTI(handle, option, value)                        \
+        ({                                                              \
+                CURLMcode _c;                                           \
+                _c = curl_multi_setopt(handle, option, (value));        \
+                if (_c != CURLM_OK)                                     \
+                        return log_error_curlm(_c, "Failed to set " #option); \
+        })
+
+#define CURL_SETOPT_MULTI_CANFAIL(handle, option, value)                \
+        ({                                                              \
+                CURLMcode _c;                                           \
+                _c = curl_multi_setopt(handle, option, (value));        \
+                if (_c != CURLM_OK)                                     \
+                        log_error_curlm(_c, "Failed to set " #option);  \
+        })
+
 static inline const char *get_curl_effective_url(CURL *handle) {
         CURLcode c;
         char *effective_url;
@@ -112,6 +135,19 @@ static inline const char *get_curl_effective_url(CURL *handle) {
         }
 
         return effective_url;
+}
+
+static inline void *get_curl_private(CURL *handle) {
+        CURLcode c;
+        void *private;
+
+        c = curl_easy_getinfo(handle, CURLINFO_PRIVATE, &private);
+        if (c != CURLE_OK) {
+                log_error_curle(c, "Failed to get CURLINFO_PRIVATE");
+                return NULL;
+        }
+
+        return private;
 }
 
 static int configure_curl_easy_handle(CURL *handle, const char *url) {
@@ -145,10 +181,13 @@ static int make_curl_easy_handle(CURL **ret,
                          arg_protocol == PROTOCOL_SFTP ? CURLPROTO_SFTP :
                          CURLPROTO_HTTP | CURLPROTO_HTTPS);
 
-        if (arg_protocol == PROTOCOL_SFTP) {
-                /* activate the ssh agent. For this to work you need
-                   to have ssh-agent running (type set | grep SSH_AGENT to check) */
+        if (arg_protocol == PROTOCOL_SFTP)
                 CURL_SETOPT_EASY_CANFAIL(h, CURLOPT_SSH_AUTH_TYPES, CURLSSH_AUTH_AGENT);
+
+        if (IN_SET(arg_protocol, PROTOCOL_HTTP, PROTOCOL_HTTPS)) {
+                /* Default since libcurl 7.62.0 */
+                CURL_SETOPT_EASY_CANFAIL(h, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+                CURL_SETOPT_EASY_CANFAIL(h, CURLOPT_PIPEWAIT, 1l);
         }
 
         if (arg_rate_limit_bps > 0) {
@@ -170,6 +209,648 @@ static int make_curl_easy_handle(CURL **ret,
         *ret = TAKE_PTR(h);
         return 0;
 }
+
+static int make_curl_multi_handle(CURLM **ret) {
+        _cleanup_(curl_multi_cleanup) CURLM *h = NULL;
+
+        assert(ret);
+
+        h = curl_multi_init();
+        if (!h)
+                return log_oom();
+
+        /* Default since libcurl 7.62.0 */
+        CURL_SETOPT_MULTI_CANFAIL(h, CURLMOPT_PIPELINING, CURLPIPE_MULTIPLEX);
+
+        *ret = TAKE_PTR(h);
+        return 0;
+}
+
+/*
+ * chunks data
+ */
+
+typedef struct ChunkData ChunkData;
+
+struct ChunkData {
+        size_t current_store;  /* set to SIZE_MAX if chunk is missing */
+        CaChunkID id;
+        ReallocBuffer buffer;
+};
+
+static void chunk_data_reset(ChunkData *cd, CaChunkID *id) {
+        assert(cd);
+
+        cd->id = *id;
+        realloc_buffer_empty(&cd->buffer);
+}
+
+static void chunk_data_free(ChunkData *cd) {
+        if (!cd)
+                return;
+
+        realloc_buffer_free(&cd->buffer);
+        free(cd);
+}
+
+static ChunkData *chunk_data_new(void) {
+        ChunkData *cd = NULL;
+
+        cd = new0(ChunkData, 1);
+
+        return cd;
+}
+
+/*
+ * simple queue implementation
+ */
+
+typedef struct QueueItem QueueItem;
+
+struct QueueItem {
+        void *data;
+        LIST_FIELDS(QueueItem, list);
+};
+
+typedef struct Queue {
+        LIST_HEAD(QueueItem, head);
+} Queue;
+
+static int queue_push(Queue *q, void *data) {
+        int r;
+        QueueItem *qi;
+
+        assert(q);
+        assert(data);
+
+        qi = new0(QueueItem, 1);
+        if (!qi) {
+                r = log_oom();
+                return r;
+        }
+
+        qi->data = data;
+        LIST_INIT(list, qi);
+        LIST_APPEND(list, q->head, qi);
+
+        return 0;
+}
+
+static void *queue_pop(Queue *q) {
+        QueueItem *qi;
+        void *data;
+
+        assert(q);
+
+        qi = q->head;
+        if (!qi)
+                return NULL;
+
+        LIST_REMOVE(list, q->head, q->head);
+        data = qi->data;
+        free(qi);
+
+        return data;
+}
+
+static void *queue_remove(Queue *q, void *data) {
+        QueueItem *i, *n;
+
+        assert(q);
+
+        LIST_FOREACH_SAFE(list, i, n, q->head) {
+                if (i->data == data)
+                        break;
+        }
+
+        if (!i)
+                return NULL;
+
+        LIST_REMOVE(list, q->head, i);
+        free(i);
+
+        return data;
+}
+
+static bool queue_is_empty(Queue *q) {
+        assert(q);
+
+        return LIST_IS_EMPTY(q->head);
+}
+
+static void queue_free(Queue *q) {
+        QueueItem *i, *n;
+
+        if (q == NULL)
+                return;
+
+        LIST_FOREACH_SAFE(list, i, n, q->head) {
+                free(i);
+        }
+
+        free(q);
+}
+
+static Queue *queue_new(void) {
+        Queue *q;
+
+        q = new0(Queue, 1);
+        if (!q)
+                return NULL;
+
+        LIST_HEAD_INIT(q->head);
+        return q;
+}
+
+/*
+ * Chunk Downloader
+ *
+ * We re-use things as much as possible, which means that:
+ * - CURL handles are allocated once at the beginning, then re-used all along.
+ * - ChunkData objects (ie. ReallocBuffer) as well.
+ *
+ * During operations, our CURL handles move from one queue to another, ie:
+ *   ready -> inprogress -> completed -> ready ...
+ */
+
+typedef struct CaChunkDownloader CaChunkDownloader;
+
+struct CaChunkDownloader {
+        CaRemote *remote;
+        CURLM *multi;
+        Queue *ready;       /* CURL handles waiting to be used */
+        Queue *inprogress;  /* CURL handles in use (ie. added to curl multi) */
+        Queue *completed;   /* CURL handles completed (ie. chunks waiting to be put to remote */
+
+        char *store_url;
+};
+
+enum {
+      CA_CHUNK_DOWNLOADER_FINISHED,
+      CA_CHUNK_DOWNLOADER_POLL
+};
+
+static char *chunk_url(const char *store_url, const CaChunkID *id) {
+        char ids[CA_CHUNK_ID_FORMAT_MAX], *buffer;
+        const char *suffix;
+        size_t n;
+
+        /* Chop off URL arguments and multiple trailing dashes, then append the chunk ID and ".cacnk" */
+
+        suffix = ca_compressed_chunk_suffix();
+
+        n = strcspn(store_url, "?;");
+        while (n > 0 && store_url[n-1] == '/')
+                n--;
+
+        buffer = new(char, n + 1 + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX-1 + strlen(suffix) + 1);
+        if (!buffer)
+                return NULL;
+
+        ca_chunk_id_format(id, ids);
+
+        strcpy(mempcpy(mempcpy(mempcpy(mempcpy(mempcpy(buffer, store_url, n), "/", 1), ids, 4), "/", 1), ids, CA_CHUNK_ID_FORMAT_MAX-1), suffix);
+
+        return buffer;
+}
+
+static size_t write_chunk(const void *buffer, size_t size, size_t nmemb, void *userdata) {
+        ReallocBuffer *chunk_buffer = userdata;
+        size_t product, z;
+
+        product = size * nmemb;
+
+        z = realloc_buffer_size(chunk_buffer) + product;
+        if (z < realloc_buffer_size(chunk_buffer)) {
+                log_error("Overflow");
+                return 0;
+        }
+
+        if (z > CA_PROTOCOL_SIZE_MAX - offsetof(CaProtocolChunk, data)) {
+                log_error("Chunk too large");
+                return 0;
+        }
+
+        if (!realloc_buffer_append(chunk_buffer, buffer, product)) {
+                log_oom();
+                return 0;
+        }
+
+        return product;
+}
+
+static void ca_chunk_downloader_free(CaChunkDownloader *dl) {
+        CURL *handle;
+
+        if (dl == NULL)
+                return;
+
+        while ((handle = queue_pop(dl->inprogress))) {
+                CURLMcode c;
+
+                c = curl_multi_remove_handle(dl->multi, handle);
+                if (c != CURLM_OK)
+                        log_error_curlm(c, "Failed to remove handle");
+
+                chunk_data_free(get_curl_private(handle));
+                curl_easy_cleanup(handle);
+        }
+
+        while ((handle = queue_pop(dl->ready))) {
+                chunk_data_free(get_curl_private(handle));
+                curl_easy_cleanup(handle);
+        }
+
+        while ((handle = queue_pop(dl->completed))) {
+                chunk_data_free(get_curl_private(handle));
+                curl_easy_cleanup(handle);
+        }
+
+        free(dl->store_url);
+        queue_free(dl->ready);
+        queue_free(dl->inprogress);
+        queue_free(dl->completed);
+        curl_multi_cleanup(dl->multi);
+        ca_remote_unref(dl->remote);
+
+        free(dl);
+}
+
+DEFINE_TRIVIAL_CLEANUP_FUNC(CaChunkDownloader*, ca_chunk_downloader_free);
+
+static CaChunkDownloader *ca_chunk_downloader_new(CaRemote *rr, const char *store_url) {
+        CaChunkDownloader *dl = NULL;
+        uint64_t i;
+        int r;
+
+        dl = new0(CaChunkDownloader, 1);
+        if (!dl)
+                goto fail;
+
+        dl->remote = ca_remote_ref(rr);
+
+        r = make_curl_multi_handle(&dl->multi);
+        if (r < 0)
+                goto fail;
+
+        dl->ready = queue_new();
+        if (!dl->ready)
+                goto fail;
+
+        dl->inprogress = queue_new();
+        if (!dl->inprogress)
+                goto fail;
+
+        dl->completed = queue_new();
+        if (!dl->completed)
+                goto fail;
+
+        for (i = 0; i < 64; i++) {
+                CURL *handle = NULL;
+                ChunkData *cd = NULL;
+
+                cd = chunk_data_new();
+                if (!cd)
+                        goto fail;
+
+                r = make_curl_easy_handle(&handle, write_chunk, &cd->buffer, cd);
+                if (r < 0)
+                        goto fail;
+
+                queue_push(dl->ready, handle);
+        }
+
+        dl->store_url = strdup(store_url);
+        if (!dl->store_url)
+                goto fail;
+
+        return dl;
+
+fail:
+        ca_chunk_downloader_free(dl);
+        return NULL;
+}
+
+static int configure_handle_for_chunk(CURL *handle, const char *store_url, CaChunkID *id) {
+        int r;
+        ChunkData *cd = NULL;
+        _cleanup_free_ char *url_buffer = NULL;
+
+        cd = get_curl_private(handle);
+        if (!cd)
+                return -EIO;
+
+        chunk_data_reset(cd, id);
+
+        url_buffer = chunk_url(store_url, id);
+        if (!url_buffer)
+                return log_oom();
+
+        r = configure_curl_easy_handle(handle, url_buffer);
+        if (r < 0)
+                return r;
+
+        return 0;
+}
+
+/* Get chunk requests from remote, configure curl handles accordingly,
+ * add to curl multi, and return the number of chunk requests handled. */
+static int ca_chunk_downloader_fetch_chunk_requests(CaChunkDownloader *dl) {
+        QueueItem *i, *n;
+        int num = 0;
+
+        LIST_FOREACH_SAFE(list, i, n, dl->ready->head) {
+                int r;
+                CURLMcode c;
+                CaChunkID id;
+                CURL *handle;
+
+                r = ca_remote_has_pending_requests(dl->remote);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to query pending requests: %m");
+                if (r == 0)
+                        break;
+
+                r = ca_remote_next_request(dl->remote, &id);
+                /* Even though we just ensured that there is a pending request,
+                 * it's possible that next_requests() returns -ENODATA */
+                if (r == -ENODATA)
+                        return 0;
+                if (r == -EPIPE)
+                        return r;
+                if (r < 0)
+                        return log_error_errno(r, "Failed to query next request: %m");
+
+                handle = queue_pop(dl->ready);
+                assert(handle);
+
+                r = configure_handle_for_chunk(handle, dl->store_url, &id);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to configure handle: %m");
+
+                log_debug("Acquiring chunk %s", get_curl_effective_url(handle));
+
+                c = curl_multi_add_handle(dl->multi, handle);
+                if (c != CURLM_OK)
+                        return log_error_curlm(c, "Failed to add to multi handle");
+
+                queue_push(dl->inprogress, handle);
+                num++;
+        }
+
+        return num;
+}
+
+/* Do the communication with the remote, return a status code */
+static int ca_chunk_downloader_remote_step(CaChunkDownloader *dl) {
+        for (;;) {
+                int r;
+
+                r = ca_remote_step(dl->remote);
+                if (r == -EPIPE)
+                        return r;
+                if (r < 0)
+                        return log_error_errno(r, "Failed to process remoting engine: %m");
+
+                switch (r) {
+                case CA_REMOTE_POLL:
+                        return CA_CHUNK_DOWNLOADER_POLL;
+                case CA_REMOTE_FINISHED:
+                        return CA_CHUNK_DOWNLOADER_FINISHED;
+                case CA_REMOTE_STEP:
+                case CA_REMOTE_REQUEST:
+                        continue;
+                default:
+                        assert_not_reached("Unexpected step returned by remote_step()");
+                        break;
+                }
+        }
+
+        assert_not_reached("Should have returned");
+}
+
+/* Put chunk requests to the remote, return the number of chunks put */
+static int ca_chunk_downloader_put_chunks(CaChunkDownloader *dl) {
+        int i;
+
+        for (i = 0; ; i++) {
+                int r;
+                CURL *handle;
+                ChunkData *cd = NULL;
+
+                if (queue_is_empty(dl->completed))
+                        break;
+
+                r = ca_remote_can_put_chunk(dl->remote);
+                if (r == 0)
+                        break;
+                if (r == -EPIPE)
+                        return r;
+                if (r < 0)
+                        return log_error_errno(r, "Failed to query can put chunk: %m");
+
+                handle = queue_pop(dl->completed);
+                assert(handle);
+
+                cd = get_curl_private(handle);
+                if (!cd)
+                        return -EIO;
+
+                if (cd->current_store == SIZE_MAX) {
+                        r = ca_remote_put_missing(dl->remote, &cd->id);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to write missing message: %m");
+                } else {
+                        r = ca_remote_put_chunk(dl->remote, &cd->id, CA_CHUNK_COMPRESSED,
+                                                realloc_buffer_data(&cd->buffer),
+                                                realloc_buffer_size(&cd->buffer));
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to write chunk: %m");
+                }
+
+                /* At this point, handle and chunk data are left "unconfigured"
+                 * in the ready queue. They'll be reconfigured when re-used. */
+                queue_push(dl->ready, handle);
+        }
+
+        return i;
+}
+
+/* Process chunks that were downloaded by curl, return the number of chunks handled */
+static int ca_chunk_downloader_process_curl_multi(CaChunkDownloader *dl) {
+        int i, n;
+        CURLMcode cm;
+
+        cm = curl_multi_perform(dl->multi, &n);
+        if (cm != CURLM_OK)
+                return log_error_curlm(cm, "Failed to perform curl multi");
+
+        for (i = 0; ; i++) {
+                CURLcode c;
+                CURLMsg *msg;
+                CURL *handle;
+                long protocol_status;
+                const char *effective_url;
+                ChunkData *cd;
+
+                msg = curl_multi_info_read(dl->multi, &n);
+                if (!msg)
+                        break;
+
+                if (msg->msg != CURLMSG_DONE) {
+                        log_error("Unexpected CURL message: %d", msg->msg);
+                        return -EIO;
+                }
+
+                if (msg->data.result != CURLE_OK)
+                        return log_error_curle(msg->data.result, "Failed to acquire chunk");
+
+                handle = msg->easy_handle;
+
+                effective_url = get_curl_effective_url(handle);
+                if (!effective_url)
+                        return -EIO;
+
+                cd = get_curl_private(handle);
+                if (!cd)
+                        return -EIO;
+
+                c = curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &protocol_status);
+                if (c != CURLE_OK)
+                        return log_error_curle(c, "Failed to query response code");
+
+                if (!protocol_status_ok(arg_protocol, protocol_status)) {
+                        log_error("%s server failure %ld while requesting %s",
+                                  protocol_str(arg_protocol), protocol_status,
+                                  effective_url);
+
+                        /* No more stores? Set current_store to a special value
+                         * to indicate failure. */
+                        cd->current_store = SIZE_MAX;
+                }
+
+                cm = curl_multi_remove_handle(dl->multi, handle);
+                if (cm != CURLM_OK)
+                        return log_error_curlm(cm, "Failed to remove curl handle");
+
+                queue_remove(dl->inprogress, handle);
+                queue_push(dl->completed, handle);
+        }
+
+        return i;
+}
+
+static int ca_chunk_downloader_step(CaChunkDownloader *dl) {
+        int r;
+
+        /* Handle curl activity */
+        r = ca_chunk_downloader_process_curl_multi(dl);
+        if (r < 0)
+                return log_error_errno(r, "Failed while processing curl multi: %m");
+
+        /* Step around */
+        r = ca_chunk_downloader_remote_step(dl);
+        if (r == -EPIPE)
+                return r;
+        if (r < 0)
+                return log_error_errno(r, "Failed while processing remote engine: %m");
+        if (r != CA_CHUNK_DOWNLOADER_POLL)
+                return r;
+
+        /* Put as many downloaded chunks as we can */
+        r = ca_chunk_downloader_put_chunks(dl);
+        if (r == -EPIPE)
+                return r;
+        if (r < 0)
+                return log_error_errno(r, "Failed while putting chunks to remote: %m");
+
+        /* Get as many chunk requests as we can */
+        r = ca_chunk_downloader_fetch_chunk_requests(dl);
+        if (r == -EPIPE)
+                return r;
+        if (r < 0)
+                return log_error_errno(r, "Failed while querying remote for chunk requests: %m");
+
+        return CA_CHUNK_DOWNLOADER_POLL;
+}
+
+static int get_remote_io_as_curl_waitfds(CaRemote *rr, struct curl_waitfd *ret_input,
+                                         struct curl_waitfd *ret_output) {
+        int r;
+        int input_fd, output_fd;
+        short input_poll_events, output_poll_events;
+        short input_curl_events, output_curl_events;
+
+        assert(rr);
+        assert(ret_input);
+        assert(ret_output);
+
+        r = ca_remote_get_io_fds(rr, &input_fd, &output_fd);
+        if (r < 0)
+                return r;
+
+        r = ca_remote_get_io_events(rr, &input_poll_events, &output_poll_events);
+        if (r < 0)
+                return r;
+
+        input_curl_events = input_poll_events & POLLIN ? CURL_WAIT_POLLIN : 0;
+        output_curl_events = output_poll_events & POLLOUT ? CURL_WAIT_POLLOUT : 0;
+
+        *ret_input = (struct curl_waitfd) {
+                .fd = input_fd,
+                .events = input_curl_events,
+        };
+
+        *ret_output = (struct curl_waitfd) {
+                .fd = output_fd,
+                .events = output_curl_events,
+
+        };
+
+        return 0;
+}
+
+static int ca_chunk_downloader_wait(CaChunkDownloader *dl) {
+        int n, r;
+        CURLMcode c;
+        int curl_timeout_ms = INT_MAX;
+        struct curl_waitfd waitfds[2] = {};
+
+        r = get_remote_io_as_curl_waitfds(dl->remote, &waitfds[0], &waitfds[1]);
+        if (r < 0)
+                return log_error_errno(r, "Failed to get remote io: %m");
+
+        c = curl_multi_wait(dl->multi, waitfds, ELEMENTSOF(waitfds), curl_timeout_ms, &n);
+        if (c != CURLM_OK)
+                return log_error_curlm(c, "Failed to wait with curl multi");
+
+        return 0;
+}
+
+static int download_chunks(CaChunkDownloader *dl) {
+        for (;;) {
+                int r;
+
+                if (quit) {
+                        log_info("Got exit signal, quitting");
+                        return 0;
+                }
+
+                r = ca_chunk_downloader_step(dl);
+                if (r < 0)
+                        return r;
+                if (r == CA_CHUNK_DOWNLOADER_FINISHED)
+                        return 0;
+
+                r = ca_chunk_downloader_wait(dl);
+                if (r < 0)
+                        return r;
+        }
+}
+
+/*
+ * archive/index download
+ */
 
 static int process_remote(CaRemote *rr, ProcessUntil until) {
         int r;
@@ -354,55 +1035,6 @@ static int write_archive_eof(CaRemote *rr) {
         return 0;
 }
 
-static size_t write_chunk(const void *buffer, size_t size, size_t nmemb, void *userdata) {
-        ReallocBuffer *chunk_buffer = userdata;
-        size_t product, z;
-
-        product = size * nmemb;
-
-        z = realloc_buffer_size(chunk_buffer) + product;
-        if (z < realloc_buffer_size(chunk_buffer)) {
-                log_error("Overflow");
-                return 0;
-        }
-
-        if (z > (CA_PROTOCOL_SIZE_MAX - offsetof(CaProtocolChunk, data))) {
-                log_error("Chunk too large");
-                return 0;
-        }
-
-        if (!realloc_buffer_append(chunk_buffer, buffer, product)) {
-                log_oom();
-                return 0;
-        }
-
-        return product;
-}
-
-static char *chunk_url(const char *store_url, const CaChunkID *id) {
-        char ids[CA_CHUNK_ID_FORMAT_MAX], *buffer;
-        const char *suffix;
-        size_t n;
-
-        /* Chop off URL arguments and multiple trailing dashes, then append the chunk ID and ".cacnk" */
-
-        suffix = ca_compressed_chunk_suffix();
-
-        n = strcspn(store_url, "?;");
-        while (n > 0 && store_url[n-1] == '/')
-                n--;
-
-        buffer = new(char, n + 1 + 4 + 1 + CA_CHUNK_ID_FORMAT_MAX-1 + strlen(suffix) + 1);
-        if (!buffer)
-                return NULL;
-
-        ca_chunk_id_format(id, ids);
-
-        strcpy(mempcpy(mempcpy(mempcpy(mempcpy(mempcpy(buffer, store_url, n), "/", 1), ids, 4), "/", 1), ids, CA_CHUNK_ID_FORMAT_MAX-1), suffix);
-
-        return buffer;
-}
-
 static int acquire_file(CaRemote *rr, CURL *handle) {
         CURLcode c;
         long protocol_status;
@@ -443,88 +1075,6 @@ static int acquire_file(CaRemote *rr, CURL *handle) {
         }
 
         return 1;
-}
-
-static int acquire_chunks(CaRemote *rr, const char *store_url) {
-        _cleanup_free_ char *url_buffer = NULL;
-        _cleanup_(curl_easy_cleanupp) CURL *curl = NULL;
-        _cleanup_(realloc_buffer_free) ReallocBuffer chunk_buffer = {};
-        int r;
-
-        r = make_curl_easy_handle(&curl, write_chunk, &chunk_buffer, NULL);
-        if (r < 0)
-                return r;
-
-        for (;;) {
-                CURLcode c;
-                CaChunkID id;
-                long protocol_status;
-
-                if (quit) {
-                        log_info("Got exit signal, quitting.");
-                        return 0;
-                }
-
-                r = process_remote(rr, PROCESS_UNTIL_HAVE_REQUEST);
-                if (r == -EPIPE)
-                        return 0;
-                if (r < 0)
-                        return r;
-
-                r = ca_remote_next_request(rr, &id);
-                if (r == -ENODATA)
-                        continue;
-                if (r < 0)
-                        return log_error_errno(r, "Failed to determine next chunk to get: %m");
-
-                free(url_buffer);
-                url_buffer = chunk_url(store_url, &id);
-                if (!url_buffer)
-                        return log_oom();
-
-                r = configure_curl_easy_handle(curl, url_buffer);
-                if (r < 0)
-                        return r;
-
-                log_debug("Acquiring %s...", url_buffer);
-
-                c = curl_easy_perform(curl);
-                if (c != CURLE_OK)
-                        return log_error_curle(c, "Failed to acquire %s", url_buffer);
-
-                c = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status);
-                if (c != CURLE_OK)
-                        return log_error_curle(c, "Failed to query response code");
-
-                r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_CHUNK);
-                if (r == -EPIPE)
-                        return 0;
-                if (r < 0)
-                        return r;
-
-                if (protocol_status_ok(arg_protocol, protocol_status)) {
-                        r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to write chunk: %m");
-                } else {
-                        if (arg_verbose)
-                                log_error("%s server failure %ld while requesting %s",
-                                          protocol_str(arg_protocol), protocol_status,
-                                          url_buffer);
-
-                        r = ca_remote_put_missing(rr, &id);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to write missing message: %m");
-                }
-
-                realloc_buffer_empty(&chunk_buffer);
-
-                r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
-                if (r == -EPIPE)
-                        return 0;
-                if (r < 0)
-                        return r;
-        }
 }
 
 static int run(int argc, char *argv[]) {
@@ -617,17 +1167,23 @@ static int run(int argc, char *argv[]) {
         }
 
         if (n_stores > 0) {
+                _cleanup_(ca_chunk_downloader_freep) CaChunkDownloader *dl = NULL;
                 const char *store_url;
 
                 current_store = current_store % n_stores;
                 if (wstore_url)
-                        store_url = current_store == 0 ? wstore_url :
-                                argv[current_store + _CA_REMOTE_ARG_MAX - 1];
+                        store_url = current_store == 0 ? wstore_url : argv[current_store + _CA_REMOTE_ARG_MAX - 1];
                 else
                         store_url = argv[current_store + _CA_REMOTE_ARG_MAX];
                 /* current_store++; */
 
-                r = acquire_chunks(rr, store_url);
+                dl = ca_chunk_downloader_new(rr, store_url);
+                if (!dl)
+                        return log_oom();
+
+                r = download_chunks(dl);
+                if (r == -EPIPE)
+                        return 0;
                 if (r < 0)
                         return r;
         }
