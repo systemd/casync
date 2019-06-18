@@ -10,8 +10,8 @@ Synopsis
 
 | **casync** [*OPTIONS*...] make [*ARCHIVE* | *ARCHIVE_INDEX* | *BLOB_INDEX*] [*PATH*]
 | **casync** [*OPTIONS*...] extract [*ARCHIVE* | *ARCHIVE_INDEX* | *BLOB_INDEX*] [*PATH*]
-| **casync** [*OPTIONS*...] list [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
-| **casync** [*OPTIONS*...] mtree [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
+| **casync** [*OPTIONS*...] list [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
+| **casync** [*OPTIONS*...] mtree [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 | **casync** [*OPTIONS*...] stat [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 | **casync** [*OPTIONS*...] digest [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*]
 | **casync** [*OPTIONS*...] mount [*ARCHIVE* | *ARCHIVE_INDEX*] *PATH*
@@ -55,7 +55,7 @@ The metadata replayed from the archive is controlled by the ``--with-*`` and
 ``--without-*`` options.
 
 |
-| **casync** **list** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
+| **casync** **list** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 
 This will list all the files and directories in the specified .catar
 archive or .caidx index, or the directory. The argument is optional,
@@ -69,7 +69,7 @@ The output includes the permission mask and file names::
   -rw-r--r-- TODO
 
 |
-| **casync** **mtree** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
+| **casync** **mtree** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 
 This is similar to **list**, but includes information about each entry in the
 key=value format defined by BSD mtree(5)::
