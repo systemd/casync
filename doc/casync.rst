@@ -57,9 +57,10 @@ The metadata replayed from the archive is controlled by the ``--with-*`` and
 |
 | **casync** **list** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 
-This will list all the files and directories in the specified .catar
-archive or .caidx index, or the directory. The argument is optional,
-and the current directory will be used by default.
+This will list all the files and directories at *PATH* as found in either
+*ARCHIVE* or *ARCHIVE_INDEX* or underneath *DIRECTORY*. Both arguments are
+optional. The first defaults to the current directory. The second defaults to
+the top-level path of the archive (``/``).
 
 The output includes the permission mask and file names::
 
