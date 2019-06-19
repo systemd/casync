@@ -86,7 +86,7 @@ key=value format defined by BSD mtree(5)::
 This will show detailed information about a file or directory *PATH*, as found
 in either *ARCHIVE* or *ARCHIVE_INDEX* or underneath *DIRECTORY*. Both arguments
 are optional. The first defaults to the current directory, and the second
-the top-level path (``.``).
+the top-level path (``/``).
 
 Example output::
 
