@@ -13,6 +13,7 @@
 
 static volatile sig_atomic_t quit = false;
 
+static int arg_log_level = -1;
 static bool arg_verbose = false;
 static curl_off_t arg_rate_limit_bps = 0;
 
@@ -641,12 +642,13 @@ static int parse_argv(int argc, char *argv[]) {
 
         static const struct option options[] = {
                 { "help",           no_argument,       NULL, 'h'                },
+                { "log-level",      required_argument, NULL, 'l'                },
                 { "verbose",        no_argument,       NULL, 'v'                },
                 { "rate-limit-bps", required_argument, NULL, ARG_RATE_LIMIT_BPS },
                 {}
         };
 
-        int c;
+        int c, r;
 
         assert(argc >= 0);
         assert(argv);
@@ -667,13 +669,22 @@ static int parse_argv(int argc, char *argv[]) {
         if (getenv_bool("CASYNC_VERBOSE") > 0)
                 arg_verbose = true;
 
-        while ((c = getopt_long(argc, argv, "hv", options, NULL)) >= 0) {
+        while ((c = getopt_long(argc, argv, "hl:v", options, NULL)) >= 0) {
 
                 switch (c) {
 
                 case 'h':
                         help();
                         return 0;
+
+                case 'l':
+                        r = set_log_level_from_string(optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse log level \"%s\": %m", optarg);
+
+                        arg_log_level = r;
+
+                        break;
 
                 case 'v':
                         arg_verbose = true;
