@@ -13,7 +13,7 @@ Synopsis
 | **casync** [*OPTIONS*...] list [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 | **casync** [*OPTIONS*...] mtree [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 | **casync** [*OPTIONS*...] stat [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
-| **casync** [*OPTIONS*...] digest [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*]
+| **casync** [*OPTIONS*...] digest [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*] [PATH]
 | **casync** [*OPTIONS*...] mount [*ARCHIVE* | *ARCHIVE_INDEX*] *PATH*
 | **casync** [*OPTIONS*...] mkdev [*BLOB* | *BLOB_INDEX*] [*NODE*]
 | **casync** [*OPTIONS*...] gc *BLOB_INDEX* | *ARCHIVE_INDEX* ...
@@ -101,10 +101,15 @@ Example output::
      Group: zbyszek (1000)
 
 |
-| **casync** **digest** [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*]
+| **casync** **digest** [*BLOB* | *BLOB_INDEX* | *DIRECTORY*]
+| **casync** **digest** *ARCHIVE* | *ARCHIVE_INDEX* [PATH]
 
-This will compute and print the checksum of the argument.
-The argument is optional and defaults to the current directory::
+This will compute and print the checksum of the file or directory, or the given
+*PATH* as found in either *ARCHIVE* or *ARCHIVE_INDEX*. Both arguments are
+optional. The first default to the current directory. The second defaults to
+the top-level path of the archive (``/``).
+
+Example::
 
   $ casync digest
   d1698b0c4c27163284abea5d1e369b92e89dd07cb74378638849800e0406baf7

@@ -80,7 +80,7 @@ static void help(void) {
                "%1$s [OPTIONS...] list [ARCHIVE|ARCHIVE_INDEX|DIRECTORY] [PATH]\n"
                "%1$s [OPTIONS...] mtree [ARCHIVE|ARCHIVE_INDEX|DIRECTORY] [PATH]\n"
                "%1$s [OPTIONS...] stat [ARCHIVE|ARCHIVE_INDEX|DIRECTORY] [PATH]\n"
-               "%1$s [OPTIONS...] digest [ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY]\n"
+               "%1$s [OPTIONS...] digest [ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY] [PATH]\n"
 #if HAVE_FUSE
                "%1$s [OPTIONS...] mount [ARCHIVE|ARCHIVE_INDEX] PATH\n"
 #endif
@@ -2449,7 +2449,7 @@ static int verb_digest(int argc, char *argv[]) {
         else if (arg_what == WHAT_DIRECTORY)
                 operation = DIGEST_DIRECTORY;
         else if (arg_what != _WHAT_INVALID) {
-                log_error("\"make\" operation may only be combined with --what=archive, --what=blob, --what=archive-index, --what=blob-index or --what=directory.");
+                log_error("\"digest\" operation may only be combined with --what=archive, --what=blob, --what=archive-index, --what=blob-index or --what=directory.");
                 return -EINVAL;
         }
 
