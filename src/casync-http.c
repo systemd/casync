@@ -465,7 +465,11 @@ static int run(int argc, char *argv[]) {
                 }
         }
 
-        /* (void) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L); */
+        if (curl_easy_setopt(curl, CURLOPT_VERBOSE, arg_log_level > 4)) {
+                log_error("Failed to set CURL verbosity.");
+                r = -EIO;
+                goto finish;
+        }
 
         if (archive_url) {
                 r = acquire_file(rr, curl, archive_url, write_archive);
@@ -564,6 +568,12 @@ static int run(int argc, char *argv[]) {
                                 r = -EIO;
                                 goto finish;
                         }
+                }
+
+                if (curl_easy_setopt(curl, CURLOPT_VERBOSE, arg_log_level > 4)) {
+                        log_error("Failed to set CURL verbosity.");
+                        r = -EIO;
+                        goto finish;
                 }
 
                 log_debug("Acquiring %s...", url_buffer);
