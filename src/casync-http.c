@@ -291,13 +291,14 @@ static char *chunk_url(const char *store_url, const CaChunkID *id) {
 static int acquire_file(CaRemote *rr,
                         CURL *curl,
                         const char *url,
-                        size_t (*callback)(const void *p, size_t size, size_t nmemb, void *userdata)) {
-
+                        size_t (*callback)(const void *p, size_t size, size_t nmemb, void *userdata),
+                        void *userdata) {
         long protocol_status;
 
         assert(curl);
         assert(url);
         assert(callback);
+        assert(userdata);
 
         if (curl_easy_setopt(curl, CURLOPT_URL, url) != CURLE_OK) {
                 log_error("Failed to set CURL URL to: %s", url);
@@ -309,7 +310,7 @@ static int acquire_file(CaRemote *rr,
                 return -EIO;
         }
 
-        if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, rr) != CURLE_OK) {
+        if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, userdata) != CURLE_OK) {
                 log_error("Failed to set CURL private data.");
                 return -EIO;
         }
@@ -467,7 +468,7 @@ static int run(int argc, char *argv[]) {
         /* (void) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L); */
 
         if (archive_url) {
-                r = acquire_file(rr, curl, archive_url, write_archive);
+                r = acquire_file(rr, curl, archive_url, write_archive, rr);
                 if (r < 0)
                         goto finish;
                 if (r == 0)
@@ -479,7 +480,7 @@ static int run(int argc, char *argv[]) {
         }
 
         if (index_url) {
-                r = acquire_file(rr, curl, index_url, write_index);
+                r = acquire_file(rr, curl, index_url, write_index, rr);
                 if (r < 0)
                         goto finish;
                 if (r == 0)
