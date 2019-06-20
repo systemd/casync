@@ -205,7 +205,7 @@ static int make_curl_easy_handle(CURL **ret,
         if (arg_ssl_trust_peer)
                 CURL_SETOPT_EASY(h, CURLOPT_SSL_VERIFYPEER, false);
 
-        /* CURL_SETOPT_EASY(h, CURLOPT_VERBOSE, 1L); */
+        CURL_SETOPT_EASY(h, CURLOPT_VERBOSE, arg_log_level > 4);
 
         *ret = TAKE_PTR(h);
         return 0;
