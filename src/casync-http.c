@@ -534,7 +534,7 @@ static int run(int argc, char *argv[]) {
                 }
 
                 if (curl_easy_setopt(curl, CURLOPT_URL, url_buffer) != CURLE_OK) {
-                        log_error("Failed to set CURL URL to: %s", index_url);
+                        log_error("Failed to set CURL URL to: %s", url_buffer);
                         r = -EIO;
                         goto finish;
                 }
