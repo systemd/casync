@@ -315,7 +315,7 @@ static size_t write_index(const void *buffer, size_t size, size_t nmemb, void *u
 
         r = ca_remote_put_index(rr, buffer, product);
         if (r < 0) {
-                log_error("Failed to put index: %m");
+                log_error_errno(r, "Failed to put index: %m");
                 return 0;
         }
 
@@ -359,7 +359,7 @@ static size_t write_archive(const void *buffer, size_t size, size_t nmemb, void 
 
         r = ca_remote_put_archive(rr, buffer, product);
         if (r < 0) {
-                log_error("Failed to put archive: %m");
+                log_error_errno(r, "Failed to put archive: %m");
                 return 0;
         }
 
