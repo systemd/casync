@@ -82,13 +82,32 @@ static bool protocol_status_ok(Protocol protocol, long protocol_status) {
 
 DEFINE_TRIVIAL_CLEANUP_FUNC(CURL*, curl_easy_cleanup);
 
+#define log_error_curle(code, fmt, ...)                                 \
+        log_error_errno(-EIO, fmt ": %s", ##__VA_ARGS__, curl_easy_strerror(code))
+
+#define CURL_SETOPT_EASY(handle, option, value)                         \
+        ({                                                              \
+                CURLcode _c;                                            \
+                _c = curl_easy_setopt(handle, option, (value));         \
+                if (_c != CURLE_OK)                                     \
+                        return log_error_curle(_c, "Failed to set " #option); \
+        })
+
+#define CURL_SETOPT_EASY_CANFAIL(handle, option, value)                 \
+        ({                                                              \
+                CURLcode _c;                                            \
+                _c = curl_easy_setopt(handle, option, (value));         \
+                if (_c != CURLE_OK)                                     \
+                        log_error_curle(_c, "Failed to set " #option);  \
+        })
+
 static inline const char *get_curl_effective_url(CURL *handle) {
         CURLcode c;
         char *effective_url;
 
         c = curl_easy_getinfo(handle, CURLINFO_EFFECTIVE_URL, &effective_url);
         if (c != CURLE_OK) {
-                log_error("Failed to get CURL effective URL.");
+                log_error_curle(c, "Failed to get CURLINFO_EFFECTIVE_URL");
                 return NULL;
         }
 
@@ -99,10 +118,7 @@ static int configure_curl_easy_handle(CURL *handle, const char *url) {
         assert(handle);
         assert(url);
 
-        if (curl_easy_setopt(handle, CURLOPT_URL, url) != CURLE_OK) {
-                log_error("Failed to set CURL URL to: %s", url);
-                return -EIO;
-        }
+        CURL_SETOPT_EASY(handle, CURLOPT_URL, url);
 
         return 0;
 }
@@ -123,55 +139,30 @@ static int make_curl_easy_handle(CURL **ret,
         if (!h)
                 return log_oom();
 
-        if (curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 1L) != CURLE_OK) {
-                log_error("Failed to turn on location following.");
-                return -EIO;
-        }
-
-        if (curl_easy_setopt(h, CURLOPT_PROTOCOLS, arg_protocol == PROTOCOL_FTP ? CURLPROTO_FTP :
-                                                   arg_protocol == PROTOCOL_SFTP ? CURLPROTO_SFTP :
-                                                   CURLPROTO_HTTP | CURLPROTO_HTTPS) != CURLE_OK) {
-                log_error("Failed to limit protocols to HTTP/HTTPS/FTP/SFTP.");
-                return -EIO;
-        }
+        CURL_SETOPT_EASY(h, CURLOPT_FOLLOWLOCATION, 1L);
+        CURL_SETOPT_EASY(h, CURLOPT_PROTOCOLS,
+                         arg_protocol == PROTOCOL_FTP ? CURLPROTO_FTP :
+                         arg_protocol == PROTOCOL_SFTP ? CURLPROTO_SFTP :
+                         CURLPROTO_HTTP | CURLPROTO_HTTPS);
 
         if (arg_protocol == PROTOCOL_SFTP) {
                 /* activate the ssh agent. For this to work you need
                    to have ssh-agent running (type set | grep SSH_AGENT to check) */
-                if (curl_easy_setopt(h, CURLOPT_SSH_AUTH_TYPES, CURLSSH_AUTH_AGENT) != CURLE_OK)
-                        log_error("Failed to turn on ssh agent support, ignoring.");
+                CURL_SETOPT_EASY_CANFAIL(h, CURLOPT_SSH_AUTH_TYPES, CURLSSH_AUTH_AGENT);
         }
 
         if (arg_rate_limit_bps > 0) {
-                if (curl_easy_setopt(h, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                        log_error("Failed to set CURL send speed limit.");
-                        return -EIO;
-                }
-
-                if (curl_easy_setopt(h, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                        log_error("Failed to set CURL receive speed limit.");
-                        return -EIO;
-                }
+                CURL_SETOPT_EASY(h, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps);
+                CURL_SETOPT_EASY(h, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps);
         }
 
-        if (curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, write_callback) != CURLE_OK) {
-                log_error("Failed to set CURL callback function.");
-                return -EIO;
-        }
+        CURL_SETOPT_EASY(h, CURLOPT_WRITEFUNCTION, write_callback);
+        CURL_SETOPT_EASY(h, CURLOPT_WRITEDATA, write_data);
 
-        if (curl_easy_setopt(h, CURLOPT_WRITEDATA, write_data) != CURLE_OK) {
-                log_error("Failed to set CURL callback data.");
-                return -EIO;
-        }
+        if (private)
+                CURL_SETOPT_EASY(h, CURLOPT_PRIVATE, private);
 
-        if (private) {
-                if (curl_easy_setopt(h, CURLOPT_PRIVATE, private) != CURLE_OK) {
-                        log_error("Failed to set CURL private data.");
-                        return -EIO;
-                }
-        }
-
-        /* (void) curl_easy_setopt(h, CURLOPT_VERBOSE, 1L); */
+        /* CURL_SETOPT_EASY(h, CURLOPT_VERBOSE, 1L); */
 
         *ret = TAKE_PTR(h);
         return 0;
