@@ -485,7 +485,7 @@ static int acquire_file(CaRemote *rr, CURL *handle) {
 static int run(int argc, char *argv[]) {
         const char *base_url, *archive_url, *index_url, *wstore_url;
         size_t n_stores = 0, current_store = 0;
-        CURL *curl = NULL;
+        _cleanup_(curl_easy_cleanupp) CURL *curl = NULL;
         _cleanup_(ca_remote_unrefp) CaRemote *rr = NULL;
         _cleanup_(realloc_buffer_free) ReallocBuffer chunk_buffer = {};
         _cleanup_free_ char *url_buffer = NULL;
@@ -517,46 +517,40 @@ static int run(int argc, char *argv[]) {
         }
 
         rr = ca_remote_new();
-        if (!rr) {
-                r = log_oom();
-                goto finish;
-        }
+        if (!rr)
+                return log_oom();
 
         r = ca_remote_set_local_feature_flags(rr,
                                               (n_stores > 0 ? CA_PROTOCOL_READABLE_STORE : 0) |
                                               (index_url ? CA_PROTOCOL_READABLE_INDEX : 0) |
                                               (archive_url ? CA_PROTOCOL_READABLE_ARCHIVE : 0));
-        if (r < 0) {
-                log_error("Failed to set feature flags: %m");
-                goto finish;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set feature flags: %m");
 
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);
-        if (r < 0) {
-                log_error("Failed to set I/O file descriptors: %m");
-                goto finish;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set I/O file descriptors: %m");
 
         if (archive_url) {
                 _cleanup_(curl_easy_cleanupp) CURL *handle = NULL;
 
                 r = make_curl_easy_handle(&handle, write_archive, rr, NULL);
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 r = configure_curl_easy_handle(handle, archive_url);
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 r = acquire_file(rr, handle);
                 if (r < 0)
-                        goto finish;
+                        return r;
                 if (r == 0)
                         goto flush;
 
                 r = write_archive_eof(rr);
                 if (r < 0)
-                        goto finish;
+                        return r;
         }
 
         if (index_url) {
@@ -564,21 +558,21 @@ static int run(int argc, char *argv[]) {
 
                 r = make_curl_easy_handle(&handle, write_index, rr, NULL);
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 r = configure_curl_easy_handle(handle, index_url);
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 r = acquire_file(rr, handle);
                 if (r < 0)
-                        goto finish;
+                        return r;
                 if (r == 0)
                         goto flush;
 
                 r = write_index_eof(rr);
                 if (r < 0)
-                        goto finish;
+                        return r;
         }
 
         for (;;) {
@@ -587,8 +581,7 @@ static int run(int argc, char *argv[]) {
 
                 if (quit) {
                         log_info("Got exit signal, quitting.");
-                        r = 0;
-                        goto finish;
+                        return 0;
                 }
 
                 if (n_stores == 0)  /* No stores? Then we did all we could do */
@@ -597,24 +590,20 @@ static int run(int argc, char *argv[]) {
                 if (!curl) {
                         r = make_curl_easy_handle(&curl, write_chunk, &chunk_buffer, NULL);
                         if (r < 0)
-                                goto finish;
+                                return r;
                 }
 
                 r = process_remote(rr, PROCESS_UNTIL_HAVE_REQUEST);
-                if (r == -EPIPE) {
-                        r = 0;
-                        goto finish;
-                }
+                if (r == -EPIPE)
+                        return 0;
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 r = ca_remote_next_request(rr, &id);
                 if (r == -ENODATA)
                         continue;
-                if (r < 0) {
-                        log_error_errno(r, "Failed to determine next chunk to get: %m");
-                        goto finish;
-                }
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine next chunk to get: %m");
 
                 current_store = current_store % n_stores;
                 if (wstore_url)
@@ -625,44 +614,31 @@ static int run(int argc, char *argv[]) {
 
                 free(url_buffer);
                 url_buffer = chunk_url(store_url, &id);
-                if (!url_buffer) {
-                        r = log_oom();
-                        goto finish;
-                }
+                if (!url_buffer)
+                        return log_oom();
 
                 r = configure_curl_easy_handle(curl, url_buffer);
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 log_debug("Acquiring %s...", url_buffer);
 
-                if (robust_curl_easy_perform(curl) != CURLE_OK) {
-                        log_error("Failed to acquire %s", url_buffer);
-                        r = -EIO;
-                        goto finish;
-                }
+                if (robust_curl_easy_perform(curl) != CURLE_OK)
+                        return log_error_errno(-EIO, "Failed to acquire %s", url_buffer);
 
-                if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK) {
-                        log_error("Failed to query response code");
-                        r = -EIO;
-                        goto finish;
-                }
+                if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK)
+                        return log_error_errno(-EIO, "Failed to query response code");
 
                 r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_CHUNK);
-                if (r == -EPIPE) {
-                        r = 0;
-                        goto finish;
-                }
+                if (r == -EPIPE)
+                        return 0;
                 if (r < 0)
-                        goto finish;
+                        return r;
 
                 if (protocol_status_ok(arg_protocol, protocol_status)) {
                         r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
-                        if (r < 0) {
-                                log_error_errno(r, "Failed to write chunk: %m");
-                                goto finish;
-                        }
-
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to write chunk: %m");
                 } else {
                         if (arg_verbose)
                                 log_error("%s server failure %ld while requesting %s",
@@ -670,29 +646,21 @@ static int run(int argc, char *argv[]) {
                                           url_buffer);
 
                         r = ca_remote_put_missing(rr, &id);
-                        if (r < 0) {
-                                log_error_errno(r, "Failed to write missing message: %m");
-                                goto finish;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to write missing message: %m");
                 }
 
                 realloc_buffer_empty(&chunk_buffer);
 
                 r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
-                if (r == -EPIPE) {
-                        r = 0;
-                        goto finish;
-                }
+                if (r == -EPIPE)
+                        return 0;
                 if (r < 0)
-                        goto finish;
+                        return r;
         }
 
 flush:
         r = process_remote(rr, PROCESS_UNTIL_FINISHED);
-
-finish:
-        if (curl)
-                curl_easy_cleanup(curl);
 
         return r;
 }
