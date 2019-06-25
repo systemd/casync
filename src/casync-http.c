@@ -440,6 +440,7 @@ static char *chunk_url(const char *store_url, const CaChunkID *id) {
 }
 
 static int acquire_file(CaRemote *rr, CURL *handle) {
+        CURLcode c;
         long protocol_status;
         const char *url;
 
@@ -448,15 +449,13 @@ static int acquire_file(CaRemote *rr, CURL *handle) {
 
         log_debug("Acquiring %s...", url);
 
-        if (robust_curl_easy_perform(handle) != CURLE_OK) {
-                log_error("Failed to acquire %s", url);
-                return -EIO;
-        }
+        c = robust_curl_easy_perform(handle);
+        if (c != CURLE_OK)
+                return log_error_curle(c, "Failed to acquire %s", url);
 
-        if (curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK) {
-                log_error("Failed to query response code");
-                return -EIO;
-        }
+        c = curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &protocol_status);
+        if (c != CURLE_OK)
+                return log_error_curle(c, "Failed to query response code");
 
         if (!protocol_status_ok(arg_protocol, protocol_status)) {
                 _cleanup_free_ char *m = NULL;
