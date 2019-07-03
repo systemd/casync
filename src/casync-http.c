@@ -39,12 +39,23 @@
  */
 #define MAX_ACTIVE_CHUNKS 64
 
+/* This is the maximum number of parallel connections per host. This should have
+ * no effect in case we're doing HTTP/2 with one connection and multiplexing.
+ * However, if we're doing HTTP/1, curl will open parallel connections, as HTTP/1
+ * pipelining is no longer supported since libcurl 7.62.
+ *
+ * We want to make sure that we don't open too many parallel connections per host.
+ * It seems that the norm for web browsers ranges from 6 to 8.
+ */
+#define MAX_HOST_CONNECTIONS 8
+
 static volatile sig_atomic_t quit = false;
 
 static int arg_log_level = -1;
 static bool arg_verbose = false;
 static curl_off_t arg_rate_limit_bps = 0;
 static unsigned arg_max_active_chunks = MAX_ACTIVE_CHUNKS;
+static unsigned arg_max_host_connections = MAX_HOST_CONNECTIONS;
 static bool arg_ssl_trust_peer = false;
 
 typedef enum Protocol {
@@ -246,6 +257,8 @@ static int make_curl_multi_handle(CURLM **ret) {
         h = curl_multi_init();
         if (!h)
                 return log_oom();
+
+        CURL_SETOPT_MULTI(h, CURLMOPT_MAX_HOST_CONNECTIONS, arg_max_host_connections);
 
         /* Default since libcurl 7.62.0 */
         CURL_SETOPT_MULTI_CANFAIL(h, CURLMOPT_PIPELINING, CURLPIPE_MULTIPLEX);
@@ -1231,6 +1244,7 @@ static int parse_argv(int argc, char *argv[]) {
         enum {
                 ARG_RATE_LIMIT_BPS = 0x100,
                 ARG_MAX_ACTIVE_CHUNKS,
+                ARG_MAX_HOST_CONNECTIONS,
                 ARG_SSL_TRUST_PEER,
         };
 
@@ -1240,6 +1254,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "verbose",        no_argument,       NULL, 'v'                },
                 { "rate-limit-bps", required_argument, NULL, ARG_RATE_LIMIT_BPS },
                 { "max-active-chunks",    required_argument, NULL, ARG_MAX_ACTIVE_CHUNKS    },
+                { "max-host-connections", required_argument, NULL, ARG_MAX_HOST_CONNECTIONS },
                 { "ssl-trust-peer", no_argument,       NULL, ARG_SSL_TRUST_PEER },
                 {}
         };
@@ -1294,6 +1309,14 @@ static int parse_argv(int argc, char *argv[]) {
                         r = safe_atou(optarg, &arg_max_active_chunks);
                         if (r < 0 || arg_max_active_chunks == 0) {
                                 log_error("Invalid value for max-active-chunks, refusing");
+                                return -EINVAL;
+                        }
+                        break;
+
+                case ARG_MAX_HOST_CONNECTIONS:
+                        r = safe_atou(optarg, &arg_max_host_connections);
+                        if (r < 0 || arg_max_host_connections == 0) {
+                                log_error("Invalid value for max-host-connections, refusing");
                                 return -EINVAL;
                         }
                         break;

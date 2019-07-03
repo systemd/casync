@@ -113,6 +113,7 @@ struct CaSync {
         int log_level;
         size_t rate_limit_bps;
         unsigned max_active_chunks;
+        unsigned max_host_connections;
 
         uint64_t feature_flags;
         uint64_t feature_flags_mask;
@@ -532,6 +533,15 @@ int ca_sync_set_max_active_chunks(CaSync *s, unsigned max_active_chunks) {
         return 0;
 }
 
+int ca_sync_set_max_host_connections(CaSync *s, unsigned max_host_connections) {
+        if (!s)
+                return -EINVAL;
+
+        s->max_host_connections = max_host_connections;
+
+        return 0;
+}
+
 int ca_sync_set_rate_limit_bps(CaSync *s, uint64_t rate_limit_bps) {
         if (!s)
                 return -EINVAL;
@@ -706,6 +716,12 @@ int ca_sync_set_index_remote(CaSync *s, const char *url) {
 
         if (s->max_active_chunks > 0) {
                 r = ca_remote_set_max_active_chunks(s->remote_index, s->max_active_chunks);
+                if (r < 0)
+                        return r;
+        }
+
+        if (s->max_host_connections > 0) {
+                r = ca_remote_set_max_host_connections(s->remote_index, s->max_host_connections);
                 if (r < 0)
                         return r;
         }

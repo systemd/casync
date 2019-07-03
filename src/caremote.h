@@ -53,6 +53,7 @@ int ca_remote_get_digest_type(CaRemote *rr, CaDigestType *ret);
 int ca_remote_set_log_level(CaRemote *rr, int log_level);
 int ca_remote_set_rate_limit_bps(CaRemote *rr, uint64_t rate_limit_bps);
 int ca_remote_set_max_active_chunks(CaRemote *rr, unsigned max_active_chunks);
+int ca_remote_set_max_host_connections(CaRemote *rr, unsigned max_max_connections);
 
 int ca_remote_set_io_fds(CaRemote *rr, int input_fd, int output_fd);
 int ca_remote_get_io_fds(CaRemote *rr, int *ret_input_fd, int *ret_output_fd);

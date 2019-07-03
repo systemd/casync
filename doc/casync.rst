@@ -165,6 +165,7 @@ General options:
 --cache-auto, -c                Pick encoder cache directory automatically
 --rate-limit-bps=<LIMIT>        Maximum bandwidth in bytes/s for remote communication
 --max-active-chunks=<MAX>       Maximum number of simultaneously active chunks for remote communication
+--max-host-connections=<MAX>    Maximum number of connections to a single host for remote communication
 --exclude-nodump=no             Don't exclude files with chattr(1)'s +d **nodump** flag when creating archive
 --exclude-submounts=yes         Exclude submounts when creating archive
 --exclude-file=no               Don't respect .caexclude files in the file tree
