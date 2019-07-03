@@ -33,6 +33,7 @@ DEFINE_TRIVIAL_CLEANUP_FUNC(CaSync *, ca_sync_unref);
 
 int ca_sync_set_log_level(CaSync *s, int log_level);
 int ca_sync_set_rate_limit_bps(CaSync *s, uint64_t rate_limit_bps);
+int ca_sync_set_max_active_chunks(CaSync *s, unsigned max_active_chunks);
 
 int ca_sync_set_feature_flags(CaSync *s, uint64_t flags);
 int ca_sync_get_feature_flags(CaSync *s, uint64_t *ret);

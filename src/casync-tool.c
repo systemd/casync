@@ -66,6 +66,7 @@ static size_t arg_chunk_size_min = 0;
 static size_t arg_chunk_size_avg = 0;
 static size_t arg_chunk_size_max = 0;
 static uint64_t arg_rate_limit_bps = UINT64_MAX;
+static unsigned arg_max_active_chunks = 0;
 static uint64_t arg_with = 0;
 static uint64_t arg_without = 0;
 static uid_t arg_uid_shift = 0, arg_uid_range = 0x10000U;
@@ -107,6 +108,8 @@ static void help(void) {
                "  -c --cache-auto            Pick encoder cache directory automatically\n"
                "     --rate-limit-bps=LIMIT  Maximum bandwidth in bytes/s for remote\n"
                "                             communication\n"
+               "     --max-active-chunks=MAX Maximum number of simultaneously active chunks for\n"
+               "                             remote communication\n"
                "     --exclude-nodump=no     Don't exclude files with chattr(1)'s +d 'nodump'\n"
                "                             flag when creating archive\n"
                "     --exclude-submounts=yes Exclude submounts when creating archive\n"
@@ -328,6 +331,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_SEED,
                 ARG_CACHE,
                 ARG_RATE_LIMIT_BPS,
+                ARG_MAX_ACTIVE_CHUNKS,
                 ARG_WITH,
                 ARG_WITHOUT,
                 ARG_WHAT,
@@ -362,6 +366,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "cache",             required_argument, NULL, ARG_CACHE             },
                 { "cache-auto",        no_argument,       NULL, 'c'                   },
                 { "rate-limit-bps",    required_argument, NULL, ARG_RATE_LIMIT_BPS    },
+                { "max-active-chunks", required_argument, NULL, ARG_MAX_ACTIVE_CHUNKS },
                 { "with",              required_argument, NULL, ARG_WITH              },
                 { "without",           required_argument, NULL, ARG_WITHOUT           },
                 { "what",              required_argument, NULL, ARG_WHAT              },
@@ -473,6 +478,14 @@ static int parse_argv(int argc, char *argv[]) {
                                 return -EINVAL;
                         }
 
+                        break;
+
+                case ARG_MAX_ACTIVE_CHUNKS:
+                        r = safe_atou(optarg, &arg_max_active_chunks);
+                        if (r < 0) {
+                                log_error("Failed to parse --max-active-chunks= value %s", optarg);
+                                return -EINVAL;
+                        }
                         break;
 
                 case ARG_WITH: {
@@ -1330,6 +1343,12 @@ static int verb_make(int argc, char *argv[]) {
                         return log_error_errno(r, "Failed to set rate limit: %m");
         }
 
+        if (arg_max_active_chunks) {
+                r = ca_sync_set_max_active_chunks(s, arg_max_active_chunks);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set max active chunks: %m");
+        }
+
         r = ca_sync_set_base_fd(s, input_fd);
         if (r < 0)
                 return log_error_errno(r, "Failed to set sync base: %m");
@@ -1633,6 +1652,12 @@ static int verb_extract(int argc, char *argv[]) {
                 r = ca_sync_set_rate_limit_bps(s, arg_rate_limit_bps);
                 if (r < 0)
                         return log_error_errno(r, "Failed to set rate limit: %m");
+        }
+
+        if (arg_max_active_chunks) {
+                r = ca_sync_set_max_active_chunks(s, arg_max_active_chunks);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set max active chunks: %m");
         }
 
         if (seek_path) {
@@ -2796,6 +2821,12 @@ static int verb_mount(int argc, char *argv[]) {
                         return log_error_errno(r, "Failed to set rate limit: %m");
         }
 
+        if (arg_max_active_chunks) {
+                r = ca_sync_set_max_active_chunks(s, arg_max_active_chunks);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set max active chunks: %m");
+        }
+
         if (operation == MOUNT_ARCHIVE) {
                 if (input_fd >= 0)
                         r = ca_sync_set_archive_fd(s, input_fd);
@@ -2920,6 +2951,12 @@ static int verb_mkdev(int argc, char *argv[]) {
                 r = ca_sync_set_rate_limit_bps(s, arg_rate_limit_bps);
                 if (r < 0)
                         return log_error_errno(r, "Failed to set rate limit: %m");
+        }
+
+        if (arg_max_active_chunks) {
+                r = ca_sync_set_max_active_chunks(s, arg_max_active_chunks);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set max active chunks: %m");
         }
 
         if (operation == MKDEV_BLOB) {
@@ -3489,6 +3526,12 @@ static int verb_pull(int argc, char *argv[]) {
                         return log_error_errno(r, "Failed to set rate limit: %m");
         }
 
+        if (arg_max_active_chunks) {
+                r = ca_remote_set_max_active_chunks(rr, arg_max_active_chunks);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set max active chunks: %m");
+        }
+
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);
         if (r < 0)
                 return log_error_errno(r, "Failed to set I/O file descriptors: %m");
@@ -3646,6 +3689,12 @@ static int verb_push(int argc, char *argv[]) {
                 r = ca_remote_set_rate_limit_bps(rr, arg_rate_limit_bps);
                 if (r < 0)
                         log_error_errno(r, "Failed to set rate limit: %m");
+        }
+
+        if (arg_max_active_chunks) {
+                r = ca_remote_set_max_active_chunks(rr, arg_max_active_chunks);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set max active chunks: %m");
         }
 
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);

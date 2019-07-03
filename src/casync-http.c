@@ -13,11 +13,38 @@
 #include "util.h"
 #include "list.h"
 
+/* The maximum number of active chunks is defined as the sum of:
+ * - number of chunks added to curl multi for download
+ * - number of chunks downloaded, and waiting to be sent to remote
+ *
+ * In situations where the server is local and super fast (ie. we receive chunks
+ * faster than we can send them to the remote), around 95% of the active chunks
+ * are chunks waiting to be sent to remote, hence this number can be seen as
+ * "maximum number of chunks sitting in ram".
+ *
+ * In situations where the server is away, around 95% of the active chunks are
+ * chunks added to curl multi. It doesn't mean "being downloaded" though, it's more
+ * a "maximum limit for concurrent downloads". The real number of running downloads
+ * might be lower, because:
+ * - if we're doing HTTP/1 and parallel connections, the hard limit is actually
+ *   defined by `MAX_HOST_CONNECTIONS`.
+ * - if we're doing HTTP/2 over a multiplexed connection, the number of parallel
+ *   streams is negociated between client and server.
+ *
+ * In effect, *I think* it's best to make this number quite large, because we
+ * don't want to underfeed libcurl and underperform. I think it's better to feed
+ * too many handles to the curl multi, and let libcurl decide internally what's
+ * best to do with it. Libcurl knows every details about the HTTP connection and
+ * will handle (parallel/multiplex/whatever) downloads better than us.
+ */
+#define MAX_ACTIVE_CHUNKS 64
+
 static volatile sig_atomic_t quit = false;
 
 static int arg_log_level = -1;
 static bool arg_verbose = false;
 static curl_off_t arg_rate_limit_bps = 0;
+static unsigned arg_max_active_chunks = MAX_ACTIVE_CHUNKS;
 static bool arg_ssl_trust_peer = false;
 
 typedef enum Protocol {
@@ -506,7 +533,7 @@ static CaChunkDownloader *ca_chunk_downloader_new(CaRemote *rr, const char *stor
         if (!dl->completed)
                 goto fail;
 
-        for (i = 0; i < 64; i++) {
+        for (i = 0; i < arg_max_active_chunks; i++) {
                 CURL *handle = NULL;
                 ChunkData *cd = NULL;
 
@@ -1203,6 +1230,7 @@ static int parse_argv(int argc, char *argv[]) {
 
         enum {
                 ARG_RATE_LIMIT_BPS = 0x100,
+                ARG_MAX_ACTIVE_CHUNKS,
                 ARG_SSL_TRUST_PEER,
         };
 
@@ -1211,6 +1239,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "log-level",      required_argument, NULL, 'l'                },
                 { "verbose",        no_argument,       NULL, 'v'                },
                 { "rate-limit-bps", required_argument, NULL, ARG_RATE_LIMIT_BPS },
+                { "max-active-chunks",    required_argument, NULL, ARG_MAX_ACTIVE_CHUNKS    },
                 { "ssl-trust-peer", no_argument,       NULL, ARG_SSL_TRUST_PEER },
                 {}
         };
@@ -1259,6 +1288,14 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_RATE_LIMIT_BPS:
                         arg_rate_limit_bps = strtoll(optarg, NULL, 10);
+                        break;
+
+                case ARG_MAX_ACTIVE_CHUNKS:
+                        r = safe_atou(optarg, &arg_max_active_chunks);
+                        if (r < 0 || arg_max_active_chunks == 0) {
+                                log_error("Invalid value for max-active-chunks, refusing");
+                                return -EINVAL;
+                        }
                         break;
 
                 case ARG_SSL_TRUST_PEER:

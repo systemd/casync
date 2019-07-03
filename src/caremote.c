@@ -60,6 +60,7 @@ struct CaRemote {
 
         int log_level;
         uint64_t rate_limit_bps;
+        unsigned max_active_chunks;
 
         ReallocBuffer input_buffer;
         ReallocBuffer output_buffer;
@@ -244,6 +245,15 @@ int ca_remote_set_rate_limit_bps(CaRemote *rr, uint64_t rate_limit_bps) {
                 return -EINVAL;
 
         rr->rate_limit_bps = rate_limit_bps;
+
+        return 0;
+}
+
+int ca_remote_set_max_active_chunks(CaRemote *rr, unsigned max_active_chunks) {
+        if (!rr)
+                return -EINVAL;
+
+        rr->max_active_chunks = max_active_chunks;
 
         return 0;
 }
@@ -1001,6 +1011,9 @@ static int ca_remote_start(CaRemote *rr) {
                         if (rr->rate_limit_bps != UINT64_MAX)
                                 argc++;
 
+                        if (rr->max_active_chunks)
+                                argc++;
+
                         args = newa(char*, argc + 1);
 
                         if (rr->callout) {
@@ -1040,6 +1053,14 @@ static int ca_remote_start(CaRemote *rr) {
 
                         if (rr->rate_limit_bps != UINT64_MAX) {
                                 r = asprintf(args + i, "--rate-limit-bps=%" PRIu64, rr->rate_limit_bps);
+                                if (r < 0)
+                                        return log_oom();
+
+                                i++;
+                        }
+
+                        if (rr->max_active_chunks) {
+                                r = asprintf(args + i, "--max-active-chunks=%u", rr->max_active_chunks);
                                 if (r < 0)
                                         return log_oom();
 
