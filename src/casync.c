@@ -114,6 +114,7 @@ struct CaSync {
         size_t rate_limit_bps;
         unsigned max_active_chunks;
         unsigned max_host_connections;
+        bool ssl_trust_peer;
 
         uint64_t feature_flags;
         uint64_t feature_flags_mask;
@@ -538,6 +539,15 @@ int ca_sync_set_max_host_connections(CaSync *s, unsigned max_host_connections) {
                 return -EINVAL;
 
         s->max_host_connections = max_host_connections;
+
+        return 0;
+}
+
+int ca_sync_set_ssl_trust_peer(CaSync *s, bool ssl_trust_peer) {
+        if (!s)
+                return -EINVAL;
+
+        s->ssl_trust_peer = ssl_trust_peer;
 
         return 0;
 }

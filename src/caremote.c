@@ -62,6 +62,7 @@ struct CaRemote {
         uint64_t rate_limit_bps;
         unsigned max_active_chunks;
         unsigned max_host_connections;
+        bool ssl_trust_peer;
 
         ReallocBuffer input_buffer;
         ReallocBuffer output_buffer;
@@ -264,6 +265,15 @@ int ca_remote_set_max_host_connections(CaRemote *rr, unsigned max_host_connectio
                 return -EINVAL;
 
         rr->max_host_connections = max_host_connections;
+
+        return 0;
+}
+
+int ca_remote_set_ssl_trust_peer(CaRemote *rr, bool ssl_trust_peer) {
+        if (!rr)
+                return -EINVAL;
+
+        rr->ssl_trust_peer = ssl_trust_peer;
 
         return 0;
 }
@@ -1027,6 +1037,9 @@ static int ca_remote_start(CaRemote *rr) {
                         if (rr->max_host_connections)
                                 argc++;
 
+                        if (rr->ssl_trust_peer)
+                                argc++;
+
                         args = newa(char*, argc + 1);
 
                         if (rr->callout) {
@@ -1087,6 +1100,9 @@ static int ca_remote_start(CaRemote *rr) {
 
                                 i++;
                         }
+
+                        if (rr->ssl_trust_peer)
+                                args[i++] = (char*) "--ssl-trust-peer";
 
                         args[i + CA_REMOTE_ARG_OPERATION] = (char*) ((rr->local_feature_flags & (CA_PROTOCOL_PUSH_CHUNKS|CA_PROTOCOL_PUSH_INDEX|CA_PROTOCOL_PUSH_ARCHIVE)) ? "push" : "pull");
                         args[i + CA_REMOTE_ARG_BASE_URL] = /* rr->base_url ? rr->base_url + skip :*/ (char*) "-";
