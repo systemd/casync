@@ -1613,7 +1613,7 @@ static int verb_extract(int argc, char *argv[]) {
                 if (arg_seed_output) {
                         r = ca_sync_add_seed_path(s, output);
                         if (r < 0 && r != -ENOENT)
-                                log_error_errno(r, "Failed to add existing file as seed %s, ignoring: %m", output);
+                                return log_error_errno(r, "Failed to add existing file as seed %s, ignoring: %m", output);
                 }
         }
 
@@ -3604,17 +3604,17 @@ static int verb_push(int argc, char *argv[]) {
                                               (index_path ? CA_PROTOCOL_WRITABLE_INDEX : 0) |
                                               (archive_path ? CA_PROTOCOL_WRITABLE_ARCHIVE : 0));
         if (r < 0)
-                log_error_errno(r, "Failed to set feature flags: %m");
+                return log_error_errno(r, "Failed to set feature flags: %m");
 
         if (arg_rate_limit_bps != UINT64_MAX) {
                 r = ca_remote_set_rate_limit_bps(rr, arg_rate_limit_bps);
                 if (r < 0)
-                        log_error_errno(r, "Failed to set rate limit: %m");
+                        return log_error_errno(r, "Failed to set rate limit: %m");
         }
 
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);
         if (r < 0)
-                log_error_errno(r, "Failed to set I/O file descriptors: %m");
+                return log_error_errno(r, "Failed to set I/O file descriptors: %m");
 
         if (index_path) {
                 index = ca_index_new_incremental_read();
