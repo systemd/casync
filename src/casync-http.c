@@ -788,6 +788,8 @@ static int ca_chunk_downloader_step(CaChunkDownloader *dl) {
         r = ca_chunk_downloader_process_curl_multi(dl);
         if (r < 0)
                 return log_error_errno(r, "Failed while processing curl multi: %m");
+        if (r > 0)
+                log_trace("Processed %d curl messages", r);
 
         /* Step around */
         r = ca_chunk_downloader_remote_step(dl);
@@ -804,6 +806,8 @@ static int ca_chunk_downloader_step(CaChunkDownloader *dl) {
                 return r;
         if (r < 0)
                 return log_error_errno(r, "Failed while putting chunks to remote: %m");
+        if (r > 0)
+                log_trace("Put %d chunks to remote", r);
 
         /* Get as many chunk requests as we can */
         r = ca_chunk_downloader_fetch_chunk_requests(dl);
@@ -811,6 +815,8 @@ static int ca_chunk_downloader_step(CaChunkDownloader *dl) {
                 return r;
         if (r < 0)
                 return log_error_errno(r, "Failed while querying remote for chunk requests: %m");
+        if (r > 0)
+                log_trace("Fetched %d chunk requests from remote", r);
 
         return CA_CHUNK_DOWNLOADER_POLL;
 }
@@ -861,9 +867,14 @@ static int ca_chunk_downloader_wait(CaChunkDownloader *dl) {
         if (r < 0)
                 return log_error_errno(r, "Failed to get remote io: %m");
 
+        log_trace("SLEEP  - handles: added=%" PRIu64 ", rem=%" PRIu64 " - chunks: put=%" PRIu64,
+                  dl->inprogress->n_added, dl->inprogress->n_removed, dl->completed->n_removed);
+
         c = curl_multi_wait(dl->multi, waitfds, ELEMENTSOF(waitfds), curl_timeout_ms, &n);
         if (c != CURLM_OK)
                 return log_error_curlm(c, "Failed to wait with curl multi");
+
+        log_trace("AWAKEN - %d event(s)", n);
 
         return 0;
 }
