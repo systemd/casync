@@ -468,10 +468,8 @@ static int parse_argv(int argc, char *argv[]) {
                         r = parse_size(optarg, &arg_rate_limit_bps);
                         if (r < 0)
                                 return log_error_errno(r, "Unable to parse rate limit %s: %m", optarg);
-                        if (arg_rate_limit_bps == 0) {
-                                log_error("Rate limit size cannot be zero.");
-                                return -EINVAL;
-                        }
+                        if (arg_rate_limit_bps == 0)
+                                return log_error_errno(EINVAL, "Rate limit size cannot be zero.");
 
                         break;
 
@@ -482,10 +480,8 @@ static int parse_argv(int argc, char *argv[]) {
                                 return dump_with_flags();
 
                         r = ca_with_feature_flags_parse_one(optarg, &u);
-                        if (r < 0) {
-                                log_error("Failed to parse --with= feature flag: %s", optarg);
-                                return -EINVAL;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --with= feature flag: %s", optarg);
 
                         arg_with |= u;
                         break;
@@ -498,10 +494,8 @@ static int parse_argv(int argc, char *argv[]) {
                                 return dump_with_flags();
 
                         r = ca_with_feature_flags_parse_one(optarg, &u);
-                        if (r < 0) {
-                                log_error("Failed to parse --without= feature flag: %s", optarg);
-                                return -EINVAL;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --without= feature flag: %s", optarg);
 
                         arg_without |= u;
                         break;
@@ -539,60 +533,48 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_UNDO_IMMUTABLE:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                log_error("Failed to parse --undo-immutable= parameter: %s", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --undo-immutable= parameter: %s", optarg);
 
                         arg_undo_immutable = r;
                         break;
 
                 case ARG_PUNCH_HOLES:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                log_error("Failed to parse --punch-holes= parameter: %s", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --punch-holes= parameter: %s", optarg);
 
                         arg_punch_holes = r;
                         break;
 
                 case ARG_REFLINK:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                log_error("Failed to parse --reflink= parameter: %s", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --reflink= parameter: %s", optarg);
 
                         arg_reflink = r;
                         break;
 
                 case ARG_HARDLINK:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                log_error("Failed to parse --hardlink= parameter: %s", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --hardlink= parameter: %s", optarg);
 
                         arg_hardlink = r;
                         break;
 
                 case ARG_DELETE:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                log_error("Failed to parse --delete= parameter: %s", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --delete= parameter: %s", optarg);
 
                         arg_delete = r;
                         break;
 
                 case ARG_SEED_OUTPUT:
                         r = parse_boolean(optarg);
-                        if (r < 0) {
-                                log_error("Failed to parse --seed-output= parameter: %s", optarg);
-                                return r;
-                        }
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --seed-output= parameter: %s", optarg);
 
                         arg_seed_output = r;
                         break;
@@ -1174,8 +1156,7 @@ static int process_step_generic(CaSync *s, int step, bool quit_ok) {
                 return r;
 
         case CA_SYNC_NOT_FOUND:
-                log_error("Seek path not available in archive.");
-                return -ENOENT;
+                return log_error_errno(ENOENT, "Seek path not available in archive.");
         }
 
         assert(false);
