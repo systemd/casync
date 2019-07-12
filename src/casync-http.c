@@ -167,24 +167,22 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
         }
 }
 
-static size_t write_index(const void *buffer, size_t size, size_t nmemb, void *userdata) {
-        CaRemote *rr = userdata;
-        size_t product;
+static int write_index(CaRemote *rr, ReallocBuffer *buffer) {
         int r;
 
-        product = size * nmemb;
+        assert(rr);
 
         r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_INDEX);
         if (r < 0)
-                return 0;
+                return r;
 
-        r = ca_remote_put_index(rr, buffer, product);
+        r = ca_remote_put_index(rr, realloc_buffer_data(buffer), realloc_buffer_size(buffer));
         if (r < 0) {
                 log_error("Failed to put index: %m");
-                return 0;
+                return r;
         }
 
-        return product;
+        return 0;
 }
 
 static int write_index_eof(CaRemote *rr) {
@@ -239,24 +237,24 @@ static int write_archive_eof(CaRemote *rr) {
         return 0;
 }
 
-static size_t write_chunk(const void *buffer, size_t size, size_t nmemb, void *userdata) {
-        ReallocBuffer *chunk_buffer = userdata;
+static size_t write_buffer(const void *ptr, size_t size, size_t nmemb, void *userdata) {
+        ReallocBuffer *buffer = userdata;
         size_t product, z;
 
         product = size * nmemb;
 
-        z = realloc_buffer_size(chunk_buffer) + product;
-        if (z < realloc_buffer_size(chunk_buffer)) {
+        z = realloc_buffer_size(buffer) + product;
+        if (z < realloc_buffer_size(buffer)) {
                 log_error("Overflow");
                 return 0;
         }
 
         if (z > (CA_PROTOCOL_SIZE_MAX - offsetof(CaProtocolChunk, data))) {
-                log_error("Chunk too large");
+                log_error("Message too large");
                 return 0;
         }
 
-        if (!realloc_buffer_append(chunk_buffer, buffer, product)) {
+        if (!realloc_buffer_append(buffer, ptr, product)) {
                 log_oom();
                 return 0;
         }
@@ -375,7 +373,7 @@ static int run(int argc, char *argv[]) {
         size_t n_stores = 0, current_store = 0;
         CURL *curl = NULL;
         _cleanup_(ca_remote_unrefp) CaRemote *rr = NULL;
-        _cleanup_(realloc_buffer_free) ReallocBuffer chunk_buffer = {};
+        _cleanup_(realloc_buffer_free) ReallocBuffer buffer = {};
         _cleanup_free_ char *url_buffer = NULL;
         long protocol_status;
         int r;
@@ -480,15 +478,21 @@ static int run(int argc, char *argv[]) {
         }
 
         if (index_url) {
-                r = acquire_file(rr, curl, index_url, write_index, rr);
+                r = acquire_file(rr, curl, index_url, write_buffer, &buffer);
                 if (r < 0)
                         goto finish;
                 if (r == 0)
                         goto flush;
 
+                r = write_index(rr, &buffer);
+                if (r < 0)
+                        goto finish;
+
                 r = write_index_eof(rr);
                 if (r < 0)
                         goto finish;
+
+                realloc_buffer_empty(&buffer);
         }
 
         for (;;) {
@@ -540,13 +544,13 @@ static int run(int argc, char *argv[]) {
                         goto finish;
                 }
 
-                if (curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_chunk) != CURLE_OK) {
+                if (curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_buffer) != CURLE_OK) {
                         log_error("Failed to set CURL callback function.");
                         r = -EIO;
                         goto finish;
                 }
 
-                if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk_buffer) != CURLE_OK) {
+                if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer) != CURLE_OK) {
                         log_error("Failed to set CURL private data.");
                         r = -EIO;
                         goto finish;
@@ -592,7 +596,7 @@ static int run(int argc, char *argv[]) {
                     (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status >= 200 && protocol_status <= 299))||
                     (arg_protocol == ARG_PROTOCOL_SFTP && (protocol_status == 0))) {
 
-                        r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
+                        r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&buffer), realloc_buffer_size(&buffer));
                         if (r < 0) {
                                 log_error_errno(r, "Failed to write chunk: %m");
                                 goto finish;
@@ -609,7 +613,7 @@ static int run(int argc, char *argv[]) {
                         }
                 }
 
-                realloc_buffer_empty(&chunk_buffer);
+                realloc_buffer_empty(&buffer);
 
                 r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
                 if (r == -EPIPE) {
