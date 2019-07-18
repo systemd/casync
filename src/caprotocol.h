@@ -23,7 +23,7 @@ enum {
 
 /* Protocol description:
  *
- * Client C connects to server:
+ * Client C connects to server S:
  *
  * Both C and S immediately send CA_PROTOCOL_HELLO:
  *      C → S: CA_PROTOCOL_HELLO
@@ -40,7 +40,7 @@ enum {
  *      C → S: CA_PROTOCOL_REQUEST
  *      S → C: CA_PROTOCOL_CHUNK
  *
- *      Finshed by:
+ *      Finished by:
  *      C → S: CA_PROTOCOL_GOODBYE (optional)
  *
  * On push:
@@ -60,7 +60,7 @@ enum {
  * When a non-recoverable error occurs, either side can send CA_PROTOCOL_ABORTED with an explanation, and terminate the
  * connection.
  *
- * */
+ */
 
 typedef struct CaProtocolHeader {
         le64_t size;
