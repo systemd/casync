@@ -3419,7 +3419,7 @@ static int verb_pull(int argc, char *argv[]) {
         int r;
 
         if (argc < 5) {
-                log_error("Expected at least 5 arguments.");
+                log_error("Expected at least 4 arguments.");
                 return -EINVAL;
         }
 
@@ -3572,7 +3572,7 @@ static int verb_push(int argc, char *argv[]) {
         int r;
 
         if (argc < 5) {
-                log_error("Expected at least 5 arguments.");
+                log_error("Expected at least 4 arguments.");
                 return -EINVAL;
         }
 
