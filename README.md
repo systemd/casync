@@ -167,8 +167,8 @@ but there are other systems that use similar algorithms, in particular:
 ## Building casync
 
 casync uses the [Meson](http://mesonbuild.com/) build system. To build casync,
-install Meson (at least 0.40), as well as the necessary build dependencies
-(gcc, liblzma, libcurl, libacl, and optionally libfuse). Then run:
+install Meson (at least 0.47), as well as the necessary build dependencies
+(gcc, libzstd-dev liblzma-dev libacl1-dev libfuse-dev libudev-dev python3-sphinx). Then run:
 
 ```
 # meson build && ninja -C build && sudo ninja -C build install
