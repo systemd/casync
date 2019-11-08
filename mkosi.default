@@ -2,7 +2,7 @@
 
 [Distribution]
 Distribution=fedora
-Release=27
+Release=31
 
 [Output]
 Format=raw_gpt
