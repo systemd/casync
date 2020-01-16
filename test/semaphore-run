@@ -13,6 +13,9 @@ DEVPKGS=(
     libudev-dev
 )
 
+# Necessary for meson/ninja installed from pip with --user
+export PATH="~/.local/bin:$PATH"
+
 echo
 echo "============= Installing amd64 build dependencies =============="
 set -eu
@@ -22,8 +25,6 @@ set -eu
     sudo rm /etc/apt/sources.list.d/*
 
     sudo apt install -y software-properties-common
-    sudo add-apt-repository -y ppa:jonathonf/python-3.6
-    sudo add-apt-repository -y ppa:ginggs/backports
     sudo apt -y update
     sudo apt -y --no-install-recommends install \
          python3.6 \
