@@ -4,7 +4,7 @@ project('casync', 'c',
         version : '2',
         license : 'LGPLv2+',
         default_options: [
-                'c_std=gnu99',
+                'c_std=gnu11',
                 'prefix=/usr',
                 'sysconfdir=/etc',
                 'localstatedir=/var',
