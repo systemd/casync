@@ -19,11 +19,7 @@ set -eu
 (
     set -x
 
-    sudo rm /etc/apt/sources.list.d/*
-
     sudo apt install -y software-properties-common
-    sudo add-apt-repository -y ppa:jonathonf/python-3.6
-    sudo add-apt-repository -y ppa:ginggs/backports
     sudo apt -y update
     sudo apt -y --no-install-recommends install \
          python3.6 \
@@ -39,7 +35,7 @@ set -eu
          python3-wheel \
          python-sphinx \
          "${DEVPKGS[@]}"
-    python3.6 -m pip install --user meson ninja
+    sudo python3.6 -m pip install meson ninja
 )
 
 echo
