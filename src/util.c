@@ -2,8 +2,8 @@
 
 #include <ctype.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdarg.h>
-#include <sys/poll.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
