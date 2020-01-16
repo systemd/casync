@@ -13,6 +13,9 @@ DEVPKGS=(
     libudev-dev
 )
 
+# Necessary for meson/ninja installed from pip with --user
+export PATH="$PATH:~/.local/bin"
+
 echo
 echo "============= Installing amd64 build dependencies =============="
 set -eu
