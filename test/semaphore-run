@@ -37,7 +37,7 @@ set -eu
          python3-wheel \
          python-sphinx \
          "${DEVPKGS[@]}"
-    python3.6 -m pip install --user meson ninja
+    sudo python3.6 -m pip install meson ninja
 )
 
 echo
