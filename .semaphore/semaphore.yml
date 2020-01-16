@@ -1,0 +1,28 @@
+---
+# vi: sw=2 ts=2 et:
+
+version: v1.0
+name: Semaphore Pipeline
+agent:
+  machine:
+    type: e1-standard-2
+    os_image: ubuntu1804
+
+# Auto-cancel jobs on force-push
+auto_cancel:
+  queued:
+    when: "true"
+
+# Cancel all jobs on the first fail
+fail_fast:
+  cancel:
+    when: "true"
+
+blocks:
+  - name: amd64 & i386
+    task:
+      jobs:
+        - name: Build & run
+          commands:
+            - checkout
+            - test/semaphore-run
