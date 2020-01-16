@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <fcntl.h>
+#include <libgen.h>
 #include <poll.h>
 #include <stdarg.h>
 #include <sys/stat.h>
@@ -14,12 +15,6 @@
 #if USE_SYS_RANDOM_H
 #  include <sys/random.h>
 #endif
-
-/* When we include libgen.h because we need dirname() we immediately
- * undefine basename() since libgen.h defines it as a macro to the
- * POSIX version which is really broken. We prefer GNU basename(). */
-#include <libgen.h>
-#undef basename
 
 #include "def.h"
 #include "time-util.h"
@@ -482,7 +477,8 @@ int tempfn_random(const char *p, char **ret) {
          *         /foo/bar/.#waldobaa2a261115984a9
          */
 
-        fn = basename(p);
+        fn = strrchr(p, '/');
+        fn = fn ? fn + 1 : p;
         if (!filename_is_valid(fn))
                 return -EINVAL;
 
