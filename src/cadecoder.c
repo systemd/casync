@@ -3654,8 +3654,21 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                         }
                         if (r < 0)
                                 return -errno;
-                }
-        }
+
+                       /* on Linux, changing ownership can reset setuid/setgid bits. stat() the
+                               file again so permission checking code below knows the new
+                               state of affairs */
+                       if (child->fd >= 0)
+                               r = fstat(child->fd, &st);
+                       else {
+                               assert(dir_fd >= 0);
+
+                               r = fstatat(dir_fd, name, &st, AT_SYMLINK_NOFOLLOW);
+                       }
+                       if (r < 0)
+                               return -errno;
+               }
+       }
 
         if (d->replay_feature_flags & CA_FORMAT_WITH_READ_ONLY) {
 
