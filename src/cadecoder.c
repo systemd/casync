@@ -3569,7 +3569,7 @@ static int ca_decoder_finalize_child(CaDecoder *d, CaDecoderNode *n, CaDecoderNo
                 return -errno;
 
         if (st.st_dev == d->cached_st_dev)
-                magic = d->cached_st_dev;
+                magic = d->cached_magic;
         else if (child->fd >= 0) {
                 struct statfs sfs;
 
