@@ -4,6 +4,7 @@
 #include <getopt.h>
 #include <stddef.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 #include "caprotocol.h"
 #include "caremote.h"
@@ -459,6 +460,14 @@ static int run(int argc, char *argv[]) {
 
                 if (curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
                         log_error("Failed to set CURL receive speed limit.");
+                        r = -EIO;
+                        goto finish;
+                }
+        }
+
+        if (getenv("CASYNC_CURLOPT_PROXY") != NULL) {
+                if (curl_easy_setopt(curl, CURLOPT_PROXY, getenv("CASYNC_CURLOPT_PROXY")) != CURLE_OK) {
+                        log_error("Failed to set CASYNC_CURLOPT_PROXY.");
                         r = -EIO;
                         goto finish;
                 }
