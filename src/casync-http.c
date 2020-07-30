@@ -430,6 +430,12 @@ static int run(int argc, char *argv[]) {
                 goto finish;
         }
 
+        if (curl_easy_setopt(curl, CURLOPT_NETRC, CURL_NETRC_OPTIONAL) != CURLE_OK) {
+                log_error("Failed to make the use of ~/.netrc optional.");
+                r = -EIO;
+                goto finish;
+        }
+
         if (curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L) != CURLE_OK) {
                 log_error("Failed to turn on location following.");
                 r = -EIO;
