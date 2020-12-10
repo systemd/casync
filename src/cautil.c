@@ -37,7 +37,7 @@ bool ca_is_url(const char *s) {
         assert(s);
 
         /* Checks whether something appears to be a URL. This is inspired by RFC3986, but a bit more restricted, so
-         * that we can clearly distuingish URLs from file system paths, and ssh specifications. For example, the kind
+         * that we can clearly distinguish URLs from file system paths, and ssh specifications. For example, the kind
          * of URLs we are interested in must contain '://' as host/path separator.
          *
          * We explicit exclude all strings starting with either "/" or "./" as URL from being detected as URLs, so that
