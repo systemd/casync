@@ -2,7 +2,6 @@
 
 #include <dirent.h>
 #include <fcntl.h>
-#include <lzma.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
