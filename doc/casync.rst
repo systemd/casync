@@ -29,7 +29,7 @@ Commands
 | **casync** **make** [*ARCHIVE* | *ARCHIVE_INDEX*] [*DIRECTORY*]
 | **casync** **make** [*BLOB_INDEX*] *FILE* | *DEVICE*
 
-This will create either a .catar archive or an .caidx index for for the given
+This will create either a .catar archive or an .caidx index for the given
 *DIRECTORY*, or a .caibx index for the given *FILE* or block *DEVICE*. The type
 of output is automatically chosen based on the file extension (this may be
 overridden with ``--what=``). *DIRECTORY* is optional, and the current directory
