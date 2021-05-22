@@ -39,3 +39,9 @@ static inline int log_oom(void) {
 
 void set_log_level(int level);
 int set_log_level_from_string(const char *str);
+
+#ifdef LOG_TRACE
+#  define log_trace(...) log_debug(__VA_ARGS__)
+#else
+#  define log_trace(...) do {} while (0)
+#endif

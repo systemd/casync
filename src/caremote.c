@@ -58,7 +58,11 @@ struct CaRemote {
         int input_fd;
         int output_fd;
 
+        int log_level;
         uint64_t rate_limit_bps;
+        unsigned max_active_chunks;
+        unsigned max_host_connections;
+        bool ssl_trust_peer;
 
         ReallocBuffer input_buffer;
         ReallocBuffer output_buffer;
@@ -112,6 +116,7 @@ CaRemote* ca_remote_new(void) {
         rr->local_feature_flags = UINT64_MAX;
         rr->remote_feature_flags = UINT64_MAX;
 
+        rr->log_level = -1;
         rr->rate_limit_bps = UINT64_MAX;
 
         rr->digest_type = _CA_DIGEST_TYPE_INVALID;
@@ -228,11 +233,47 @@ CaRemote* ca_remote_unref(CaRemote *rr) {
         return mfree(rr);
 }
 
+int ca_remote_set_log_level(CaRemote *rr, int log_level) {
+        if (!rr)
+                return -EINVAL;
+
+        rr->log_level = log_level;
+
+        return 0;
+}
+
 int ca_remote_set_rate_limit_bps(CaRemote *rr, uint64_t rate_limit_bps) {
         if (!rr)
                 return -EINVAL;
 
         rr->rate_limit_bps = rate_limit_bps;
+
+        return 0;
+}
+
+int ca_remote_set_max_active_chunks(CaRemote *rr, unsigned max_active_chunks) {
+        if (!rr)
+                return -EINVAL;
+
+        rr->max_active_chunks = max_active_chunks;
+
+        return 0;
+}
+
+int ca_remote_set_max_host_connections(CaRemote *rr, unsigned max_host_connections) {
+        if (!rr)
+                return -EINVAL;
+
+        rr->max_host_connections = max_host_connections;
+
+        return 0;
+}
+
+int ca_remote_set_ssl_trust_peer(CaRemote *rr, bool ssl_trust_peer) {
+        if (!rr)
+                return -EINVAL;
+
+        rr->ssl_trust_peer = ssl_trust_peer;
 
         return 0;
 }
@@ -984,7 +1025,19 @@ static int ca_remote_start(CaRemote *rr) {
 
                         argc = (rr->callout ? 1 : 3) + 5 + strv_length(rr->rstore_urls);
 
+                        if (rr->log_level != -1)
+                                argc++;
+
                         if (rr->rate_limit_bps != UINT64_MAX)
+                                argc++;
+
+                        if (rr->max_active_chunks)
+                                argc++;
+
+                        if (rr->max_host_connections)
+                                argc++;
+
+                        if (rr->ssl_trust_peer)
                                 argc++;
 
                         args = newa(char*, argc + 1);
@@ -1016,6 +1069,14 @@ static int ca_remote_start(CaRemote *rr) {
                                 args[i++] = (char*) remote_casync;
                         }
 
+                        if (rr->log_level != -1) {
+                                r = asprintf(args + i, "--log-level=%i", rr->log_level);
+                                if (r < 0)
+                                        return log_oom();
+
+                                i++;
+                        }
+
                         if (rr->rate_limit_bps != UINT64_MAX) {
                                 r = asprintf(args + i, "--rate-limit-bps=%" PRIu64, rr->rate_limit_bps);
                                 if (r < 0)
@@ -1023,6 +1084,25 @@ static int ca_remote_start(CaRemote *rr) {
 
                                 i++;
                         }
+
+                        if (rr->max_active_chunks) {
+                                r = asprintf(args + i, "--max-active-chunks=%u", rr->max_active_chunks);
+                                if (r < 0)
+                                        return log_oom();
+
+                                i++;
+                        }
+
+                        if (rr->max_host_connections) {
+                                r = asprintf(args + i, "--max-host-connections=%u", rr->max_host_connections);
+                                if (r < 0)
+                                        return log_oom();
+
+                                i++;
+                        }
+
+                        if (rr->ssl_trust_peer)
+                                args[i++] = (char*) "--ssl-trust-peer";
 
                         args[i + CA_REMOTE_ARG_OPERATION] = (char*) ((rr->local_feature_flags & (CA_PROTOCOL_PUSH_CHUNKS|CA_PROTOCOL_PUSH_INDEX|CA_PROTOCOL_PUSH_ARCHIVE)) ? "push" : "pull");
                         args[i + CA_REMOTE_ARG_BASE_URL] = /* rr->base_url ? rr->base_url + skip :*/ (char*) "-";
