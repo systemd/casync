@@ -421,7 +421,7 @@ static inline int parse_gid(const char *s, gid_t *ret_gid) {
 /* This is a bit more restricted than RFC3986 */
 #define URL_PROTOCOL_FIRST ALPHABET_LOWER
 #define URL_PROTOCOL_CHARSET ALPHABET_LOWER DIGITS "+.-"
-#define HOSTNAME_CHARSET ALPHABET DIGITS "-_."
+#define HOSTNAME_CHARSET ALPHABET DIGITS "-_.%"
 
 int wait_for_terminate(pid_t pid, siginfo_t *status);
 
