@@ -265,7 +265,7 @@ static inline bool CA_DECODER_IS_NAKED(CaDecoder *d) {
 
         return d->n_nodes == 1 &&
                 !d->nodes[0].entry &&
-                (S_ISREG(d->nodes[0].mode) || S_ISBLK(d->nodes[0].mode));
+                (S_ISREG(d->nodes[0].mode) || S_ISBLK(d->nodes[0].mode) || S_ISCHR(d->nodes[0].mode));
 }
 
 static mode_t ca_decoder_node_mode(CaDecoderNode *n) {
@@ -481,13 +481,13 @@ int ca_decoder_set_base_fd(CaDecoder *d, int fd) {
         if (fstatfs(fd, &sfs) < 0)
                 return -errno;
 
-        if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode) && !S_ISBLK(st.st_mode))
+        if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode) && !S_ISBLK(st.st_mode) && !S_ISCHR(st.st_mode))
                 return -ENOTTY;
 
         d->nodes[0] = (CaDecoderNode) {
                 .fd = fd,
                 .entry_offset = S_ISDIR(st.st_mode) ? 0 : UINT64_MAX,
-                .payload_offset = S_ISREG(st.st_mode) || S_ISBLK(st.st_mode) ? 0 : UINT64_MAX,
+                .payload_offset = S_ISREG(st.st_mode) || S_ISBLK(st.st_mode) || S_ISCHR(st.st_mode) ? 0 : UINT64_MAX,
                 .goodbye_offset = UINT64_MAX,
                 .end_offset = UINT64_MAX,
                 .mode = st.st_mode,
@@ -4125,7 +4125,7 @@ static int ca_decoder_step_node(CaDecoder *d, CaDecoderNode *n) {
                 if (mode == (mode_t) -1)
                         return -EUNATCH;
 
-                assert(S_ISREG(mode) || S_ISBLK(mode));
+                assert(S_ISREG(mode) || S_ISBLK(mode) || S_ISCHR(mode));
 
                 /* If the size of this payload is known, and we reached it, we are done */
                 if (n->size != UINT64_MAX) {

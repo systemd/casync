@@ -1575,16 +1575,16 @@ static int verb_extract(int argc, char *argv[]) {
                                 return -EINVAL;
                         }
 
-                } else if (S_ISREG(st.st_mode) || S_ISBLK(st.st_mode)) {
+                } else if (S_ISREG(st.st_mode) || S_ISBLK(st.st_mode) || S_ISCHR(st.st_mode)) {
 
                         if (operation == _EXTRACT_OPERATION_INVALID)
                                 operation = EXTRACT_BLOB_INDEX;
                         else if (operation != EXTRACT_BLOB_INDEX) {
-                                log_error("Output is a regular file or block device, but attempted to extract an archive.");
+                                log_error("Output is a regular file, block or character device, but attempted to extract an archive.");
                                 return -EINVAL;
                         }
                 } else {
-                        log_error("Output is neither a directory, a regular file, nor a block device. Refusing.");
+                        log_error("Output is neither a directory, a regular file, nor a block or character device. Refusing.");
                         return -EINVAL;
                 }
         }
