@@ -50,6 +50,7 @@ static bool arg_dry_run = false;
 static bool arg_exclude_nodump = true;
 static bool arg_exclude_submounts = false;
 static bool arg_exclude_file = true;
+static char *arg_exclude_from = NULL;
 static bool arg_reflink = true;
 static bool arg_hardlink = false;
 static bool arg_punch_holes = true;
@@ -334,6 +335,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_EXCLUDE_NODUMP,
                 ARG_EXCLUDE_SUBMOUNTS,
                 ARG_EXCLUDE_FILE,
+                ARG_EXCLUDE_FROM,
                 ARG_UNDO_IMMUTABLE,
                 ARG_PUNCH_HOLES,
                 ARG_REFLINK,
@@ -368,6 +370,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "exclude-nodump",    required_argument, NULL, ARG_EXCLUDE_NODUMP    },
                 { "exclude-submounts", required_argument, NULL, ARG_EXCLUDE_SUBMOUNTS },
                 { "exclude-file",      required_argument, NULL, ARG_EXCLUDE_FILE      },
+                { "exclude-from",      required_argument, NULL, ARG_EXCLUDE_FROM      },
                 { "undo-immutable",    required_argument, NULL, ARG_UNDO_IMMUTABLE    },
                 { "delete",            required_argument, NULL, ARG_DELETE            },
                 { "punch-holes",       required_argument, NULL, ARG_PUNCH_HOLES       },
@@ -537,7 +540,11 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_exclude_file = r;
                         break;
 
-                case ARG_UNDO_IMMUTABLE:
+                case ARG_EXCLUDE_FROM:
+                        arg_exclude_from = strdup(optarg);
+                        break;
+
+                 case ARG_UNDO_IMMUTABLE:
                         r = parse_boolean(optarg);
                         if (r < 0) {
                                 log_error("Failed to parse --undo-immutable= parameter: %s", optarg);
@@ -1380,6 +1387,12 @@ static int verb_make(int argc, char *argv[]) {
                 r = ca_sync_set_cache_path(s, arg_cache);
                 if (r < 0)
                         return log_error_errno(r, "Failed to set cache: %m");
+        }
+
+        if (IN_SET(operation, MAKE_ARCHIVE_INDEX, MAKE_ARCHIVE) && arg_exclude_from) {
+                r = ca_sync_set_exclude_from(s, arg_exclude_from);
+                if (r < 0)
+                        return log_error_errno(r, "Failed to set exclude-from: %m");
         }
 
         (void) send_notify("READY=1");
