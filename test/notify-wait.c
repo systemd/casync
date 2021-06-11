@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: LGPL-2.1+ */
 
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stddef.h>
-#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>

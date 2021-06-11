@@ -3,10 +3,10 @@
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <linux/nbd.h>
+#include <poll.h>
 #include <stddef.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
-#include <sys/poll.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>

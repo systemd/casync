@@ -2,8 +2,8 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stddef.h>
-#include <sys/poll.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
 
