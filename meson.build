@@ -151,6 +151,11 @@ conf.set10('HAVE_SELINUX', get_option('selinux'))
 
 if get_option('udev')
         libudev = dependency('libudev')
+        udevrulesdir = get_option('udevrulesdir')
+        if udevrulesdir == ''
+                udev = dependency('udev', required : false)
+                udevrulesdir = join_paths(udev.get_pkgconfig_variable('udevdir'), 'rules.d')
+        endif
 else
         libudev = []
 endif
@@ -174,12 +179,6 @@ subdir('src')
 subdir('test')
 
 includes = include_directories('src')
-
-udevrulesdir = get_option('udevrulesdir')
-if udevrulesdir == ''
-        udev = dependency('udev', required : false)
-        udevrulesdir = join_paths(udev.get_pkgconfig_variable('udevdir'), 'rules.d')
-endif
 
 subdir('shell-completion/bash')
 subdir('doc')
@@ -318,7 +317,9 @@ udev_rule = configure_file(
           input : 'src/75-casync.rules.in',
           configuration : substs)
 
-install_data(udev_rule, install_dir : udevrulesdir)
+if get_option('udev')
+        install_data(udev_rule, install_dir : udevrulesdir)
+endif
 
 ############################################################
 
