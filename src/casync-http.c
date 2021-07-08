@@ -15,14 +15,17 @@ static volatile sig_atomic_t quit = false;
 
 static bool arg_verbose = false;
 static curl_off_t arg_rate_limit_bps = 0;
+static bool arg_ssl_trust_peer = false;
 
-static enum {
-        ARG_PROTOCOL_HTTP,
-        ARG_PROTOCOL_FTP,
-        ARG_PROTOCOL_HTTPS,
-        ARG_PROTOCOL_SFTP,
-        _ARG_PROTOCOL_INVALID = -1,
-} arg_protocol = _ARG_PROTOCOL_INVALID;
+typedef enum Protocol {
+        PROTOCOL_HTTP,
+        PROTOCOL_FTP,
+        PROTOCOL_HTTPS,
+        PROTOCOL_SFTP,
+        _PROTOCOL_INVALID = -1,
+} Protocol;
+
+static Protocol arg_protocol = _PROTOCOL_INVALID;
 
 typedef enum ProcessUntil {
         PROCESS_UNTIL_WRITTEN,
@@ -32,6 +35,142 @@ typedef enum ProcessUntil {
         PROCESS_UNTIL_HAVE_REQUEST,
         PROCESS_UNTIL_FINISHED,
 } ProcessUntil;
+
+/*
+ * protocol helpers
+ */
+
+static const char *protocol_str(Protocol protocol) {
+        switch (protocol) {
+        case PROTOCOL_HTTP:
+                return "HTTP";
+        case PROTOCOL_FTP:
+                return "FTP";
+        case PROTOCOL_HTTPS:
+                return "HTTPS";
+        case PROTOCOL_SFTP:
+                return "SFTP";
+        default:
+                assert_not_reached("Unknown protocol");
+        }
+}
+
+static bool protocol_status_ok(Protocol protocol, long protocol_status) {
+        switch (protocol) {
+        case PROTOCOL_HTTP:
+        case PROTOCOL_HTTPS:
+                if (protocol_status == 200)
+                        return true;
+                break;
+        case PROTOCOL_FTP:
+                if (protocol_status >= 200 && protocol_status <= 299)
+                        return true;
+                break;
+        case PROTOCOL_SFTP:
+                if (protocol_status == 0)
+                        return true;
+                break;
+        default:
+                assert_not_reached("Unknown protocol");
+                break;
+        }
+        return false;
+}
+
+/*
+ * curl helpers
+ */
+
+DEFINE_TRIVIAL_CLEANUP_FUNC(CURL*, curl_easy_cleanup);
+
+#define log_error_curle(code, fmt, ...)                                 \
+        log_error_errno(-EIO, fmt ": %s", ##__VA_ARGS__, curl_easy_strerror(code))
+
+#define CURL_SETOPT_EASY(handle, option, value)                         \
+        ({                                                              \
+                CURLcode _c;                                            \
+                _c = curl_easy_setopt(handle, option, (value));         \
+                if (_c != CURLE_OK)                                     \
+                        return log_error_curle(_c, "Failed to set " #option); \
+        })
+
+#define CURL_SETOPT_EASY_CANFAIL(handle, option, value)                 \
+        ({                                                              \
+                CURLcode _c;                                            \
+                _c = curl_easy_setopt(handle, option, (value));         \
+                if (_c != CURLE_OK)                                     \
+                        log_error_curle(_c, "Failed to set " #option);  \
+        })
+
+static inline const char *get_curl_effective_url(CURL *handle) {
+        CURLcode c;
+        char *effective_url;
+
+        c = curl_easy_getinfo(handle, CURLINFO_EFFECTIVE_URL, &effective_url);
+        if (c != CURLE_OK) {
+                log_error_curle(c, "Failed to get CURLINFO_EFFECTIVE_URL");
+                return NULL;
+        }
+
+        return effective_url;
+}
+
+static int configure_curl_easy_handle(CURL *handle, const char *url) {
+        assert(handle);
+        assert(url);
+
+        CURL_SETOPT_EASY(handle, CURLOPT_URL, url);
+
+        return 0;
+}
+
+typedef size_t (*ca_curl_write_callback_t)(const void *, size_t, size_t, void *);
+
+static int make_curl_easy_handle(CURL **ret,
+                                 ca_curl_write_callback_t write_callback,
+                                 void *write_data, void *private) {
+        _cleanup_(curl_easy_cleanupp) CURL *h = NULL;
+
+        assert(ret);
+        assert(write_callback);
+        assert(write_data);
+        /* private is optional and can be null */
+
+        h = curl_easy_init();
+        if (!h)
+                return log_oom();
+
+        CURL_SETOPT_EASY(h, CURLOPT_FOLLOWLOCATION, 1L);
+        CURL_SETOPT_EASY(h, CURLOPT_PROTOCOLS,
+                         arg_protocol == PROTOCOL_FTP ? CURLPROTO_FTP :
+                         arg_protocol == PROTOCOL_SFTP ? CURLPROTO_SFTP :
+                         CURLPROTO_HTTP | CURLPROTO_HTTPS);
+
+        if (arg_protocol == PROTOCOL_SFTP) {
+                /* activate the ssh agent. For this to work you need
+                   to have ssh-agent running (type set | grep SSH_AGENT to check) */
+                CURL_SETOPT_EASY_CANFAIL(h, CURLOPT_SSH_AUTH_TYPES, CURLSSH_AUTH_AGENT);
+        }
+
+        if (arg_rate_limit_bps > 0) {
+                CURL_SETOPT_EASY(h, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps);
+                CURL_SETOPT_EASY(h, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps);
+        }
+
+        CURL_SETOPT_EASY(h, CURLOPT_WRITEFUNCTION, write_callback);
+        CURL_SETOPT_EASY(h, CURLOPT_WRITEDATA, write_data);
+
+        if (private)
+                CURL_SETOPT_EASY(h, CURLOPT_PRIVATE, private);
+
+        if (arg_ssl_trust_peer)
+                CURL_SETOPT_EASY(h, CURLOPT_SSL_VERIFYPEER, false);
+
+        /* CURL_SETOPT_EASY(h, CURLOPT_VERBOSE, 1L); */
+
+        *ret = TAKE_PTR(h);
+        return 0;
+}
 
 static CURLcode robust_curl_easy_perform(CURL *curl) {
         uint64_t sleep_base_usec = 100 * 1000;
@@ -135,7 +274,7 @@ static int process_remote(CaRemote *rr, ProcessUntil until) {
                                 return r;
                         if (r < 0)
                                 return log_error_errno(r, "Failed to determine whether there's more data to write.");
-                        if (r > 0)
+                        if (r == 0)
                                 return 0;
 
                         break;
@@ -180,9 +319,13 @@ static size_t write_index(const void *buffer, size_t size, size_t nmemb, void *u
 
         r = ca_remote_put_index(rr, buffer, product);
         if (r < 0) {
-                log_error("Failed to put index: %m");
+                log_error_errno(r, "Failed to put index: %m");
                 return 0;
         }
+
+        r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
+        if (r < 0)
+                return r;
 
         return product;
 }
@@ -200,6 +343,10 @@ static int write_index_eof(CaRemote *rr) {
         if (r < 0)
                 return log_error_errno(r, "Failed to put index EOF: %m");
 
+        r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
+        if (r < 0)
+                return r;
+
         return 0;
 }
 
@@ -216,9 +363,13 @@ static size_t write_archive(const void *buffer, size_t size, size_t nmemb, void 
 
         r = ca_remote_put_archive(rr, buffer, product);
         if (r < 0) {
-                log_error("Failed to put archive: %m");
+                log_error_errno(r, "Failed to put archive: %m");
                 return 0;
         }
+
+        r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
+        if (r < 0)
+                return r;
 
         return product;
 }
@@ -235,6 +386,10 @@ static int write_archive_eof(CaRemote *rr) {
         r = ca_remote_put_archive_eof(rr);
         if (r < 0)
                 return log_error_errno(r, "Failed to put archive EOF: %m");
+
+        r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
+        if (r < 0)
+                return r;
 
         return 0;
 }
@@ -288,95 +443,134 @@ static char *chunk_url(const char *store_url, const CaChunkID *id) {
         return buffer;
 }
 
-static int acquire_file(CaRemote *rr,
-                        CURL *curl,
-                        const char *url,
-                        size_t (*callback)(const void *p, size_t size, size_t nmemb, void *userdata)) {
-
+static int acquire_file(CaRemote *rr, CURL *handle) {
+        CURLcode c;
         long protocol_status;
+        const char *url;
 
-        assert(curl);
+	url = get_curl_effective_url(handle);
         assert(url);
-        assert(callback);
-
-        if (curl_easy_setopt(curl, CURLOPT_URL, url) != CURLE_OK) {
-                log_error("Failed to set CURL URL to: %s", url);
-                return -EIO;
-        }
-
-        if (curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback) != CURLE_OK) {
-                log_error("Failed to set CURL callback function.");
-                return -EIO;
-        }
-
-        if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, rr) != CURLE_OK) {
-                log_error("Failed to set CURL private data.");
-                return -EIO;
-        }
 
         log_debug("Acquiring %s...", url);
 
-        if (robust_curl_easy_perform(curl) != CURLE_OK) {
-                log_error("Failed to acquire %s", url);
-                return -EIO;
-        }
+        c = robust_curl_easy_perform(handle);
+        if (c != CURLE_OK)
+                return log_error_curle(c, "Failed to acquire %s", url);
 
-        if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK) {
-                log_error("Failed to query response code");
-                return -EIO;
-        }
+        c = curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &protocol_status);
+        if (c != CURLE_OK)
+                return log_error_curle(c, "Failed to query response code");
 
-        if (IN_SET(arg_protocol, ARG_PROTOCOL_HTTP, ARG_PROTOCOL_HTTPS) && protocol_status != 200) {
-                char *m;
-
-                if (arg_verbose)
-                        log_error("HTTP server failure %li while requesting %s.", protocol_status, url);
-
-                if (asprintf(&m, "HTTP request on %s failed with status %li", url, protocol_status) < 0)
-                        return log_oom();
-
-                (void) ca_remote_abort(rr, protocol_status == 404 ? ENOMEDIUM : EBADR, m);
-                free(m);
-
-                return 0;
-
-        } else if (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status < 200 || protocol_status > 299)) {
-                char *m;
+        if (!protocol_status_ok(arg_protocol, protocol_status)) {
+                _cleanup_free_ char *m = NULL;
+                int abort_code;
 
                 if (arg_verbose)
-                        log_error("FTP server failure %li while requesting %s.", protocol_status, url);
+                        log_error("%s server failure %li while requesting %s",
+                                  protocol_str(arg_protocol), protocol_status, url);
 
-                if (asprintf(&m, "FTP request on %s failed with status %li", url, protocol_status) < 0)
+                if (asprintf(&m, "%s request on %s failed with status %li",
+                             protocol_str(arg_protocol), url, protocol_status) < 0)
                         return log_oom();
 
-                (void) ca_remote_abort(rr, EBADR, m);
-                free(m);
-                return 0;
-        } else if (arg_protocol == ARG_PROTOCOL_SFTP && (protocol_status != 0)) {
-                char *m;
+                if (IN_SET(arg_protocol, PROTOCOL_HTTP, PROTOCOL_HTTPS) && protocol_status == 404)
+                        abort_code = ENOMEDIUM;
+                else
+                        abort_code = EBADR;
 
-                if (arg_verbose)
-                        log_error("SFTP server failure %li while requesting %s.", protocol_status, url);
-
-                if (asprintf(&m, "SFTP request on %s failed with status %li", url, protocol_status) < 0)
-                        return log_oom();
-
-                (void) ca_remote_abort(rr, EBADR, m);
-                free(m);
+                (void) ca_remote_abort(rr, abort_code, m);
                 return 0;
         }
 
         return 1;
 }
 
+static int acquire_chunks(CaRemote *rr, const char *store_url) {
+        _cleanup_free_ char *url_buffer = NULL;
+        _cleanup_(curl_easy_cleanupp) CURL *curl = NULL;
+        _cleanup_(realloc_buffer_free) ReallocBuffer chunk_buffer = {};
+        int r;
+
+        r = make_curl_easy_handle(&curl, write_chunk, &chunk_buffer, NULL);
+        if (r < 0)
+                return r;
+
+        for (;;) {
+                CURLcode c;
+                CaChunkID id;
+                long protocol_status;
+
+                if (quit) {
+                        log_info("Got exit signal, quitting.");
+                        return 0;
+                }
+
+                r = process_remote(rr, PROCESS_UNTIL_HAVE_REQUEST);
+                if (r == -EPIPE)
+                        return 0;
+                if (r < 0)
+                        return r;
+
+                r = ca_remote_next_request(rr, &id);
+                if (r == -ENODATA)
+                        continue;
+                if (r < 0)
+                        return log_error_errno(r, "Failed to determine next chunk to get: %m");
+
+                free(url_buffer);
+                url_buffer = chunk_url(store_url, &id);
+                if (!url_buffer)
+                        return log_oom();
+
+                r = configure_curl_easy_handle(curl, url_buffer);
+                if (r < 0)
+                        return r;
+
+                log_debug("Acquiring %s...", url_buffer);
+
+                c = robust_curl_easy_perform(curl);
+                if (c != CURLE_OK)
+                        return log_error_curle(c, "Failed to acquire %s", url_buffer);
+
+                c = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status);
+                if (c != CURLE_OK)
+                        return log_error_curle(c, "Failed to query response code");
+
+                r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_CHUNK);
+                if (r == -EPIPE)
+                        return 0;
+                if (r < 0)
+                        return r;
+
+                if (protocol_status_ok(arg_protocol, protocol_status)) {
+                        r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to write chunk: %m");
+                } else {
+                        if (arg_verbose)
+                                log_error("%s server failure %ld while requesting %s",
+                                          protocol_str(arg_protocol), protocol_status,
+                                          url_buffer);
+
+                        r = ca_remote_put_missing(rr, &id);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to write missing message: %m");
+                }
+
+                realloc_buffer_empty(&chunk_buffer);
+
+                r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
+                if (r == -EPIPE)
+                        return 0;
+                if (r < 0)
+                        return r;
+        }
+}
+
 static int run(int argc, char *argv[]) {
         const char *base_url, *archive_url, *index_url, *wstore_url;
         size_t n_stores = 0, current_store = 0;
-        CURL *curl = NULL;
         _cleanup_(ca_remote_unrefp) CaRemote *rr = NULL;
-        _cleanup_(realloc_buffer_free) ReallocBuffer chunk_buffer = {};
-        _cleanup_free_ char *url_buffer = NULL;
-        long protocol_status;
         int r;
 
         if (argc < _CA_REMOTE_ARG_MAX) {
@@ -404,227 +598,82 @@ static int run(int argc, char *argv[]) {
         }
 
         rr = ca_remote_new();
-        if (!rr) {
-                r = log_oom();
-                goto finish;
-        }
+        if (!rr)
+                return log_oom();
 
         r = ca_remote_set_local_feature_flags(rr,
                                               (n_stores > 0 ? CA_PROTOCOL_READABLE_STORE : 0) |
                                               (index_url ? CA_PROTOCOL_READABLE_INDEX : 0) |
                                               (archive_url ? CA_PROTOCOL_READABLE_ARCHIVE : 0));
-        if (r < 0) {
-                log_error("Failed to set feature flags: %m");
-                goto finish;
-        }
+        if (r < 0)
+                return log_error_errno(r, "Failed to set feature flags: %m");
 
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);
-        if (r < 0) {
-                log_error("Failed to set I/O file descriptors: %m");
-                goto finish;
-        }
-
-        curl = curl_easy_init();
-        if (!curl) {
-                r = log_oom();
-                goto finish;
-        }
-
-        if (curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L) != CURLE_OK) {
-                log_error("Failed to turn on location following.");
-                r = -EIO;
-                goto finish;
-        }
-
-        if (curl_easy_setopt(curl, CURLOPT_PROTOCOLS, arg_protocol == ARG_PROTOCOL_FTP ? CURLPROTO_FTP :
-                                                      arg_protocol == ARG_PROTOCOL_SFTP? CURLPROTO_SFTP: CURLPROTO_HTTP|CURLPROTO_HTTPS) != CURLE_OK) {
-                log_error("Failed to limit protocols to HTTP/HTTPS/FTP/SFTP.");
-                r = -EIO;
-                goto finish;
-        }
-
-        if (arg_protocol == ARG_PROTOCOL_SFTP) {
-                /* activate the ssh agent. For this to work you need
-                   to have ssh-agent running (type set | grep SSH_AGENT to check) */
-                if (curl_easy_setopt(curl, CURLOPT_SSH_AUTH_TYPES, CURLSSH_AUTH_AGENT) != CURLE_OK)
-                        log_error("Failed to turn on ssh agent support, ignoring.");
-        }
-
-        if (arg_rate_limit_bps > 0) {
-                if (curl_easy_setopt(curl, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                        log_error("Failed to set CURL send speed limit.");
-                        r = -EIO;
-                        goto finish;
-                }
-
-                if (curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                        log_error("Failed to set CURL receive speed limit.");
-                        r = -EIO;
-                        goto finish;
-                }
-        }
-
-        /* (void) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L); */
+        if (r < 0)
+                return log_error_errno(r, "Failed to set I/O file descriptors: %m");
 
         if (archive_url) {
-                r = acquire_file(rr, curl, archive_url, write_archive);
+                _cleanup_(curl_easy_cleanupp) CURL *handle = NULL;
+
+                r = make_curl_easy_handle(&handle, write_archive, rr, NULL);
                 if (r < 0)
-                        goto finish;
+                        return r;
+
+                r = configure_curl_easy_handle(handle, archive_url);
+                if (r < 0)
+                        return r;
+
+                r = acquire_file(rr, handle);
+                if (r < 0)
+                        return r;
                 if (r == 0)
                         goto flush;
 
                 r = write_archive_eof(rr);
                 if (r < 0)
-                        goto finish;
+                        return r;
         }
 
         if (index_url) {
-                r = acquire_file(rr, curl, index_url, write_index);
+                _cleanup_(curl_easy_cleanupp) CURL *handle = NULL;
+
+                r = make_curl_easy_handle(&handle, write_index, rr, NULL);
                 if (r < 0)
-                        goto finish;
+                        return r;
+
+                r = configure_curl_easy_handle(handle, index_url);
+                if (r < 0)
+                        return r;
+
+                r = acquire_file(rr, handle);
+                if (r < 0)
+                        return r;
                 if (r == 0)
                         goto flush;
 
                 r = write_index_eof(rr);
                 if (r < 0)
-                        goto finish;
+                        return r;
         }
 
-        for (;;) {
+        if (n_stores > 0) {
                 const char *store_url;
-                CaChunkID id;
-
-                if (quit) {
-                        log_info("Got exit signal, quitting.");
-                        r = 0;
-                        goto finish;
-                }
-
-                if (n_stores == 0)  /* No stores? Then we did all we could do */
-                        break;
-
-                r = process_remote(rr, PROCESS_UNTIL_HAVE_REQUEST);
-                if (r == -EPIPE) {
-                        r = 0;
-                        goto finish;
-                }
-                if (r < 0)
-                        goto finish;
-
-                r = ca_remote_next_request(rr, &id);
-                if (r == -ENODATA)
-                        continue;
-                if (r < 0) {
-                        log_error_errno(r, "Failed to determine next chunk to get: %m");
-                        goto finish;
-                }
 
                 current_store = current_store % n_stores;
                 if (wstore_url)
-                        store_url = current_store == 0 ? wstore_url : argv[current_store + _CA_REMOTE_ARG_MAX - 1];
+                        store_url = current_store == 0 ? wstore_url :
+                                argv[current_store + _CA_REMOTE_ARG_MAX - 1];
                 else
                         store_url = argv[current_store + _CA_REMOTE_ARG_MAX];
                 /* current_store++; */
 
-                free(url_buffer);
-                url_buffer = chunk_url(store_url, &id);
-                if (!url_buffer) {
-                        r = log_oom();
-                        goto finish;
-                }
-
-                if (curl_easy_setopt(curl, CURLOPT_URL, url_buffer) != CURLE_OK) {
-                        log_error("Failed to set CURL URL to: %s", index_url);
-                        r = -EIO;
-                        goto finish;
-                }
-
-                if (curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_chunk) != CURLE_OK) {
-                        log_error("Failed to set CURL callback function.");
-                        r = -EIO;
-                        goto finish;
-                }
-
-                if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk_buffer) != CURLE_OK) {
-                        log_error("Failed to set CURL private data.");
-                        r = -EIO;
-                        goto finish;
-                }
-
-                if (arg_rate_limit_bps > 0) {
-                        if (curl_easy_setopt(curl, CURLOPT_MAX_SEND_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                                log_error("Failed to set CURL send speed limit.");
-                                r = -EIO;
-                                goto finish;
-                        }
-
-                        if (curl_easy_setopt(curl, CURLOPT_MAX_RECV_SPEED_LARGE, arg_rate_limit_bps) != CURLE_OK) {
-                                log_error("Failed to set CURL receive speed limit.");
-                                r = -EIO;
-                                goto finish;
-                        }
-                }
-
-                log_debug("Acquiring %s...", url_buffer);
-
-                if (robust_curl_easy_perform(curl) != CURLE_OK) {
-                        log_error("Failed to acquire %s", url_buffer);
-                        r = -EIO;
-                        goto finish;
-                }
-
-                if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &protocol_status) != CURLE_OK) {
-                        log_error("Failed to query response code");
-                        r = -EIO;
-                        goto finish;
-                }
-
-                r = process_remote(rr, PROCESS_UNTIL_CAN_PUT_CHUNK);
-                if (r == -EPIPE) {
-                        r = 0;
-                        goto finish;
-                }
+                r = acquire_chunks(rr, store_url);
                 if (r < 0)
-                        goto finish;
-
-                if ((IN_SET(arg_protocol, ARG_PROTOCOL_HTTP, ARG_PROTOCOL_HTTPS) && protocol_status == 200) ||
-                    (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status >= 200 && protocol_status <= 299))||
-                    (arg_protocol == ARG_PROTOCOL_SFTP && (protocol_status == 0))) {
-
-                        r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&chunk_buffer), realloc_buffer_size(&chunk_buffer));
-                        if (r < 0) {
-                                log_error_errno(r, "Failed to write chunk: %m");
-                                goto finish;
-                        }
-
-                } else {
-                        if (arg_verbose)
-                                log_error("HTTP/FTP/SFTP server failure %li while requesting %s.", protocol_status, url_buffer);
-
-                        r = ca_remote_put_missing(rr, &id);
-                        if (r < 0) {
-                                log_error_errno(r, "Failed to write missing message: %m");
-                                goto finish;
-                        }
-                }
-
-                realloc_buffer_empty(&chunk_buffer);
-
-                r = process_remote(rr, PROCESS_UNTIL_WRITTEN);
-                if (r == -EPIPE) {
-                        r = 0;
-                        goto finish;
-                }
-                if (r < 0)
-                        goto finish;
+                        return r;
         }
 
 flush:
         r = process_remote(rr, PROCESS_UNTIL_FINISHED);
-
-finish:
-        if (curl)
-                curl_easy_cleanup(curl);
 
         return r;
 }
@@ -635,10 +684,16 @@ static void help(void) {
 
 static int parse_argv(int argc, char *argv[]) {
 
+        enum {
+                ARG_RATE_LIMIT_BPS = 0x100,
+                ARG_SSL_TRUST_PEER,
+        };
+
         static const struct option options[] = {
                 { "help",           no_argument,       NULL, 'h'                },
                 { "verbose",        no_argument,       NULL, 'v'                },
-                { "rate-limit-bps", required_argument, NULL, 'l'                },
+                { "rate-limit-bps", required_argument, NULL, ARG_RATE_LIMIT_BPS },
+                { "ssl-trust-peer", no_argument,       NULL, ARG_SSL_TRUST_PEER },
                 {}
         };
 
@@ -648,13 +703,13 @@ static int parse_argv(int argc, char *argv[]) {
         assert(argv);
 
         if (strstr(argv[0], "https"))
-                arg_protocol = ARG_PROTOCOL_HTTPS;
+                arg_protocol = PROTOCOL_HTTPS;
         else if (strstr(argv[0], "http"))
-                arg_protocol = ARG_PROTOCOL_HTTP;
+                arg_protocol = PROTOCOL_HTTP;
         else if (strstr(argv[0], "sftp"))
-                arg_protocol = ARG_PROTOCOL_SFTP;
+                arg_protocol = PROTOCOL_SFTP;
         else if (strstr(argv[0], "ftp"))
-                arg_protocol = ARG_PROTOCOL_FTP;
+                arg_protocol = PROTOCOL_FTP;
         else {
                 log_error("Failed to determine set of protocols to use, refusing.");
                 return -EINVAL;
@@ -675,8 +730,12 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_verbose = true;
                         break;
 
-                case 'l':
+                case ARG_RATE_LIMIT_BPS:
                         arg_rate_limit_bps = strtoll(optarg, NULL, 10);
+                        break;
+
+                case ARG_SSL_TRUST_PEER:
+                        arg_ssl_trust_peer = true;
                         break;
 
                 case '?':
