@@ -13,6 +13,7 @@
 
 static volatile sig_atomic_t quit = false;
 
+static int arg_log_level = -1;
 static bool arg_verbose = false;
 static curl_off_t arg_rate_limit_bps = 0;
 
@@ -464,7 +465,11 @@ static int run(int argc, char *argv[]) {
                 }
         }
 
-        /* (void) curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L); */
+        if (curl_easy_setopt(curl, CURLOPT_VERBOSE, arg_log_level > 4)) {
+                log_error("Failed to set CURL verbosity.");
+                r = -EIO;
+                goto finish;
+        }
 
         if (archive_url) {
                 r = acquire_file(rr, curl, archive_url, write_archive);
@@ -534,7 +539,7 @@ static int run(int argc, char *argv[]) {
                 }
 
                 if (curl_easy_setopt(curl, CURLOPT_URL, url_buffer) != CURLE_OK) {
-                        log_error("Failed to set CURL URL to: %s", index_url);
+                        log_error("Failed to set CURL URL to: %s", url_buffer);
                         r = -EIO;
                         goto finish;
                 }
@@ -563,6 +568,12 @@ static int run(int argc, char *argv[]) {
                                 r = -EIO;
                                 goto finish;
                         }
+                }
+
+                if (curl_easy_setopt(curl, CURLOPT_VERBOSE, arg_log_level > 4)) {
+                        log_error("Failed to set CURL verbosity.");
+                        r = -EIO;
+                        goto finish;
                 }
 
                 log_debug("Acquiring %s...", url_buffer);
@@ -635,14 +646,19 @@ static void help(void) {
 
 static int parse_argv(int argc, char *argv[]) {
 
+        enum {
+                ARG_RATE_LIMIT_BPS = 0x100,
+        };
+
         static const struct option options[] = {
                 { "help",           no_argument,       NULL, 'h'                },
+                { "log-level",      required_argument, NULL, 'l'                },
                 { "verbose",        no_argument,       NULL, 'v'                },
-                { "rate-limit-bps", required_argument, NULL, 'l'                },
+                { "rate-limit-bps", required_argument, NULL, ARG_RATE_LIMIT_BPS },
                 {}
         };
 
-        int c;
+        int c, r;
 
         assert(argc >= 0);
         assert(argv);
@@ -663,7 +679,7 @@ static int parse_argv(int argc, char *argv[]) {
         if (getenv_bool("CASYNC_VERBOSE") > 0)
                 arg_verbose = true;
 
-        while ((c = getopt_long(argc, argv, "hv", options, NULL)) >= 0) {
+        while ((c = getopt_long(argc, argv, "hl:v", options, NULL)) >= 0) {
 
                 switch (c) {
 
@@ -671,11 +687,20 @@ static int parse_argv(int argc, char *argv[]) {
                         help();
                         return 0;
 
+                case 'l':
+                        r = set_log_level_from_string(optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse log level \"%s\": %m", optarg);
+
+                        arg_log_level = r;
+
+                        break;
+
                 case 'v':
                         arg_verbose = true;
                         break;
 
-                case 'l':
+                case ARG_RATE_LIMIT_BPS:
                         arg_rate_limit_bps = strtoll(optarg, NULL, 10);
                         break;
 

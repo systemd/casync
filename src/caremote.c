@@ -58,6 +58,7 @@ struct CaRemote {
         int input_fd;
         int output_fd;
 
+        int log_level;
         uint64_t rate_limit_bps;
 
         ReallocBuffer input_buffer;
@@ -112,6 +113,7 @@ CaRemote* ca_remote_new(void) {
         rr->local_feature_flags = UINT64_MAX;
         rr->remote_feature_flags = UINT64_MAX;
 
+        rr->log_level = -1;
         rr->rate_limit_bps = UINT64_MAX;
 
         rr->digest_type = _CA_DIGEST_TYPE_INVALID;
@@ -226,6 +228,15 @@ CaRemote* ca_remote_unref(CaRemote *rr) {
         ca_digest_free(rr->validate_digest);
 
         return mfree(rr);
+}
+
+int ca_remote_set_log_level(CaRemote *rr, int log_level) {
+        if (!rr)
+                return -EINVAL;
+
+        rr->log_level = log_level;
+
+        return 0;
 }
 
 int ca_remote_set_rate_limit_bps(CaRemote *rr, uint64_t rate_limit_bps) {
@@ -984,6 +995,9 @@ static int ca_remote_start(CaRemote *rr) {
 
                         argc = (rr->callout ? 1 : 3) + 5 + strv_length(rr->rstore_urls);
 
+                        if (rr->log_level != -1)
+                                argc++;
+
                         if (rr->rate_limit_bps != UINT64_MAX)
                                 argc++;
 
@@ -1014,6 +1028,14 @@ static int ca_remote_start(CaRemote *rr) {
                                 args[i++] = (char*) ssh;
                                 args[i++] = strndupa(rr->url_prefix, skip - 1);
                                 args[i++] = (char*) remote_casync;
+                        }
+
+                        if (rr->log_level != -1) {
+                                r = asprintf(args + i, "--log-level=%i", rr->log_level);
+                                if (r < 0)
+                                        return log_oom();
+
+                                i++;
                         }
 
                         if (rr->rate_limit_bps != UINT64_MAX) {

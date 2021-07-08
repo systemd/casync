@@ -50,6 +50,7 @@ int ca_remote_get_remote_feature_flags(CaRemote *rr, uint64_t* flags);
 int ca_remote_set_digest_type(CaRemote *rr, CaDigestType type);
 int ca_remote_get_digest_type(CaRemote *rr, CaDigestType *ret);
 
+int ca_remote_set_log_level(CaRemote *rr, int log_level);
 int ca_remote_set_rate_limit_bps(CaRemote *rr, uint64_t rate_limit_bps);
 
 int ca_remote_set_io_fds(CaRemote *rr, int input_fd, int output_fd);
