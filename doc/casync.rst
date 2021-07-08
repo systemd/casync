@@ -10,10 +10,10 @@ Synopsis
 
 | **casync** [*OPTIONS*...] make [*ARCHIVE* | *ARCHIVE_INDEX* | *BLOB_INDEX*] [*PATH*]
 | **casync** [*OPTIONS*...] extract [*ARCHIVE* | *ARCHIVE_INDEX* | *BLOB_INDEX*] [*PATH*]
-| **casync** [*OPTIONS*...] list [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
-| **casync** [*OPTIONS*...] mtree [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
+| **casync** [*OPTIONS*...] list [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
+| **casync** [*OPTIONS*...] mtree [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 | **casync** [*OPTIONS*...] stat [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
-| **casync** [*OPTIONS*...] digest [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*]
+| **casync** [*OPTIONS*...] digest [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*] [PATH]
 | **casync** [*OPTIONS*...] mount [*ARCHIVE* | *ARCHIVE_INDEX*] *PATH*
 | **casync** [*OPTIONS*...] mkdev [*BLOB* | *BLOB_INDEX*] [*NODE*]
 | **casync** [*OPTIONS*...] gc *BLOB_INDEX* | *ARCHIVE_INDEX* ...
@@ -55,11 +55,12 @@ The metadata replayed from the archive is controlled by the ``--with-*`` and
 ``--without-*`` options.
 
 |
-| **casync** **list** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
+| **casync** **list** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 
-This will list all the files and directories in the specified .catar
-archive or .caidx index, or the directory. The argument is optional,
-and the current directory will be used by default.
+This will list all the files and directories at *PATH* as found in either
+*ARCHIVE* or *ARCHIVE_INDEX* or underneath *DIRECTORY*. Both arguments are
+optional. The first defaults to the current directory. The second defaults to
+the top-level path of the archive (``/``).
 
 The output includes the permission mask and file names::
 
@@ -69,7 +70,7 @@ The output includes the permission mask and file names::
   -rw-r--r-- TODO
 
 |
-| **casync** **mtree** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*]
+| **casync** **mtree** [*ARCHIVE* | *ARCHIVE_INDEX* | *DIRECTORY*] [*PATH*]
 
 This is similar to **list**, but includes information about each entry in the
 key=value format defined by BSD mtree(5)::
@@ -85,7 +86,7 @@ key=value format defined by BSD mtree(5)::
 This will show detailed information about a file or directory *PATH*, as found
 in either *ARCHIVE* or *ARCHIVE_INDEX* or underneath *DIRECTORY*. Both arguments
 are optional. The first defaults to the current directory, and the second
-the top-level path (``.``).
+the top-level path (``/``).
 
 Example output::
 
@@ -100,10 +101,15 @@ Example output::
      Group: zbyszek (1000)
 
 |
-| **casync** **digest** [*ARCHIVE* | *BLOB* | *ARCHIVE_INDEX* | *BLOB_INDEX* | *DIRECTORY*]
+| **casync** **digest** [*BLOB* | *BLOB_INDEX* | *DIRECTORY*]
+| **casync** **digest** *ARCHIVE* | *ARCHIVE_INDEX* [PATH]
 
-This will compute and print the checksum of the argument.
-The argument is optional and defaults to the current directory::
+This will compute and print the checksum of the file or directory, or the given
+*PATH* as found in either *ARCHIVE* or *ARCHIVE_INDEX*. Both arguments are
+optional. The first default to the current directory. The second defaults to
+the top-level path of the archive (``/``).
+
+Example::
 
   $ casync digest
   d1698b0c4c27163284abea5d1e369b92e89dd07cb74378638849800e0406baf7
