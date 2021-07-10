@@ -10,6 +10,8 @@ util_sources = files('''
 '''.split())
 
 libshared_sources = files('''
+        affinity-count.c
+        affinity-count.h
         cacache.c
         cacache.h
         cachunk.c

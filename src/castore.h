@@ -25,6 +25,8 @@ int ca_store_get(CaStore *store, const CaChunkID *chunk_id, CaChunkCompression d
 int ca_store_has(CaStore *store, const CaChunkID *chunk_id);
 int ca_store_put(CaStore *store, const CaChunkID *chunk_id, CaChunkCompression effective_compression, const void *data, uint64_t size);
 
+int ca_store_finalize(CaStore *store);
+
 int ca_store_get_requests(CaStore *s, uint64_t *ret);
 int ca_store_get_request_bytes(CaStore *s, uint64_t *ret);
 
