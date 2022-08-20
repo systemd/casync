@@ -191,9 +191,6 @@ static bool shall_break(CaChunker *c, uint32_t v) {
         if (c->chunk_size >= c->chunk_size_max)
                 return true;
 
-        if (c->chunk_size < c->chunk_size_min)
-                return false;
-
         return (v % c->discriminator) == (c->discriminator - 1);
 }
 
@@ -205,7 +202,7 @@ static bool CA_CHUNKER_IS_FIXED_SIZE(CaChunker *c) {
 size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
         const uint8_t *q = p;
         uint32_t v;
-        size_t k = 0, idx;
+        size_t k = 0, skip = 0, idx;
 
         assert(c);
         assert(p);
@@ -224,6 +221,20 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
 
                 k = m;
                 goto now;
+        }
+
+        /* We don't need to scan the first chunk_size_min - CA_CHUNKER_WINDOW_SIZE bytes */
+        if (c->chunk_size_min > CA_CHUNKER_WINDOW_SIZE) {
+                skip = c->chunk_size_min - CA_CHUNKER_WINDOW_SIZE;
+                if (c->chunk_size < skip) {
+                        k = skip - c->chunk_size;
+                        if (k >= n) {
+                            c->chunk_size += n;
+                            return (size_t) -1;
+                        }
+                        q += k, n -= k;
+                        c->chunk_size += k;
+                }
         }
 
         /* Scans the specified bytes for chunk borders. Returns (size_t) -1 if no border was discovered, otherwise the
@@ -247,13 +258,13 @@ size_t ca_chunker_scan(CaChunker *c, const void* p, size_t n) {
 
                 /* Window is full, we are now ready to go. */
                 v = ca_chunker_start(c, c->window, c->window_size);
-                k = m;
+                k += m;
 
                 if (shall_break(c, v))
                         goto now;
         }
 
-        idx = c->chunk_size % CA_CHUNKER_WINDOW_SIZE;
+        idx = (c->chunk_size - skip) % CA_CHUNKER_WINDOW_SIZE;
 
         while (n > 0) {
                 v = ca_chunker_roll(c, c->window[idx], *q);
