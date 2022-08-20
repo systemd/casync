@@ -77,10 +77,10 @@ static CaCompressionType arg_compression = CA_COMPRESSION_DEFAULT;
 static void help(void) {
         printf("%1$s [OPTIONS...] make [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
                "%1$s [OPTIONS...] extract [ARCHIVE|ARCHIVE_INDEX|BLOB_INDEX] [PATH]\n"
-               "%1$s [OPTIONS...] list [ARCHIVE|ARCHIVE_INDEX|DIRECTORY] [PATH]\n"
-               "%1$s [OPTIONS...] mtree [ARCHIVE|ARCHIVE_INDEX|DIRECTORY] [PATH]\n"
-               "%1$s [OPTIONS...] stat [ARCHIVE|ARCHIVE_INDEX|DIRECTORY] [PATH]\n"
-               "%1$s [OPTIONS...] digest [ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIRECTORY] [PATH]\n"
+               "%1$s [OPTIONS...] list [ARCHIVE|ARCHIVE_INDEX|DIR] [PATH]\n"
+               "%1$s [OPTIONS...] mtree [ARCHIVE|ARCHIVE_INDEX|DIR] [PATH]\n"
+               "%1$s [OPTIONS...] stat [ARCHIVE|ARCHIVE_INDEX|DIR] [PATH]\n"
+               "%1$s [OPTIONS...] digest [ARCHIVE|BLOB|ARCHIVE_INDEX|BLOB_INDEX|DIR] [PATH]\n"
 #if HAVE_FUSE
                "%1$s [OPTIONS...] mount [ARCHIVE|ARCHIVE_INDEX] PATH\n"
 #endif
@@ -132,7 +132,7 @@ static void help(void) {
                "     --what=archive-index    Operate on archive index file\n"
                "     --what=blob             Operate on blob file\n"
                "     --what=blob-index       Operate on blob index file\n"
-               "     --what=directory        Operate on directory\n\n"
+               "     --what=dir              Operate on directory dir\n\n"
                "     --what=help             Print allowed values\n\n"
                "Archive feature sets:\n"
                "     --with=best             Store most accurate information\n"
