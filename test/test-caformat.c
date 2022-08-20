@@ -22,7 +22,7 @@ int main(int argc, char *argv[]) {
 
         fd = open(argv[1], O_RDONLY|O_CLOEXEC|O_NOCTTY);
         if (fd < 0) {
-                log_error_errno(errno, "Failed to open %s: %m", argv[1]);
+                r = log_error_errno(errno, "Failed to open %s: %m", argv[1]);
                 goto finish;
         }
 
