@@ -110,6 +110,7 @@ struct CaSync {
         bool archive_eof;
         bool remote_index_eof;
 
+        int log_level;
         size_t rate_limit_bps;
 
         uint64_t feature_flags;
@@ -169,6 +170,7 @@ static CaSync *ca_sync_new(void) {
 
         s->chunker = (CaChunker) CA_CHUNKER_INIT;
 
+        s->log_level = -1;
         s->archive_size = UINT64_MAX;
         s->punch_holes = true;
         s->reflink = true;
@@ -511,6 +513,15 @@ CaSync *ca_sync_unref(CaSync *s) {
         return mfree(s);
 }
 
+int ca_sync_set_log_level(CaSync *s, int log_level) {
+        if (!s)
+                return -EINVAL;
+
+        s->log_level = log_level;
+
+        return 0;
+}
+
 int ca_sync_set_rate_limit_bps(CaSync *s, uint64_t rate_limit_bps) {
         if (!s)
                 return -EINVAL;
@@ -670,6 +681,12 @@ int ca_sync_set_index_remote(CaSync *s, const char *url) {
         s->remote_index = ca_remote_new();
         if (!s->remote_index)
                 return -ENOMEM;
+
+	if (s->log_level != -1) {
+        	r = ca_remote_set_log_level(s->remote_index, s->log_level);
+        	if (r < 0)
+        		return r;
+	}
 
         if (s->rate_limit_bps > 0) {
                 r = ca_remote_set_rate_limit_bps(s->remote_index, s->rate_limit_bps);
