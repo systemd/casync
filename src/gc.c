@@ -124,16 +124,15 @@ int ca_chunk_collection_add_index(CaChunkCollection *coll, const char *path) {
 }
 
 int ca_gc_cleanup_unused(CaStore *store, CaChunkCollection *coll, unsigned flags) {
-        _cleanup_(ca_store_iterator_unrefp) CaStoreIterator* iter;
-        int r;
         _cleanup_free_ char *ids = NULL;
         size_t ids_size = 0;
         size_t removed_chunks = 0, all_chunks = 0, removed_dirs = 0;
+        int r;
 
         if (!store || !coll)
                 return -EINVAL;
 
-        iter = ca_store_iterator_new(store);
+        _cleanup_(ca_store_iterator_unrefp) CaStoreIterator* iter = ca_store_iterator_new(store);
         if (!iter)
                 return log_oom();
 
