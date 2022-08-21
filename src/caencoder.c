@@ -12,7 +12,6 @@
 #include <string.h>
 #include <sys/acl.h>
 #include <sys/ioctl.h>
-#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/xattr.h>
