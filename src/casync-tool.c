@@ -1846,6 +1846,13 @@ static int list_one_file(const char *arg0, CaSync *s, bool *toplevel_shown) {
                 (void) ca_sync_current_chattr(s, &flags);
                 (void) ca_sync_current_fat_attrs(s, &fat_attrs);
 
+                /*
+                 * Prepend "./" to every entry other than "." to force them to
+                 * be treated as a Full path. This matches the output of
+                 * "nmtree -C".
+                 */
+                if (!isempty(escaped))
+                        fputs("./", stdout);
                 fputs(empty_to_dot(escaped), stdout);
 
                 if (S_ISLNK(mode))
