@@ -4,6 +4,7 @@
 #define foocompresshorhfoo
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #if HAVE_LIBLZMA
 #  include <lzma.h>
