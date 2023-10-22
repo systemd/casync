@@ -1,0 +1,76 @@
+---
+# vi: ts=4 sw=4 et:
+
+dist: bionic
+
+before_install:
+    - sudo apt-get update -y
+    - |
+      sudo apt-get install -y --no-install-recommends \
+                           gcc-7 libgcc-7-dev ninja-build \
+                           libacl1-dev libcurl4-openssl-dev libfuse-dev liblzma-dev \
+                           libssl-dev libudev-dev libzstd-dev pkg-config python3.6 \
+                           python3-pip python3-setuptools python3-wheel python-sphinx \
+                           rsync squashfs-tools zlib1g-dev
+    - sudo python3.6 -m pip install meson
+
+jobs:
+    include:
+        - stage: Build & test
+          name: Ubuntu Bionic (x86_64)
+          language: bash
+          before_script:
+              - meson build
+              - ninja -C build
+          script:
+              - ninja -C build test
+              - sudo CASYNC_TEST_NBD=0 $(which ninja) -C build test
+
+        - name: Ubuntu Bionic (i386)
+          language: bash
+          env:
+              - PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu
+          install:
+              - sudo dpkg --add-architecture i386
+              - sudo apt-get update -y
+              - |
+                sudo apt-get install  -y --no-install-recommends \
+                                     gcc-multilib libgcc-7-dev:i386 \
+                                     libacl1-dev:i386 libcurl4-openssl-dev:i386 libfuse-dev:i386 liblzma-dev:i386 \
+                                     libssl-dev:i386 libudev-dev:i386 libzstd-dev:i386 pkg-config:i386 zlib1g-dev:i386
+          before_script:
+              - CFLAGS=-m32 LDFLAGS=-m32 meson build-i386
+              - ninja -C build-i386
+          script:
+              - linux32 ninja -C build-i386 test
+              - sudo CASYNC_TEST_NBD=0 linux32 $(which ninja) -C build-i386 test
+
+        - name: Ubuntu Bionic (aarch64)
+          arch: arm64
+          language: bash
+          before_script:
+              - meson build
+              - ninja -C build
+          script:
+              - ninja -C build test
+              - sudo CASYNC_TEST_NBD=0 $(which ninja) -C build test
+
+        - name: Ubuntu Bionic (s390x)
+          arch: s390x
+          language: bash
+          before_script:
+              - meson build
+              - ninja -C build
+          script:
+              - ninja -C build test
+              - sudo CASYNC_TEST_NBD=0 $(which ninja) -C build test
+
+        - name: Ubuntu Bionic (ppc64le)
+          arch: ppc64le
+          language: bash
+          before_script:
+              - meson build
+              - ninja -C build
+          script:
+              - ninja -C build test
+              - sudo CASYNC_TEST_NBD=0 $(which ninja) -C build test
