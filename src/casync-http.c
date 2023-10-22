@@ -21,6 +21,7 @@ static enum {
         ARG_PROTOCOL_HTTP,
         ARG_PROTOCOL_FTP,
         ARG_PROTOCOL_HTTPS,
+        ARG_PROTOCOL_FTPS,
         ARG_PROTOCOL_SFTP,
         _ARG_PROTOCOL_INVALID = -1,
 } arg_protocol = _ARG_PROTOCOL_INVALID;
@@ -340,7 +341,7 @@ static int acquire_file(CaRemote *rr,
 
                 return 0;
 
-        } else if (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status < 200 || protocol_status > 299)) {
+        } else if (IN_SET(arg_protocol, ARG_PROTOCOL_FTP, ARG_PROTOCOL_FTPS) && (protocol_status < 200 || protocol_status > 299)) {
                 char *m;
 
                 if (arg_verbose)
@@ -443,8 +444,9 @@ static int run(int argc, char *argv[]) {
         }
 
         if (curl_easy_setopt(curl, CURLOPT_PROTOCOLS, arg_protocol == ARG_PROTOCOL_FTP ? CURLPROTO_FTP :
+                                                      arg_protocol == ARG_PROTOCOL_FTPS ? CURLPROTO_FTPS :
                                                       arg_protocol == ARG_PROTOCOL_SFTP? CURLPROTO_SFTP: CURLPROTO_HTTP|CURLPROTO_HTTPS) != CURLE_OK) {
-                log_error("Failed to limit protocols to HTTP/HTTPS/FTP/SFTP.");
+                log_error("Failed to limit protocols to HTTP/HTTPS/FTP/FTPS/SFTP.");
                 r = -EIO;
                 goto finish;
         }
@@ -610,7 +612,7 @@ static int run(int argc, char *argv[]) {
                         goto finish;
 
                 if ((IN_SET(arg_protocol, ARG_PROTOCOL_HTTP, ARG_PROTOCOL_HTTPS) && protocol_status == 200) ||
-                    (arg_protocol == ARG_PROTOCOL_FTP && (protocol_status >= 200 && protocol_status <= 299))||
+                    (IN_SET(arg_protocol, ARG_PROTOCOL_FTP, ARG_PROTOCOL_FTPS) && (protocol_status >= 200 && protocol_status <= 299))||
                     (arg_protocol == ARG_PROTOCOL_SFTP && (protocol_status == 0))) {
 
                         r = ca_remote_put_chunk(rr, &id, CA_CHUNK_COMPRESSED, realloc_buffer_data(&buffer), realloc_buffer_size(&buffer));
@@ -680,6 +682,8 @@ static int parse_argv(int argc, char *argv[]) {
                 arg_protocol = ARG_PROTOCOL_HTTP;
         else if (strstr(argv[0], "sftp"))
                 arg_protocol = ARG_PROTOCOL_SFTP;
+        else if (strstr(argv[0], "ftps"))
+                arg_protocol = ARG_PROTOCOL_FTPS;
         else if (strstr(argv[0], "ftp"))
                 arg_protocol = ARG_PROTOCOL_FTP;
         else {
