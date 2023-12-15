@@ -72,6 +72,8 @@ int ca_remote_set_index_fd(CaRemote *rr, int fd);
 int ca_remote_set_archive_path(CaRemote *rr, const char *path);
 int ca_remote_set_archive_fd(CaRemote *rr, int fd);
 
+int ca_remote_set_client_auth(CaRemote *rr, const char *client_cert, const char *client_key, const char *ca_cert);
+
 int ca_remote_step(CaRemote *rr);
 
 int ca_remote_poll(CaRemote *rr, uint64_t timeout_nsec, const sigset_t *ss);

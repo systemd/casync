@@ -61,6 +61,9 @@ static char *arg_store = NULL;
 static char **arg_extra_stores = NULL;
 static char **arg_seeds = NULL;
 static char *arg_cache = NULL;
+static char *arg_tls_cert = NULL;
+static char *arg_tls_ca = NULL;
+static char *arg_tls_key = NULL;
 static bool arg_cache_auto = false;
 static size_t arg_chunk_size_min = 0;
 static size_t arg_chunk_size_avg = 0;
@@ -121,6 +124,9 @@ static void help(void) {
                "     --seed-output=no        Don't implicitly add pre-existing output as seed\n"
                "                             when extracting\n"
                "     --recursive=no          List non-recursively\n"
+               "     --tls-ca-cert           Certificate Authority to validate remote tls server\n"
+               "     --tls-client-cert       Client cert to authenticate to remote tls server\n"
+               "     --tls-client-key        Client key to authenticate to remote tls server\n"
 #if HAVE_FUSE
                "     --mkdir=no              Don't automatically create mount directory if it\n"
                "                             is missing\n"
@@ -347,6 +353,9 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_DIGEST,
                 ARG_COMPRESSION,
                 ARG_VERSION,
+                ARG_TLS_KEY,
+                ARG_TLS_CERT,
+                ARG_TLS_CA
         };
 
         static const struct option options[] = {
@@ -380,6 +389,9 @@ static int parse_argv(int argc, char *argv[]) {
                 { "mkdir",             required_argument, NULL, ARG_MKDIR             },
                 { "digest",            required_argument, NULL, ARG_DIGEST            },
                 { "compression",       required_argument, NULL, ARG_COMPRESSION       },
+                { "tls-client-cert",   required_argument, NULL, ARG_TLS_CERT          },
+                { "tls-client-key",    required_argument, NULL, ARG_TLS_KEY           },
+                { "tls-ca-cert",       required_argument, NULL, ARG_TLS_CA            },
                 {}
         };
 
@@ -665,6 +677,24 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_compression = cc;
                         break;
                 }
+
+                case ARG_TLS_CERT:
+                    r = free_and_strdup(&arg_tls_cert, optarg);
+                    if (r < 0)
+                        return log_oom();
+                     break;
+
+                case ARG_TLS_KEY:
+                    r = free_and_strdup(&arg_tls_key, optarg);
+                    if (r < 0)
+                        return log_oom();
+                    break;
+
+                case ARG_TLS_CA:
+                    r = free_and_strdup(&arg_tls_ca, optarg);
+                    if (r < 0)
+                        return log_oom();
+                    break;
 
                 case '?':
                         return -EINVAL;
@@ -1660,7 +1690,9 @@ static int verb_extract(int argc, char *argv[]) {
                 if (r < 0)
                         return log_error_errno(r, "Failed to set store: %m");
         }
-
+        if(arg_tls_key && arg_tls_cert){
+            ca_sync_set_client_auth(s,arg_tls_cert,arg_tls_key,arg_tls_ca);
+        }
         r = load_seeds_and_extra_stores(s);
         if (r < 0)
                 return r;
@@ -2105,7 +2137,6 @@ static int verb_list(int argc, char *argv[]) {
         _cleanup_(ca_sync_unrefp) CaSync *s = NULL;
         bool toplevel_shown = false;
         int r;
-
         if (argc > 3) {
                 log_error("Input path/URL and subtree path expected.");
                 return -EINVAL;
@@ -2299,6 +2330,10 @@ static int verb_list(int argc, char *argv[]) {
                 r = ca_sync_enable_hardlink_digest(s, true);
                 if (r < 0)
                         return log_error_errno(r, "Failed to enable hardlink digest: %m");
+        }
+
+        if(arg_tls_key && arg_tls_cert){
+            ca_sync_set_client_auth(s,arg_tls_cert,arg_tls_key,arg_tls_ca);
         }
 
         (void) send_notify("READY=1");
@@ -2576,6 +2611,9 @@ static int verb_digest(int argc, char *argv[]) {
                 r = ca_sync_set_store_auto(s, arg_store);
                 if (r < 0)
                         return log_error_errno(r, "Failed to set store: %m");
+        }
+        if(arg_tls_key && arg_tls_cert){
+            ca_sync_set_client_auth(s,arg_tls_cert,arg_tls_key,arg_tls_ca);
         }
 
         r = load_seeds_and_extra_stores(s);
@@ -3470,6 +3508,10 @@ static int verb_pull(int argc, char *argv[]) {
                         return log_error_errno(r, "Failed to set rate limit: %m");
         }
 
+        if(arg_tls_key && arg_tls_cert){
+            ca_remote_set_client_auth(rr, arg_tls_cert, arg_tls_key, arg_tls_ca);
+        }
+
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);
         if (r < 0)
                 return log_error_errno(r, "Failed to set I/O file descriptors: %m");
@@ -3627,6 +3669,10 @@ static int verb_push(int argc, char *argv[]) {
                 r = ca_remote_set_rate_limit_bps(rr, arg_rate_limit_bps);
                 if (r < 0)
                         return log_error_errno(r, "Failed to set rate limit: %m");
+        }
+
+        if(arg_tls_key && arg_tls_cert){
+            ca_remote_set_client_auth(rr, arg_tls_cert, arg_tls_key, arg_tls_ca);
         }
 
         r = ca_remote_set_io_fds(rr, STDIN_FILENO, STDOUT_FILENO);

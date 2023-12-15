@@ -4,6 +4,9 @@
 DIGEST=${1:-sha512-256}
 COMPRESSION=${2:-zstd}
 
+REMOTE_PROTOCOL="${REMOTE_PROTOCOL:-http}"
+REMOTE_OPTIONS="${REMOTE_OPTIONS}"
+
 # Skip the test if given compressor is unavailable
 [ $COMPRESSION != "gzip" -o @HAVE_LIBZ@ = 1 ] || exit 77
 [ $COMPRESSION != "xz" -o @HAVE_LIBLZMA@ = 1 ] || exit 77
@@ -67,7 +70,6 @@ diff -ur --no-dereference . $SCRATCH_DIR/extract-catar2
 diff -ur --no-dereference . $SCRATCH_DIR/extract-catar3
 diff -ur --no-dereference . $SCRATCH_DIR/extract-caidx
 diff -ur --no-dereference . $SCRATCH_DIR/extract-caidx2
-
 set -e
 
 @top_builddir@/casync $PARAMS list   $SCRATCH_DIR/extract-catar >$SCRATCH_DIR/test.extract-catar.list
@@ -173,16 +175,21 @@ diff -q $SCRATCH_DIR/test.digest $SCRATCH_DIR/test2.catar.digest
 HTTP_PORT=$((10000 + $$ % 10000))
 
 export CASYNC_PROTOCOL_PATH=@top_builddir@
+if [ "${REMOTE_PROTOCOL}" = "https" ]; then
+  HTTP_PID=`@top_builddir@/notify-wait  @top_srcdir@/test/http-server.py $SCRATCH_DIR --port $HTTP_PORT --ssl`
+else
+  HTTP_PID=`@top_builddir@/notify-wait  @top_srcdir@/test/http-server.py $SCRATCH_DIR --port $HTTP_PORT`
+fi
+sleep 5
 
-HTTP_PID=`@top_builddir@/notify-wait  @top_srcdir@/test/http-server.py $SCRATCH_DIR $HTTP_PORT`
-
-@top_builddir@/casync $PARAMS list   http://localhost:$HTTP_PORT/test2.caidx >$SCRATCH_DIR/test3.caidx.list
-@top_builddir@/casync $PARAMS mtree  http://localhost:$HTTP_PORT/test2.caidx >$SCRATCH_DIR/test3.caidx.mtree
-@top_builddir@/casync $PARAMS digest http://localhost:$HTTP_PORT/test2.caidx >$SCRATCH_DIR/test3.caidx.digest
-
-@top_builddir@/casync $PARAMS list   http://localhost:$HTTP_PORT/test2.catar >$SCRATCH_DIR/test3.catar.list
-@top_builddir@/casync $PARAMS mtree  http://localhost:$HTTP_PORT/test2.catar >$SCRATCH_DIR/test3.catar.mtree
-@top_builddir@/casync $PARAMS digest http://localhost:$HTTP_PORT/test2.catar >$SCRATCH_DIR/test3.catar.digest
+rm -rf $SCRATCH_DIR/extract-catar
+@top_builddir@/casync $PARAMS $REMOTE_OPTIONS list    ${REMOTE_PROTOCOL}://localhost:$HTTP_PORT/test2.caidx >$SCRATCH_DIR/test3.caidx.list
+@top_builddir@/casync $PARAMS $REMOTE_OPTIONS mtree   ${REMOTE_PROTOCOL}://localhost:$HTTP_PORT/test2.caidx >$SCRATCH_DIR/test3.caidx.mtree
+@top_builddir@/casync $PARAMS $REMOTE_OPTIONS digest  ${REMOTE_PROTOCOL}://localhost:$HTTP_PORT/test2.caidx >$SCRATCH_DIR/test3.caidx.digest
+@top_builddir@/casync $PARAMS $REMOTE_OPTIONS list    ${REMOTE_PROTOCOL}://localhost:$HTTP_PORT/test2.catar >$SCRATCH_DIR/test3.catar.list
+@top_builddir@/casync $PARAMS $REMOTE_OPTIONS mtree   ${REMOTE_PROTOCOL}://localhost:$HTTP_PORT/test2.catar >$SCRATCH_DIR/test3.catar.mtree
+@top_builddir@/casync $PARAMS $REMOTE_OPTIONS digest  ${REMOTE_PROTOCOL}://localhost:$HTTP_PORT/test2.catar >$SCRATCH_DIR/test3.catar.digest
+@top_builddir@/casync $PARAMS $REMOTE_OPTIONS extract ${REMOTE_PROTOCOL}://localhost:$HTTP_PORT/test2.catar >$SCRATCH_DIR/extract-catar
 
 diff -q $SCRATCH_DIR/test.list   $SCRATCH_DIR/test3.caidx.list
 diff -q $SCRATCH_DIR/test.mtree  $SCRATCH_DIR/test3.caidx.mtree
