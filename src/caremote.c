@@ -51,6 +51,10 @@ struct CaRemote {
         char *wstore_url; /* The "primary" store, where we write to */
         char **rstore_urls; /* Additional, "secondary" stores we check */
 
+        char *arg_tls_cert;
+        char *arg_tls_ca ;
+        char *arg_tls_key;
+
         char *cache_path;
         int cache_fd;
         bool remove_cache;
@@ -674,6 +678,30 @@ int ca_remote_set_archive_fd(CaRemote *rr, int fd) {
         return ca_remote_file_set_fd(&rr->index_file, fd);
 }
 
+int ca_remote_set_client_auth(CaRemote *rr, const char *client_cert, const char *client_key, const char *ca_cert) {
+    if (!rr)
+        return -EINVAL;
+    if (!client_cert||!client_key)
+        return -EINVAL;
+
+
+    rr->arg_tls_cert = strdup(client_cert);
+    if (!rr->arg_tls_cert)
+        return -ENOMEM;
+
+    rr->arg_tls_key = strdup(client_key);
+    if (!rr->arg_tls_key)
+        return -ENOMEM;
+
+    if(ca_cert){
+        rr->arg_tls_ca = strdup(ca_cert);
+        if (!rr->arg_tls_ca)
+            return -ENOMEM;
+    }
+
+    return 0;
+}
+
 static int ca_remote_init_cache(CaRemote *rr) {
         int r;
 
@@ -1000,6 +1028,12 @@ static int ca_remote_start(CaRemote *rr) {
 
                         if (rr->rate_limit_bps != UINT64_MAX)
                                 argc++;
+                        if (rr->arg_tls_key&&rr->arg_tls_cert){
+                            argc+=2;
+                        }
+                        if(rr->arg_tls_ca){
+                            argc++;
+                        }
 
                         args = newa(char*, argc + 1);
 
@@ -1044,6 +1078,25 @@ static int ca_remote_start(CaRemote *rr) {
                                         return log_oom();
 
                                 i++;
+                        }
+                        if (rr->arg_tls_key&&rr->arg_tls_cert){
+                            r = asprintf(args + i, "--tls-client-cert=%s", rr->arg_tls_cert);
+                            if (r < 0)
+                                return log_oom();
+
+                            i++;
+                            r = asprintf(args + i, "--tls-client-key=%s", rr->arg_tls_key);
+                            if (r < 0)
+                                return log_oom();
+
+                            i++;
+                        }
+                        if(rr->arg_tls_ca){
+                            r = asprintf(args + i, "--tls-ca-cert=%s", rr->arg_tls_ca);
+                            if (r < 0)
+                                return log_oom();
+
+                            i++;
                         }
 
                         args[i + CA_REMOTE_ARG_OPERATION] = (char*) ((rr->local_feature_flags & (CA_PROTOCOL_PUSH_CHUNKS|CA_PROTOCOL_PUSH_INDEX|CA_PROTOCOL_PUSH_ARCHIVE)) ? "push" : "pull");
