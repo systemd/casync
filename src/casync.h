@@ -93,6 +93,8 @@ int ca_sync_add_seed_path(CaSync *sync, const char *path);
 int ca_sync_set_cache_fd(CaSync *sync, int fd);
 int ca_sync_set_cache_path(CaSync *sync, const char *path);
 
+int ca_sync_set_client_auth(CaSync *sync, const char *client_cert, const char *client_key, const char *ca_cert);
+
 int ca_sync_step(CaSync *sync);
 int ca_sync_poll(CaSync *s, uint64_t timeout_nsec, const sigset_t *ss);
 

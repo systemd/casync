@@ -16,6 +16,9 @@ static volatile sig_atomic_t quit = false;
 static int arg_log_level = -1;
 static bool arg_verbose = false;
 static curl_off_t arg_rate_limit_bps = 0;
+static char *arg_tls_cert = NULL;
+static char *arg_tls_ca = NULL;
+static char *arg_tls_key = NULL;
 
 static enum {
         ARG_PROTOCOL_HTTP,
@@ -71,6 +74,28 @@ static CURLcode robust_curl_easy_perform(CURL *curl) {
         }
 
         return c;
+}
+
+static CURLcode set_curl_tls_opt(CURL *curl){
+    CURLcode curLcode = CURLE_OK;
+    if(arg_tls_cert&&arg_tls_key){
+        curLcode = curl_easy_setopt(curl, CURLOPT_SSLCERT, arg_tls_cert);
+        if (curLcode != CURLE_OK){
+            log_error("Failed to add client certificate");
+            return curLcode;
+        }
+        curLcode = curl_easy_setopt(curl, CURLOPT_SSLKEY, arg_tls_key);
+        if( curLcode != CURLE_OK){
+            log_error("Failed to add client private key");
+            return curLcode;
+        }
+    }
+    if(arg_tls_ca){
+        curLcode = curl_easy_setopt(curl, CURLOPT_CAINFO, arg_tls_ca);
+        if (curLcode != CURLE_OK)
+            log_error("Failed to add certificate authority");
+    }
+    return curLcode;
 }
 
 static int process_remote(CaRemote *rr, ProcessUntil until) {
@@ -293,6 +318,7 @@ static int acquire_file(CaRemote *rr,
                         size_t (*callback)(const void *p, size_t size, size_t nmemb, void *userdata),
                         void *userdata) {
         long protocol_status;
+        CURLcode curl_code;
 
         assert(curl);
         assert(url);
@@ -313,11 +339,10 @@ static int acquire_file(CaRemote *rr,
                 log_error("Failed to set CURL private data.");
                 return -EIO;
         }
-
         log_debug("Acquiring %s...", url);
-
-        if (robust_curl_easy_perform(curl) != CURLE_OK) {
-                log_error("Failed to acquire %s", url);
+        curl_code = robust_curl_easy_perform(curl);
+        if ( curl_code != CURLE_OK) {
+                log_error("Failed to acquire %s %s", url, curl_easy_strerror(curl_code));
                 return -EIO;
         }
 
@@ -373,6 +398,7 @@ static int run(int argc, char *argv[]) {
         const char *base_url, *archive_url, *index_url, *wstore_url;
         size_t n_stores = 0, current_store = 0;
         CURL *curl = NULL;
+        CURLcode  curl_code;
         _cleanup_(ca_remote_unrefp) CaRemote *rr = NULL;
         _cleanup_(realloc_buffer_free) ReallocBuffer buffer = {};
         _cleanup_free_ char *url_buffer = NULL;
@@ -476,6 +502,10 @@ static int run(int argc, char *argv[]) {
                 goto finish;
         }
 
+        if(set_curl_tls_opt(curl)!=CURLE_OK){
+            return -EIO;
+        }
+
         if (archive_url) {
                 r = acquire_file(rr, curl, archive_url, write_archive, rr);
                 if (r < 0)
@@ -509,7 +539,6 @@ static int run(int argc, char *argv[]) {
         for (;;) {
                 const char *store_url;
                 CaChunkID id;
-
                 if (quit) {
                         log_info("Got exit signal, quitting.");
                         r = 0;
@@ -587,10 +616,12 @@ static int run(int argc, char *argv[]) {
                         goto finish;
                 }
 
-                log_debug("Acquiring %s...", url_buffer);
 
-                if (robust_curl_easy_perform(curl) != CURLE_OK) {
-                        log_error("Failed to acquire %s", url_buffer);
+
+                log_debug("Acquiring %s...", url_buffer);
+                curl_code = robust_curl_easy_perform(curl);
+                if (curl_code != CURLE_OK) {
+                        log_error("Failed to acquire %s a %s", url_buffer, curl_easy_strerror(curl_code));
                         r = -EIO;
                         goto finish;
                 }
@@ -659,6 +690,9 @@ static int parse_argv(int argc, char *argv[]) {
 
         enum {
                 ARG_RATE_LIMIT_BPS = 0x100,
+                ARG_TLS_KEY,
+                ARG_TLS_CERT,
+                ARG_TLS_CA
         };
 
         static const struct option options[] = {
@@ -666,6 +700,9 @@ static int parse_argv(int argc, char *argv[]) {
                 { "log-level",      required_argument, NULL, 'l'                },
                 { "verbose",        no_argument,       NULL, 'v'                },
                 { "rate-limit-bps", required_argument, NULL, ARG_RATE_LIMIT_BPS },
+                { "tls-client-cert",required_argument, NULL, 't'		},
+                { "tls-client-key", required_argument, NULL, 'k'		},
+                { "tls-ca-cert",    required_argument, NULL, 'c'		},
                 {}
         };
 
@@ -714,6 +751,24 @@ static int parse_argv(int argc, char *argv[]) {
                 case ARG_RATE_LIMIT_BPS:
                         arg_rate_limit_bps = strtoll(optarg, NULL, 10);
                         break;
+
+                case 't':
+                    r = free_and_strdup(&arg_tls_cert, optarg);
+                    if (r < 0)
+                        return log_oom();
+                    break;
+
+                case 'k':
+                    r = free_and_strdup(&arg_tls_key, optarg);
+                    if (r < 0)
+                        return log_oom();
+                    break;
+
+                case 'c':
+                    r = free_and_strdup(&arg_tls_ca, optarg);
+                    if (r < 0)
+                        return log_oom();
+                    break;
 
                 case '?':
                         return -EINVAL;

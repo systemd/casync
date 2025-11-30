@@ -311,6 +311,13 @@ test_cache_sh = configure_file(
 test_cache = find_program(test_cache_sh)
 test('test-cache.sh', test_cache,
      timeout : 30 * 60)
+test_mtls_sh = configure_file(
+        output : 'test-mtls.sh',
+        input : 'test/test-mtls.sh.in',
+        configuration : substs)
+test_mtls = find_program(test_mtls_sh)
+test('test-mtls.sh', test_mtls,
+     timeout : 30 * 60)
 
 udev_rule = configure_file(
           output : '75-casync.rules',

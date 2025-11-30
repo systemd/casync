@@ -1298,6 +1298,27 @@ static bool ca_sync_use_cache(CaSync *s) {
         return !!s->cache;
 }
 
+int ca_sync_set_client_auth(CaSync *sync, const char *client_cert, const char *client_key, const char *ca_cert){
+    int r;
+    if(sync->remote_index){
+        r = ca_remote_set_client_auth(sync->remote_index, client_cert, client_key, ca_cert);
+        if (r < 0)
+            return r;
+    }
+    if(sync->remote_wstore){
+        r = ca_remote_set_client_auth(sync->remote_wstore, client_cert, client_key, ca_cert);
+        if (r < 0)
+            return r;
+    }
+    if(sync->remote_archive){
+        r = ca_remote_set_client_auth(sync->remote_archive, client_cert, client_key, ca_cert);
+        if (r < 0)
+            return r;
+    }
+    return 0;
+}
+
+
 static int ca_sync_start(CaSync *s) {
         size_t i;
         int r;

@@ -1,0 +1,9 @@
+#!/bin/bash -ex
+# SPDX-License-Identifier: LGPL-2.1+
+
+# This is the same as test-script.sh, except that we use mtls protocol
+# algorithm to be gzip.
+export REMOTE_OPTIONS="--tls-ca-cert ../ca.crt --tls-client-cert ../client.crt --tls-client-key ../client.key"
+export REMOTE_PROTOCOL="https"
+
+exec @top_builddir@/test-script.sh default zstd
