@@ -572,7 +572,6 @@ int ca_location_open(CaLocation *l) {
 
         if (l->mtime != UINT64_MAX) {
                 struct stat st;
-                uint64_t n;
 
                 /* Ensure inode, mtime and generation still match */
 
@@ -580,10 +579,6 @@ int ca_location_open(CaLocation *l) {
                         return -errno;
 
                 if (st.st_ino != l->inode)
-                        return -ESTALE;
-
-                n = MAX(timespec_to_nsec(st.st_mtim), timespec_to_nsec(st.st_ctim));
-                if (l->mtime != n)
                         return -ESTALE;
 
                 if (l->generation_valid) {
