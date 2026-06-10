@@ -2,6 +2,7 @@
 
 fuzzers = [
         [['test/fuzz/fuzz-compress.c']],
+        [['test/fuzz/fuzz-cadecoder.c']],
 ]
 
 fuzz_main_c = files('fuzz-main.c')
