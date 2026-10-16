@@ -34,7 +34,7 @@ fi
 
 meson $build -D$fuzzflag \
       -Db_lundef=false \
-      -Dlibzstd=disabled \
+      -Dlibzstd=enabled \
       -Dman=false
 ninja -C $build fuzzers
 
